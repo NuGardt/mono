@@ -184,6 +184,9 @@ namespace System.Net {
 
 		public static IPAddress Parse (string ipString)
 		{
+            if (ipString == null)
+                throw new ArgumentNullException("ipString");
+
 			IPAddress ret;
 			if (TryParse (ipString, out ret))
 				return ret;
@@ -193,7 +196,10 @@ namespace System.Net {
 		public static bool TryParse (string ipString, out IPAddress address)
 		{
 			if (ipString == null)
-				throw new ArgumentNullException ("ipString");
+			{
+				address = null;
+				return false;
+			}
 
 			if ((address = ParseIPV4 (ipString)) == null)
 				if ((address = ParseIPV6 (ipString)) == null)
@@ -257,7 +263,7 @@ namespace System.Net {
 					if (i == (ips.Length - 1)) {
 						if (i != 0  && val >= (256 << ((3 - i) * 8)))
 							return null;
-						else if (val > 0x3fffffffe) // this is the last number that parses correctly with MS
+						else if (val > 0xffffffff)
 							return null;
 						i = 3;
 					} else if (val >= 0x100)
@@ -378,8 +384,47 @@ namespace System.Net {
 				return m_Family;
 			}
 		}
-		
-		
+
+#if NET_4_5
+
+		public IPAddress MapToIPv4 ()
+		{
+			if (AddressFamily == AddressFamily.InterNetwork)
+				return this;
+			if (AddressFamily != AddressFamily.InterNetworkV6)
+				throw new Exception ("Only AddressFamily.InterNetworkV6 can be converted to IPv4");
+
+			//Test for 0000 0000 0000 0000 0000 FFFF xxxx xxxx
+			for (int i = 0; i < 5; i++) {
+				if (m_Numbers [i] != 0x0000)
+					throw new Exception ("Address does not have the ::FFFF prefix");
+			}
+			if (m_Numbers [5] != 0xFFFF)
+				throw new Exception ("Address does not have the ::FFFF prefix");
+
+			//We've got an IPv4 address
+			byte [] ipv4Bytes = new byte [4];
+			Buffer.BlockCopy (m_Numbers, 12, ipv4Bytes, 0, 4);
+			return new IPAddress (ipv4Bytes);
+		}
+
+		public IPAddress MapToIPv6 ()
+		{
+			if (AddressFamily == AddressFamily.InterNetworkV6)
+				return this;
+			if (AddressFamily != AddressFamily.InterNetwork)
+				throw new Exception ("Only AddressFamily.InterNetworkV4 can be converted to IPv6");
+
+			byte [] ipv4Bytes = GetAddressBytes ();
+			byte [] ipv6Bytes = new byte [16] {
+				0,0, 0,0, 0,0, 0,0, 0,0, 0xFF,0xFF,
+				ipv4Bytes [0], ipv4Bytes [1], ipv4Bytes [2], ipv4Bytes [3]
+			};
+			return new IPAddress (ipv6Bytes);
+		}
+
+#endif
+
 		/// <summary>
 		///   Used to tell whether an address is a loopback.
 		///   All IP addresses of the form 127.X.Y.Z, where X, Y, and Z are in 

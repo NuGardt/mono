@@ -1,3 +1,4 @@
+#if !MONO_FEATURE_NEW_TLS
 using System.Diagnostics;
 
 namespace System.Net {
@@ -14,12 +15,24 @@ namespace System.Net {
 			}
 		}
 
+		internal static TraceSource HttpListener {
+			get {
+				return null;
+			}
+		}
+
 		[Conditional ("TRACE")]
  		internal static void Enter(TraceSource traceSource, object obj, string method, object paramObject) {
  		}
 
 		[Conditional ("TRACE")]
 		internal static void Exit(TraceSource traceSource, object obj, string method, object retObject) {
+		}
+
+		internal static void PrintInfo(TraceSource traceSource, object obj, string method, string msg) {
+		}
+
+		internal static void PrintWarning(TraceSource traceSource, object obj, string method, string msg) {
 		}
 	}
 
@@ -32,3 +45,4 @@ namespace System.Net {
 
 #endif
 }
+#endif

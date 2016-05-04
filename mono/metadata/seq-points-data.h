@@ -1,5 +1,6 @@
 /*
  * Copyright 2015 Xamarin Inc
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
  
 #ifndef __MONO_SEQ_POINTS_DATA_H__
@@ -28,7 +29,7 @@ typedef struct {
 } SeqPoint;
 
 typedef struct MonoSeqPointInfo {
-	int dummy[0];
+	int dummy [1];
 } MonoSeqPointInfo;
 
 typedef struct {

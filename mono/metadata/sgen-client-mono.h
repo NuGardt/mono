@@ -3,18 +3,7 @@
  *
  * Copyright (C) 2014 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #ifdef SGEN_DEFINE_OBJECT_VTABLE
@@ -25,78 +14,18 @@
 #include "metadata/object-internals.h"
 
 typedef MonoObject GCObject;
-typedef MonoVTable GCVTable;
+typedef MonoVTable* GCVTable;
 
-/* FIXME: This should return a GCVTable* and be a function. */
-#define SGEN_LOAD_VTABLE_UNCHECKED(obj)	((void*)(((GCObject*)(obj))->vtable))
-
-static inline mword
-sgen_vtable_get_descriptor (GCVTable *vtable)
+static inline GCVTable
+SGEN_LOAD_VTABLE_UNCHECKED (GCObject *obj)
 {
-	return (mword)vtable->gc_descr;
+	return obj->vtable;
 }
 
-static mword /*__attribute__((noinline)) not sure if this hint is a good idea*/
-sgen_client_slow_object_get_size (GCVTable *vtable, GCObject* o)
+static inline SgenDescriptor
+sgen_vtable_get_descriptor (GCVTable vtable)
 {
-	MonoClass *klass = ((MonoVTable*)vtable)->klass;
-
-	/*
-	 * We depend on mono_string_length_fast and
-	 * mono_array_length_fast not using the object's vtable.
-	 */
-	if (klass == mono_defaults.string_class) {
-		return G_STRUCT_OFFSET (MonoString, chars) + 2 * mono_string_length_fast ((MonoString*) o) + 2;
-	} else if (klass->rank) {
-		MonoArray *array = (MonoArray*)o;
-		size_t size = sizeof (MonoArray) + klass->sizes.element_size * mono_array_length_fast (array);
-		if (G_UNLIKELY (array->bounds)) {
-			size += sizeof (mono_array_size_t) - 1;
-			size &= ~(sizeof (mono_array_size_t) - 1);
-			size += sizeof (MonoArrayBounds) * klass->rank;
-		}
-		return size;
-	} else {
-		/* from a created object: the class must be inited already */
-		return klass->instance_size;
-	}
-}
-
-/*
- * This function can be called on an object whose first word, the
- * vtable field, is not intact.  This is necessary for the parallel
- * collector.
- */
-static MONO_NEVER_INLINE mword
-sgen_client_par_object_get_size (GCVTable *vtable, GCObject* o)
-{
-	mword descr = sgen_vtable_get_descriptor (vtable);
-	mword type = descr & DESC_TYPE_MASK;
-
-	if (type == DESC_TYPE_RUN_LENGTH || type == DESC_TYPE_SMALL_PTRFREE) {
-		mword size = descr & 0xfff8;
-		SGEN_ASSERT (9, size >= sizeof (MonoObject), "Run length object size to small");
-		return size;
-	} else if (descr == SGEN_DESC_STRING) {
-		return G_STRUCT_OFFSET (MonoString, chars) + 2 * mono_string_length_fast ((MonoString*) o) + 2;
-	} else if (type == DESC_TYPE_VECTOR) {
-		int element_size = ((descr) >> VECTOR_ELSIZE_SHIFT) & MAX_ELEMENT_SIZE;
-		MonoArray *array = (MonoArray*)o;
-		size_t size = sizeof (MonoArray) + element_size * mono_array_length_fast (array);
-
-		/*
-		 * Non-vector arrays with a single dimension whose lower bound is zero are
-		 * allocated without bounds.
-		 */
-		if ((descr & VECTOR_KIND_ARRAY) && array->bounds) {
-			size += sizeof (mono_array_size_t) - 1;
-			size &= ~(sizeof (mono_array_size_t) - 1);
-			size += sizeof (MonoArrayBounds) * ((MonoVTable*)vtable)->klass->rank;
-		}
-		return size;
-	}
-
-	return sgen_client_slow_object_get_size (vtable, o);
+	return (SgenDescriptor)vtable->gc_descr;
 }
 
 typedef struct _SgenClientThreadInfo SgenClientThreadInfo;
@@ -148,10 +77,10 @@ struct _SgenClientThreadInfo {
 #include "metadata/profiler-private.h"
 #include "utils/dtrace.h"
 #include "utils/mono-counters.h"
-#include "utils/mono-logger-internal.h"
+#include "utils/mono-logger-internals.h"
 #include "utils/mono-time.h"
-#include "utils/mono-semaphore.h"
-#include "metadata/sgen-bridge-internal.h"
+#include "utils/mono-os-semaphore.h"
+#include "metadata/sgen-bridge-internals.h"
 
 extern void mono_sgen_register_moved_object (void *obj, void *destination);
 extern void mono_sgen_gc_event_moves (void);
@@ -163,11 +92,78 @@ enum {
 	INTERNAL_MEM_MAX
 };
 
+static inline mword
+sgen_mono_array_size (GCVTable vtable, MonoArray *array, mword *bounds_size, mword descr)
+{
+	mword size, size_without_bounds;
+	int element_size;
+
+	if ((descr & DESC_TYPE_MASK) == DESC_TYPE_VECTOR)
+		element_size = ((descr) >> VECTOR_ELSIZE_SHIFT) & MAX_ELEMENT_SIZE;
+	else
+		element_size = vtable->klass->sizes.element_size;
+
+	size_without_bounds = size = MONO_SIZEOF_MONO_ARRAY + element_size * mono_array_length_fast (array);
+
+	if (G_UNLIKELY (array->bounds)) {
+		size += sizeof (mono_array_size_t) - 1;
+		size &= ~(sizeof (mono_array_size_t) - 1);
+		size += sizeof (MonoArrayBounds) * vtable->klass->rank;
+	}
+
+	if (bounds_size)
+		*bounds_size = size - size_without_bounds;
+	return size;
+}
+
 #define SGEN_CLIENT_OBJECT_HEADER_SIZE		(sizeof (GCObject))
 #define SGEN_CLIENT_MINIMUM_OBJECT_SIZE		SGEN_CLIENT_OBJECT_HEADER_SIZE
 
+static mword /*__attribute__((noinline)) not sure if this hint is a good idea*/
+sgen_client_slow_object_get_size (GCVTable vtable, GCObject* o)
+{
+	MonoClass *klass = ((MonoVTable*)vtable)->klass;
+
+	/*
+	 * We depend on mono_string_length_fast and
+	 * mono_array_length_fast not using the object's vtable.
+	 */
+	if (klass == mono_defaults.string_class) {
+		return G_STRUCT_OFFSET (MonoString, chars) + 2 * mono_string_length_fast ((MonoString*) o) + 2;
+	} else if (klass->rank) {
+		return sgen_mono_array_size (vtable, (MonoArray*)o, NULL, 0);
+	} else {
+		/* from a created object: the class must be inited already */
+		return klass->instance_size;
+	}
+}
+
+/*
+ * This function can be called on an object whose first word, the
+ * vtable field, is not intact.  This is necessary for the parallel
+ * collector.
+ */
+static MONO_NEVER_INLINE mword
+sgen_client_par_object_get_size (GCVTable vtable, GCObject* o)
+{
+	SgenDescriptor descr = sgen_vtable_get_descriptor (vtable);
+	mword type = descr & DESC_TYPE_MASK;
+
+	if (type == DESC_TYPE_RUN_LENGTH || type == DESC_TYPE_SMALL_PTRFREE) {
+		mword size = descr & 0xfff8;
+		SGEN_ASSERT (9, size >= sizeof (MonoObject), "Run length object size to small");
+		return size;
+	} else if (descr == SGEN_DESC_STRING) {
+		return G_STRUCT_OFFSET (MonoString, chars) + 2 * mono_string_length_fast ((MonoString*) o) + 2;
+	} else if (type == DESC_TYPE_VECTOR) {
+		return sgen_mono_array_size (vtable, (MonoArray*)o, NULL, descr);
+	}
+
+	return sgen_client_slow_object_get_size (vtable, o);
+}
+
 static MONO_ALWAYS_INLINE size_t G_GNUC_UNUSED
-sgen_client_array_element_size (GCVTable *gc_vtable)
+sgen_client_array_element_size (GCVTable gc_vtable)
 {
 	MonoVTable *vt = (MonoVTable*)gc_vtable;
 	return mono_array_element_size (vt->klass);
@@ -192,14 +188,14 @@ sgen_client_object_is_array_fill (GCObject *o)
 }
 
 static MONO_ALWAYS_INLINE void G_GNUC_UNUSED
-sgen_client_pre_copy_checks (char *destination, GCVTable *gc_vtable, void *obj, mword objsize)
+sgen_client_pre_copy_checks (char *destination, GCVTable gc_vtable, void *obj, mword objsize)
 {
 	MonoVTable *vt = (MonoVTable*)gc_vtable;
 	SGEN_ASSERT (9, vt->klass->inited, "vtable %p for class %s:%s was not initialized", vt, vt->klass->name_space, vt->klass->name);
 }
 
 static MONO_ALWAYS_INLINE void G_GNUC_UNUSED
-sgen_client_update_copied_object (char *destination, GCVTable *gc_vtable, void *obj, mword objsize)
+sgen_client_update_copied_object (char *destination, GCVTable gc_vtable, void *obj, mword objsize)
 {
 	MonoVTable *vt = (MonoVTable*)gc_vtable;
 	if (G_UNLIKELY (vt->rank && ((MonoArray*)obj)->bounds)) {
@@ -237,18 +233,18 @@ extern gboolean sgen_mono_xdomain_checks;
 static gboolean G_GNUC_UNUSED
 sgen_client_object_has_critical_finalizer (GCObject *obj)
 {
-	MonoClass *class;
+	MonoClass *klass;
 
 	if (!mono_defaults.critical_finalizer_object)
 		return FALSE;
 
-	class = ((MonoVTable*)SGEN_LOAD_VTABLE (obj))->klass;
+	klass = SGEN_LOAD_VTABLE (obj)->klass;
 
-	return mono_class_has_parent_fast (class, mono_defaults.critical_finalizer_object);
+	return mono_class_has_parent_fast (klass, mono_defaults.critical_finalizer_object);
 }
 
-const char* sgen_client_vtable_get_namespace (GCVTable *vtable);
-const char* sgen_client_vtable_get_name (GCVTable *vtable);
+const char* sgen_client_vtable_get_namespace (GCVTable vtable);
+const char* sgen_client_vtable_get_name (GCVTable vtable);
 
 static gboolean G_GNUC_UNUSED
 sgen_client_bridge_need_processing (void)
@@ -394,7 +390,7 @@ sgen_client_binary_protocol_block_free (gpointer addr, size_t size)
 }
 
 static void G_GNUC_UNUSED
-sgen_client_binary_protocol_block_set_state (gpointer addr, size_t size, int old, int new)
+sgen_client_binary_protocol_block_set_state (gpointer addr, size_t size, int old, int new_)
 {
 }
 
@@ -554,6 +550,11 @@ sgen_client_binary_protocol_global_remset (gpointer ptr, gpointer value, gpointe
 }
 
 static void G_GNUC_UNUSED
+sgen_client_binary_protocol_mod_union_remset (gpointer obj, gpointer ptr, gpointer value, gpointer value_vtable)
+{
+}
+
+static void G_GNUC_UNUSED
 sgen_client_binary_protocol_ptr_update (gpointer ptr, gpointer old_value, gpointer new_value, gpointer vtable, size_t size)
 {
 }
@@ -564,11 +565,16 @@ sgen_client_binary_protocol_cleanup (gpointer ptr, gpointer vtable, size_t size)
 }
 
 static void G_GNUC_UNUSED
-sgen_client_binary_protocol_dislink_update (gpointer link, gpointer obj, gboolean track, gboolean staged)
+sgen_client_binary_protocol_dislink_add (gpointer link, gpointer obj, gboolean track)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_dislink_update (gpointer link, gpointer obj, gboolean track)
 {
 #ifdef ENABLE_DTRACE
 	if (MONO_GC_WEAK_UPDATE_ENABLED ()) {
-		GCVTable *vt = obj ? (GCVTable*)SGEN_LOAD_VTABLE (obj) : NULL;
+		GCVTable vt = obj ? SGEN_LOAD_VTABLE (obj) : NULL;
 		MONO_GC_WEAK_UPDATE ((mword)link,
 				(mword)obj,
 				obj ? (mword)sgen_safe_object_get_size (obj) : (mword)0,
@@ -580,12 +586,7 @@ sgen_client_binary_protocol_dislink_update (gpointer link, gpointer obj, gboolea
 }
 
 static void G_GNUC_UNUSED
-sgen_client_binary_protocol_dislink_update_staged (gpointer link, gpointer obj, gboolean track, int index)
-{
-}
-
-static void G_GNUC_UNUSED
-sgen_client_binary_protocol_dislink_process_staged (gpointer link, gpointer obj, int index)
+sgen_client_binary_protocol_dislink_remove (gpointer link, gboolean track)
 {
 }
 
@@ -648,6 +649,51 @@ sgen_client_binary_protocol_gray_dequeue (gpointer queue, gpointer cursor, gpoin
 {
 }
 
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_major_card_table_scan_start (long long timestamp, gboolean mod_union)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_major_card_table_scan_end (long long timestamp, gboolean mod_union)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_los_card_table_scan_start (long long timestamp, gboolean mod_union)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_los_card_table_scan_end (long long timestamp, gboolean mod_union)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_finish_gray_stack_start (long long timestamp, int generation)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_finish_gray_stack_end (long long timestamp, int generation)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_worker_finish (long long timestamp, gboolean forced)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_evacuating_blocks (size_t block_size)
+{
+}
+
+static void G_GNUC_UNUSED
+sgen_client_binary_protocol_concurrent_sweep_end (long long timestamp)
+{
+}
+
 int sgen_thread_handshake (BOOL suspend);
 gboolean sgen_suspend_thread (SgenThreadInfo *info);
 gboolean sgen_resume_thread (SgenThreadInfo *info);
@@ -663,8 +709,6 @@ extern MonoNativeTlsKey thread_info_key;
 #define IN_CRITICAL_REGION (__thread_info__->client_info.in_critical_region)
 #endif
 
-#ifndef DISABLE_CRITICAL_REGION
-
 #ifdef HAVE_KW_THREAD
 #define IN_CRITICAL_REGION sgen_thread_info->client_info.in_critical_region
 #else
@@ -679,17 +723,15 @@ extern MonoNativeTlsKey thread_info_key;
  */
 #define EXIT_CRITICAL_REGION  do { mono_atomic_store_release (&IN_CRITICAL_REGION, 0); } while (0)
 
-#endif
-
 #define SGEN_TV_DECLARE(name) gint64 name
 #define SGEN_TV_GETTIME(tv) tv = mono_100ns_ticks ()
-#define SGEN_TV_ELAPSED(start,end) ((long)(end-start))
+#define SGEN_TV_ELAPSED(start,end) ((gint64)(end-start))
 
 typedef MonoSemType SgenSemaphore;
 
-#define SGEN_SEMAPHORE_INIT(sem,initial)	MONO_SEM_INIT ((sem), (initial))
-#define SGEN_SEMAPHORE_POST(sem)		MONO_SEM_POST ((sem))
-#define SGEN_SEMAPHORE_WAIT(sem)		MONO_SEM_WAIT ((sem))
+#define SGEN_SEMAPHORE_INIT(sem,initial)	mono_os_sem_init ((sem), (initial))
+#define SGEN_SEMAPHORE_POST(sem)		mono_os_sem_post ((sem))
+#define SGEN_SEMAPHORE_WAIT(sem)		mono_os_sem_wait ((sem), MONO_SEM_FLAGS_NONE)
 
 gboolean sgen_has_critical_method (void);
 gboolean sgen_is_critical_method (MonoMethod *method);
@@ -699,5 +741,6 @@ gboolean sgen_is_managed_allocator (MonoMethod *method);
 gboolean sgen_has_managed_allocator (void);
 
 void sgen_scan_for_registered_roots_in_domain (MonoDomain *domain, int root_type);
+void sgen_null_links_for_domain (MonoDomain *domain);
 
 #endif

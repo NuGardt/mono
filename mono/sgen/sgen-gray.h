@@ -4,18 +4,7 @@
  * Copyright 2011 Xamarin Inc (http://www.xamarin.com)
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 #ifndef __MONO_SGEN_GRAY_H__
 #define __MONO_SGEN_GRAY_H__
@@ -70,8 +59,8 @@ typedef enum {
 
 typedef struct _GrayQueueEntry GrayQueueEntry;
 struct _GrayQueueEntry {
-	char *obj;
-	mword desc;
+	GCObject *obj;
+	SgenDescriptor desc;
 };
 
 #define SGEN_GRAY_QUEUE_ENTRY(obj,desc)	{ (obj), (desc) }
@@ -98,7 +87,7 @@ struct _GrayQueueSection {
 typedef struct _SgenGrayQueue SgenGrayQueue;
 
 typedef void (*GrayQueueAllocPrepareFunc) (SgenGrayQueue*);
-typedef void (*GrayQueueEnqueueCheckFunc) (char*);
+typedef void (*GrayQueueEnqueueCheckFunc) (GCObject*);
 
 struct _SgenGrayQueue {
 	GrayQueueEntry *cursor;
@@ -136,7 +125,7 @@ extern guint64 stat_gray_queue_dequeue_slow_path;
 
 void sgen_init_gray_queues (void);
 
-void sgen_gray_object_enqueue (SgenGrayQueue *queue, char *obj, mword desc);
+void sgen_gray_object_enqueue (SgenGrayQueue *queue, GCObject *obj, SgenDescriptor desc);
 GrayQueueEntry sgen_gray_object_dequeue (SgenGrayQueue *queue);
 GrayQueueSection* sgen_gray_object_dequeue_section (SgenGrayQueue *queue);
 void sgen_gray_object_enqueue_section (SgenGrayQueue *queue, GrayQueueSection *section);
@@ -166,7 +155,7 @@ sgen_gray_object_queue_is_empty (SgenGrayQueue *queue)
 }
 
 static inline MONO_ALWAYS_INLINE void
-GRAY_OBJECT_ENQUEUE (SgenGrayQueue *queue, char* obj, mword desc)
+GRAY_OBJECT_ENQUEUE (SgenGrayQueue *queue, GCObject *obj, SgenDescriptor desc)
 {
 #if SGEN_MAX_DEBUG_LEVEL >= 9
 	sgen_gray_object_enqueue (queue, obj, desc);
@@ -187,7 +176,7 @@ GRAY_OBJECT_ENQUEUE (SgenGrayQueue *queue, char* obj, mword desc)
 }
 
 static inline MONO_ALWAYS_INLINE void
-GRAY_OBJECT_DEQUEUE (SgenGrayQueue *queue, char** obj, mword *desc)
+GRAY_OBJECT_DEQUEUE (SgenGrayQueue *queue, GCObject** obj, SgenDescriptor *desc)
 {
 	GrayQueueEntry entry;
 #if SGEN_MAX_DEBUG_LEVEL >= 9

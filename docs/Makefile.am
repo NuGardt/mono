@@ -17,10 +17,8 @@ EXTRA_DIST = \
 	check-exports		\
 	check-coverage		\
 	convert.cs		\
-	current-api		\
 	deploy			\
 	docs.make		\
-	documented		\
 	embedded-api		\
 	exdoc			\
 	file-share-modes	\
@@ -43,8 +41,6 @@ EXTRA_DIST = \
 	object-layout		\
 	precise-gc		\
 	produce-lists		\
-	public			\
-	public-api		\
 	README			\
 	remoting		\
 	ssapre.txt		\
@@ -53,6 +49,10 @@ EXTRA_DIST = \
 	toc.xml			\
 	TODO			\
 	unmanaged-calls	
+
+-include $(mcs_topdir)/build/config.make
+
+CLASS=$(mcs_topdir)/class/lib/$(DEFAULT_PROFILE)
 
 dist-hook:
 	$(mkdir_p)  $(distdir)/sources
@@ -89,14 +89,14 @@ mono-file-formats.tree: $(srcdir)/docs.make $(srcdir)/Makefile.am $(srcdir)/depl
 deploy/.stamp: convert.exe Makefile.am 
 	$(mkdir_p) html
 	runtimedir=`cd ../runtime && pwd`; export runtimedir; \
-	MONO_PATH=../mcs/class/lib/net_4_5 perl $(srcdir)/exdoc -h $(srcdir) -t . $(srcdir)/../mono/*/*.c
+	MONO_PATH=$(CLASS) perl $(srcdir)/exdoc -h $(srcdir) -t . $(srcdir)/../mono/*/*.c
 	touch $@
 
 extract: deploy/.stamp
 
 convert.exe: convert.cs AgilityPack.dll
-	$(TOOL_MAKE) PROFILE=net_4_5 convert.exe
+	$(TOOL_MAKE) convert.exe
 
 AgilityPack.dll: 
-	$(TOOL_MAKE) PROFILE=net_4_5 AgilityPack.dll
+	$(TOOL_MAKE) AgilityPack.dll
 

@@ -6,18 +6,7 @@
  * Copyright 2003-2010 Novell, Inc.
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #ifdef HAVE_SGEN_GC
@@ -69,7 +58,7 @@ filename_for_index (int index)
 
 	SGEN_ASSERT (0, file_size_limit > 0, "Indexed binary protocol filename must only be used with file size limit");
 
-	filename = sgen_alloc_internal_dynamic (strlen (filename_or_prefix) + 32, INTERNAL_MEM_BINARY_PROTOCOL, TRUE);
+	filename = (char *)sgen_alloc_internal_dynamic (strlen (filename_or_prefix) + 32, INTERNAL_MEM_BINARY_PROTOCOL, TRUE);
 	sprintf (filename, "%s.%d", filename_or_prefix, index);
 
 	return filename;
@@ -99,6 +88,9 @@ binary_protocol_open_file (void)
 			break; /* Failed */
 	} while (binary_protocol_file == -1);
 
+	if (binary_protocol_file == -1)
+		g_error ("sgen binary protocol: failed to open file");
+
 	if (file_size_limit > 0)
 		free_filename (filename);
 }
@@ -108,12 +100,14 @@ void
 binary_protocol_init (const char *filename, long long limit)
 {
 #ifdef HAVE_UNISTD_H
-	filename_or_prefix = sgen_alloc_internal_dynamic (strlen (filename) + 1, INTERNAL_MEM_BINARY_PROTOCOL, TRUE);
+	filename_or_prefix = (char *)sgen_alloc_internal_dynamic (strlen (filename) + 1, INTERNAL_MEM_BINARY_PROTOCOL, TRUE);
 	strcpy (filename_or_prefix, filename);
 
 	file_size_limit = limit;
 
 	binary_protocol_open_file ();
+#else
+	g_error ("sgen binary protocol: not supported");
 #endif
 }
 
@@ -251,7 +245,7 @@ binary_protocol_flush_buffers (gboolean force)
 
 	for (buf = binary_protocol_buffers; buf != NULL; buf = buf->next)
 		++num_buffers;
-	bufs = sgen_alloc_internal_dynamic (num_buffers * sizeof (BinaryProtocolBuffer*), INTERNAL_MEM_BINARY_PROTOCOL, TRUE);
+	bufs = (BinaryProtocolBuffer **)sgen_alloc_internal_dynamic (num_buffers * sizeof (BinaryProtocolBuffer*), INTERNAL_MEM_BINARY_PROTOCOL, TRUE);
 	for (buf = binary_protocol_buffers, i = 0; buf != NULL; buf = buf->next, i++)
 		bufs [i] = buf;
 	SGEN_ASSERT (0, i == num_buffers, "Binary protocol buffer count error");
@@ -280,7 +274,7 @@ binary_protocol_get_buffer (int length)
 	if (buffer && buffer->index + length <= BINARY_PROTOCOL_BUFFER_SIZE)
 		return buffer;
 
-	new_buffer = sgen_alloc_os_memory (sizeof (BinaryProtocolBuffer), SGEN_ALLOC_INTERNAL | SGEN_ALLOC_ACTIVATE, "debugging memory");
+	new_buffer = (BinaryProtocolBuffer *)sgen_alloc_os_memory (sizeof (BinaryProtocolBuffer), (SgenAllocFlags)(SGEN_ALLOC_INTERNAL | SGEN_ALLOC_ACTIVATE), "debugging memory");
 	new_buffer->next = buffer;
 	new_buffer->index = 0;
 
@@ -386,9 +380,6 @@ protocol_entry (unsigned char type, gpointer data, int size)
 		int __size = sizeof (PROTOCOL_STRUCT(method)); \
 		CLIENT_PROTOCOL_NAME (method) (f1, f2, f3, f4, f5, f6);
 
-#define FLUSH() \
-		binary_protocol_flush_buffers (FALSE);
-
 #define DEFAULT_PRINT()
 #define CUSTOM_PRINT(_)
 
@@ -398,6 +389,11 @@ protocol_entry (unsigned char type, gpointer data, int size)
 
 #define END_PROTOCOL_ENTRY \
 		protocol_entry (__type, __data, __size); \
+	}
+
+#define END_PROTOCOL_ENTRY_FLUSH \
+		protocol_entry (__type, __data, __size); \
+		binary_protocol_flush_buffers (FALSE); \
 	}
 
 #ifdef SGEN_HEAVY_BINARY_PROTOCOL

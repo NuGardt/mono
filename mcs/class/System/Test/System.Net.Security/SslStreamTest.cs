@@ -39,6 +39,8 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.System.Net.Security
 {
 
@@ -64,7 +66,7 @@ public class SslStreamTest {
 
 	void AuthenticateClientAndServer (bool server, bool client)
 	{
-		IPEndPoint endPoint = new IPEndPoint (IPAddress.Parse ("127.0.0.1"), 10000);
+		IPEndPoint endPoint = new IPEndPoint (IPAddress.Parse ("127.0.0.1"), NetworkHelpers.FindFreePort ());
 		ClientServerState state = new ClientServerState ();
 		state.Client = new TcpClient ();
 		state.Listener = new TcpListener (endPoint);
@@ -74,12 +76,12 @@ public class SslStreamTest {
 		state.ServerIOException = !server;
 		try {
 			Thread serverThread = new Thread (() => StartServerAndAuthenticate (state));
-			serverThread.Start (null);
+			serverThread.Start ();
 			Thread clientThread = new Thread (() => StartClientAndAuthenticate (state, endPoint));
-			clientThread.Start (null);
-			Assert.AreEqual (server, state.ServerAuthenticated.WaitOne (TimeSpan.FromSeconds (2)), 
+			clientThread.Start ();
+			Assert.AreEqual (server, state.ServerAuthenticated.WaitOne (TimeSpan.FromSeconds (5)), 
 				"server not authenticated");
-			Assert.AreEqual (client, state.ClientAuthenticated.WaitOne (TimeSpan.FromSeconds (2)), 
+			Assert.AreEqual (client, state.ClientAuthenticated.WaitOne (TimeSpan.FromSeconds (5)), 
 				"client not authenticated");
 		} finally {
 			if (state.ClientStream != null)

@@ -160,7 +160,6 @@ public class IPAddressTest
 		"20.65535", "20.0.255.255",
 		"0313.027035210", "203.92.58.136", // bug #411920
 		"0313.0134.035210", "203.92.58.136", // too
-		"7848198702", "211.202.2.46", // too
 		"1434328179", "85.126.28.115", // too
 		"3397943208", "202.136.127.168", // too
 	};
@@ -186,8 +185,11 @@ public class IPAddressTest
 		"12.",
 		"12.1.2.",
 		"12...",
-		"  "
+		"  ",
+		"7848198702",
 	};
+
+	static byte [] ipv4MappedIPv6Prefix = new byte [] { 0,0, 0,0, 0,0, 0,0, 0,0, 0xFF,0xFF };
 
 	[Test]
 	public void PublicFields ()
@@ -530,16 +532,11 @@ public class IPAddressTest
 	public void TryParse_IpString_Null ()
 	{
 		IPAddress i;
-
-		try {
-			IPAddress.TryParse ((string) null, out i);
-			Assert.Fail ("#1");
-		} catch (ArgumentNullException ex) {
-			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#2");
-			Assert.IsNull (ex.InnerException, "#3");
-			Assert.IsNotNull (ex.Message, "#4");
-			Assert.AreEqual ("ipString", ex.ParamName, "#5");
-		}
+		
+		bool val1 = IPAddress.TryParse ((string) null, out i);
+		
+		Assert.IsFalse (val1, "#1");
+		Assert.IsNull (i, "#2");
 	}
 
 	[Test]
@@ -613,7 +610,6 @@ public class IPAddressTest
 		Assert.IsFalse (IPAddress.Parse ("FE00::1").IsIPv6Multicast, "#3");
 	}
 
-#if NET_4_0
 	[Test]
 	public void IsIPv6Teredo ()
 	{
@@ -640,7 +636,56 @@ public class IPAddressTest
 			}
 		}
 	}
+
+#if NET_4_5
+
+	[Test]
+	public void MapToIPv6 ()
+	{
+		for (int i = 0; i < ipv4ParseOk.Length / 2; i++) {
+			IPAddress v4 = IPAddress.Parse (ipv4ParseOk [i * 2]);
+			byte [] v4bytes = v4.GetAddressBytes ();
+			IPAddress v6 = v4.MapToIPv6 ();
+			byte [] v6bytes = v6.GetAddressBytes ();
+			IPAddress v4back = v6.MapToIPv4 ();
+
+			Assert.IsTrue (StartsWith (v6bytes, ipv4MappedIPv6Prefix), "MapToIPv6 #" + i + ".1");
+			Assert.IsTrue (v6bytes [12] == v4bytes [0], "MapToIPv6 #" + i + ".2");
+			Assert.IsTrue (v6bytes [13] == v4bytes [1], "MapToIPv6 #" + i + ".3");
+			Assert.IsTrue (v6bytes [14] == v4bytes [2], "MapToIPv6 #" + i + ".4");
+			Assert.IsTrue (v6bytes [15] == v4bytes [3], "MapToIPv6 #" + i + ".5");
+			Assert.IsTrue (v4.Equals (v4back), "MapToIPv4 #" + i);
+		}
+
+		//TODO: Test using MapToIPv4/6 with anything other than IPv4/6 addresses.
+		//Currently it is not possible to do with the IPAddress implementation.
+	}
+
+	static bool StartsWith (byte [] a, byte [] b)
+	{
+		if (a.Length < b.Length)
+			return false;
+		for (int i = 0; i < b.Length; i++)
+		{
+			if (a [i] != b [i])
+				return false;
+		}
+		return true;
+	}
+
 #endif
+
+	[Test]
+	public void EqualsFromBytes ()
+	{
+		for (int i = 0; i < ipv4ParseOk.Length / 2; i++) {
+			IPAddress ip = IPAddress.Parse (ipv4ParseOk [i * 2]);
+			IPAddress ipFromBytes = new IPAddress (ip.GetAddressBytes ());
+			Assert.IsTrue (ip.Equals (ipFromBytes), "EqualsFromBytes #" + i);
+		}
+
+	}
+
 }
 }
 

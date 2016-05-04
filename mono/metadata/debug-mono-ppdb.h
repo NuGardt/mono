@@ -7,6 +7,7 @@
  *	Mono Project (http://www.mono-project.com)
  *
  * Copyright 2015 Xamarin Inc (http://www.xamarin.com)
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #ifndef __MONO_METADATA_DEBUG_MONO_PPDB_H__
@@ -17,7 +18,7 @@
 #include <mono/metadata/mono-debug.h>
 
 MonoPPDBFile*
-mono_ppdb_load_file (MonoImage *image);
+mono_ppdb_load_file (MonoImage *image, const guint8 *raw_contents, int size);
 
 void
 mono_ppdb_close (MonoDebugHandle *handle);

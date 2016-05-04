@@ -55,14 +55,13 @@ namespace System.Runtime.Remoting.Contexts {
 		int domain_id;
 		int context_id;
 		UIntPtr static_data; /* GC-tracked */
+		UIntPtr data;
 		#endregion
 #pragma warning restore 169, 414
 
 		// Name is significant; used by the runtime.
 		[ContextStatic]
 		static object[] local_slots;
-
-		static NamedDataSlot namedDataSlot;
 
 		// Default server context sink chain
 		static IMessageSink default_server_context_sink;
@@ -78,12 +77,19 @@ namespace System.Runtime.Remoting.Contexts {
 		
 		static int global_count;
 
+		volatile LocalDataStoreHolder _localDataStore;
+
+		static LocalDataStoreMgr _localDataStoreMgr = new LocalDataStoreMgr();
+
 		static DynamicPropertyCollection global_dynamic_properties;
 		DynamicPropertyCollection context_dynamic_properties;
 		ContextCallbackObject callback_object = null;
 
 		[MethodImpl (MethodImplOptions.InternalCall)]
 		extern static void RegisterContext (Context ctx);
+
+		[MethodImpl (MethodImplOptions.InternalCall)]
+		extern static void ReleaseContext (Context ctx);
 		
 		public Context ()
 		{
@@ -95,6 +101,7 @@ namespace System.Runtime.Remoting.Contexts {
 
 		~Context ()
 		{
+			ReleaseContext (this);
 		}
 
 		public static Context DefaultContext {
@@ -368,60 +375,55 @@ namespace System.Runtime.Remoting.Contexts {
 			callback_object.DoCallBack (deleg);
 		}
 
-		static NamedDataSlot NamedDataSlot {
-			get {
-				if (namedDataSlot == null)
-					Interlocked.CompareExchange (ref namedDataSlot, new NamedDataSlot (false), null);
-
-				return namedDataSlot;
+		private LocalDataStore MyLocalStore 
+		{
+			get 
+			{ 
+				if (_localDataStore == null)
+				{
+					// It's OK to lock the manager here because it is going to lock
+					// itself anyway.
+					lock (_localDataStoreMgr)
+					{
+						if (_localDataStore == null)
+						{
+							// The local store has not yet been created for this thread.
+							_localDataStore = _localDataStoreMgr.CreateLocalDataStore();
+						}
+					}
+				}
+				return _localDataStore.Store;
 			}
 		}
 
 		public static LocalDataStoreSlot AllocateDataSlot ()
 		{
-			return new LocalDataStoreSlot (false);
+			return _localDataStoreMgr.AllocateDataSlot ();
 		}
 
 		public static LocalDataStoreSlot AllocateNamedDataSlot (string name)
 		{
-			return NamedDataSlot.Allocate (name);
+			return _localDataStoreMgr.AllocateNamedDataSlot (name);
 		}
 
 		public static void FreeNamedDataSlot (string name)
 		{
-			NamedDataSlot.Free (name);
+			_localDataStoreMgr.FreeNamedDataSlot (name);
 		}
 
 		public static LocalDataStoreSlot GetNamedDataSlot (string name)
 		{
-			return NamedDataSlot.Get (name);
+			return _localDataStoreMgr.GetNamedDataSlot (name);
 		}
 
 		public static object GetData (LocalDataStoreSlot slot)
 		{
-			object[] slots = local_slots;
-			if (slot == null)
-				throw new ArgumentNullException ("slot");
-			if (slots != null && slot.slot < slots.Length)
-				return slots [slot.slot];
-			return null;
+			return Thread.CurrentContext.MyLocalStore.GetData (slot);
 		}
 
 		public static void SetData (LocalDataStoreSlot slot, object data)
 		{
-			object[] slots = local_slots;
-			if (slot == null)
-				throw new ArgumentNullException ("slot");
-			if (slots == null) {
-				slots = new object [slot.slot + 2];
-				local_slots = slots;
-			} else if (slot.slot >= slots.Length) {
-				object[] nslots = new object [slot.slot + 2];
-				slots.CopyTo (nslots, 0);
-				slots = nslots;
-				local_slots = slots;
-			}
-			slots [slot.slot] = data;
+			Thread.CurrentContext.MyLocalStore.SetData (slot, data);
 		}
 	}
 

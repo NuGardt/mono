@@ -5,18 +5,7 @@
  * Copyright 2003-2010 Novell, Inc.
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 #ifndef __MONO_SGENARCHDEP_H__
 #define __MONO_SGENARCHDEP_H__
@@ -88,8 +77,8 @@
 	} while (0)
 
 /* MS_BLOCK_SIZE must be a multiple of the system pagesize, which for some
-   archs is 64k.  */
-#if defined(TARGET_POWERPC64) && _CALL_ELF == 2
+   architectures is 64k.  */
+#if defined(TARGET_POWERPC) || defined(TARGET_POWERPC64)
 #define ARCH_MIN_MS_BLOCK_SIZE	(64*1024)
 #define ARCH_MIN_MS_BLOCK_SIZE_SHIFT	16
 #endif

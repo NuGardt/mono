@@ -5,6 +5,7 @@
  *   Marcos Henrich (marcos.henrich@xamarin.com)
  *
  * Copyright 2014 Xamarin, Inc (http://www.xamarin.com)
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "mini.h"
@@ -58,7 +59,7 @@ mono_save_seq_point_info (MonoCompile *cfg)
 
 	for (i = 0; i < cfg->seq_points->len; ++i) {
 		SeqPoint *sp = &seq_points [i];
-		MonoInst *ins = g_ptr_array_index (cfg->seq_points, i);
+		MonoInst *ins = (MonoInst *)g_ptr_array_index (cfg->seq_points, i);
 
 		sp->il_offset = ins->inst_imm;
 		sp->native_offset = ins->inst_offset;
@@ -79,7 +80,7 @@ mono_save_seq_point_info (MonoCompile *cfg)
 			bb_seq_points = g_slist_reverse (bb->seq_points);
 			last = NULL;
 			for (l = bb_seq_points; l; l = l->next) {
-				MonoInst *ins = l->data;
+				MonoInst *ins = (MonoInst *)l->data;
 
 				if (ins->inst_imm == METHOD_ENTRY_IL_OFFSET || ins->inst_imm == METHOD_EXIT_IL_OFFSET)
 				/* Used to implement method entry/exit events */
@@ -98,7 +99,8 @@ mono_save_seq_point_info (MonoCompile *cfg)
 				last = ins;
 			}
 
-			if (bb->last_ins && bb->last_ins->opcode == OP_ENDFINALLY && bb->seq_points) {
+			/* The second case handles endfinally opcodes which are in a separate bb by themselves */
+			if ((bb->last_ins && bb->last_ins->opcode == OP_ENDFINALLY && bb->seq_points) || (bb->out_count == 1 && bb->out_bb [0]->code && bb->out_bb [0]->code->opcode == OP_ENDFINALLY)) {
 				MonoBasicBlock *bb2;
 				MonoInst *endfinally_seq_point = NULL;
 
@@ -107,13 +109,13 @@ mono_save_seq_point_info (MonoCompile *cfg)
 				 */
 				l = g_slist_last (bb->seq_points);
 				if (l) {
-					endfinally_seq_point = l->data;
+					endfinally_seq_point = (MonoInst *)l->data;
 
 					for (bb2 = cfg->bb_entry; bb2; bb2 = bb2->next_bb) {
 						GSList *l = g_slist_last (bb2->seq_points);
 
 						if (l) {
-							MonoInst *ins = l->data;
+							MonoInst *ins = (MonoInst *)l->data;
 
 							if (!(ins->inst_imm == METHOD_ENTRY_IL_OFFSET || ins->inst_imm == METHOD_EXIT_IL_OFFSET) && ins != endfinally_seq_point)
 								next [endfinally_seq_point->backend.size] = g_slist_append (next [endfinally_seq_point->backend.size], GUINT_TO_POINTER (ins->backend.size));
@@ -189,16 +191,22 @@ MonoSeqPointInfo*
 mono_get_seq_points (MonoDomain *domain, MonoMethod *method)
 {
 	MonoSeqPointInfo *seq_points;
+	MonoMethod *declaring_generic_method = NULL, *shared_method = NULL;
 
-	mono_domain_lock (domain);
-	seq_points = g_hash_table_lookup (domain_jit_info (domain)->seq_points, method);
+	if (method->is_inflated) {
+		declaring_generic_method = mono_method_get_declaring_generic_method (method);
+		shared_method = mini_get_shared_method (method);
+	}
+
+	mono_loader_lock ();
+	seq_points = (MonoSeqPointInfo *)g_hash_table_lookup (domain_jit_info (domain)->seq_points, method);
 	if (!seq_points && method->is_inflated) {
 		/* generic sharing + aot */
-		seq_points = g_hash_table_lookup (domain_jit_info (domain)->seq_points, mono_method_get_declaring_generic_method (method));
+		seq_points = (MonoSeqPointInfo *)g_hash_table_lookup (domain_jit_info (domain)->seq_points, declaring_generic_method);
 		if (!seq_points)
-			seq_points = g_hash_table_lookup (domain_jit_info (domain)->seq_points, mini_get_shared_method (method));
+			seq_points = (MonoSeqPointInfo *)g_hash_table_lookup (domain_jit_info (domain)->seq_points, shared_method);
 	}
-	mono_domain_unlock (domain);
+	mono_loader_unlock ();
 
 	return seq_points;
 }
@@ -286,12 +294,4 @@ mono_bb_deduplicate_op_il_seq_points (MonoCompile *cfg, MonoBasicBlock *bb)
 
 		MONO_REMOVE_INS (bb, prev);
 	};
-}
-
-void
-mono_image_get_aot_seq_point_path (MonoImage *image, char **str)
-{
-	int size = strlen (image->name) + strlen (SEQ_POINT_AOT_EXT) + 1;
-	*str = g_malloc (size);
-	g_sprintf (*str, "%s%s", image->name, SEQ_POINT_AOT_EXT);
 }

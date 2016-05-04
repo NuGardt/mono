@@ -1,13 +1,11 @@
 ../../build/common/Consts.cs
-../../build/common/Locale.cs
-../../build/common/MonoTODOAttribute.cs
 ../../build/common/SR.cs
 Assembly/AssemblyInfo.cs
 
 ReferenceSources/DiagnosticUtility.cs
 ReferenceSources/FxTrace.cs
 ReferenceSources/SR.cs
-ReferenceSources/SR_missing.cs
+ReferenceSources/SR.missing.cs
 ReferenceSources/XmlExceptionHelper.cs
 
 ReferenceSources/BitFlagsGenerator.cs

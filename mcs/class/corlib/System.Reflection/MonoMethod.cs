@@ -149,6 +149,16 @@ namespace System.Reflection {
             return sbName.ToString();
         }
 
+		public override Delegate CreateDelegate (Type delegateType)
+		{
+			return Delegate.CreateDelegate (delegateType, this);
+		}
+
+		public override Delegate CreateDelegate (Type delegateType, object target)
+		{
+			return Delegate.CreateDelegate (delegateType, target, this);
+		}
+
         public override String ToString() 
         {
             return ReturnType.FormatTypeName() + " " + FormatNameAndSig(false);
@@ -281,15 +291,6 @@ namespace System.Reflection {
 			/*Avoid allocating an array every time*/
 			ParameterInfo[] pinfo = GetParametersInternal ();
 			ConvertValues (binder, parameters, pinfo, culture, invokeAttr);
-
-#if !NET_2_1
-			if (SecurityManager.SecurityEnabled) {
-				// sadly Attributes doesn't tell us which kind of security action this is so
-				// we must do it the hard way - and it also means that we can skip calling
-				// Attribute (which is another an icall)
-				SecurityManager.ReflectedLinkDemandInvoke (this);
-			}
-#endif
 
 			if (ContainsGenericParameters)
 				throw new InvalidOperationException ("Late bound operations cannot be performed on types or methods for which ContainsGenericParameters is true.");
@@ -501,9 +502,16 @@ namespace System.Reflection {
 			return CustomAttributeData.GetCustomAttributes (this);
 		}
 
+#if MOBILE
+		static int get_core_clr_security_level ()
+		{
+			return 1;
+		}
+#else
 		//seclevel { transparent = 0, safe-critical = 1, critical = 2}
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		public extern int get_core_clr_security_level ();
+#endif
 
 		public override bool IsSecurityTransparent {
 			get { return get_core_clr_security_level () == 0; }
@@ -634,15 +642,6 @@ namespace System.Reflection {
 
 			MonoMethod.ConvertValues (binder, parameters, pinfo, culture, invokeAttr);
 
-#if !NET_2_1
-			if (SecurityManager.SecurityEnabled) {
-				// sadly Attributes doesn't tell us which kind of security action this is so
-				// we must do it the hard way - and it also means that we can skip calling
-				// Attribute (which is another an icall)
-				SecurityManager.ReflectedLinkDemandInvoke (this);
-			}
-#endif
-
 			if (obj == null && DeclaringType.ContainsGenericParameters)
 				throw new MemberAccessException ("Cannot create an instance of " + DeclaringType + " because Type.ContainsGenericParameters is true.");
 
@@ -758,6 +757,28 @@ namespace System.Reflection {
 
 		public override IList<CustomAttributeData> GetCustomAttributesData () {
 			return CustomAttributeData.GetCustomAttributes (this);
+		}
+
+#if MOBILE
+		static int get_core_clr_security_level ()
+		{
+			return 1;
+		}
+#else
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		public extern int get_core_clr_security_level ();
+#endif
+
+		public override bool IsSecurityTransparent {
+			get { return get_core_clr_security_level () == 0; }
+		}
+
+		public override bool IsSecurityCritical {
+			get { return get_core_clr_security_level () > 0; }
+		}
+
+		public override bool IsSecuritySafeCritical {
+			get { return get_core_clr_security_level () == 1; }
 		}
 	}
 }

@@ -9,29 +9,18 @@
  * Copyright 2010 Novell, Inc (http://www.novell.com)
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
 
-#ifdef HAVE_SGEN_GC
+#if defined(HAVE_SGEN_GC) && !defined(USE_COOP_GC)
 #if !defined(__MACH__) && !MONO_MACH_ARCH_SUPPORTED && defined(HAVE_PTHREAD_KILL)
 
 #include <errno.h>
 #include <glib.h>
 #include "sgen/sgen-gc.h"
-#include "metadata/gc-internal.h"
+#include "metadata/gc-internals.h"
 #include "sgen/sgen-archdep.h"
 #include "metadata/object-internals.h"
 #include "utils/mono-signal-handler.h"
@@ -107,7 +96,7 @@ suspend_thread (SgenThreadInfo *info, void *context)
 	if (mono_gc_get_gc_callbacks ()->thread_suspend_func)
 		mono_gc_get_gc_callbacks ()->thread_suspend_func (info->client_info.runtime_data, context, NULL);
 
-	SGEN_LOG (4, "Posting suspend_ack_semaphore for suspend from %p %p", info, (gpointer)mono_native_thread_id_get ());
+	SGEN_LOG (4, "Posting suspend_ack_semaphore for suspend from %p %p", info, (gpointer) (gsize) mono_native_thread_id_get ());
 
 	/*
 	Block the restart signal. 
@@ -129,7 +118,7 @@ suspend_thread (SgenThreadInfo *info, void *context)
 	/* Unblock the restart signal. */
 	pthread_sigmask (SIG_UNBLOCK, &suspend_ack_signal_mask, NULL);
 
-	SGEN_LOG (4, "Posting suspend_ack_semaphore for resume from %p %p\n", info, (gpointer)mono_native_thread_id_get ());
+	SGEN_LOG (4, "Posting suspend_ack_semaphore for resume from %p %p\n", info, (gpointer) (gsize) mono_native_thread_id_get ());
 	/* notify the waiting thread */
 	SGEN_SEMAPHORE_POST (suspend_ack_semaphore_ptr);
 }
@@ -163,7 +152,7 @@ MONO_SIG_HANDLER_FUNC (static, restart_handler)
 
 	info = mono_thread_info_current ();
 	info->client_info.signal = restart_signal_num;
-	SGEN_LOG (4, "Restart handler in %p %p", info, (gpointer)mono_native_thread_id_get ());
+	SGEN_LOG (4, "Restart handler in %p %p", info, (gpointer) (gsize) mono_native_thread_id_get ());
 	errno = old_errno;
 }
 
@@ -197,14 +186,13 @@ int
 sgen_thread_handshake (BOOL suspend)
 {
 	int count, result;
-	SgenThreadInfo *info;
 	int signum = suspend ? suspend_signal_num : restart_signal_num;
 
 	MonoNativeThreadId me = mono_native_thread_id_get ();
 
 	count = 0;
 	mono_thread_info_current ()->client_info.suspend_done = TRUE;
-	FOREACH_THREAD_SAFE (info) {
+	FOREACH_THREAD (info) {
 		if (mono_native_thread_id_equals (mono_thread_info_get_tid (info), me)) {
 			continue;
 		}
@@ -219,7 +207,7 @@ sgen_thread_handshake (BOOL suspend)
 		} else {
 			info->client_info.skip = 1;
 		}
-	} END_FOREACH_THREAD_SAFE
+	} FOREACH_THREAD_END
 
 	sgen_wait_for_suspend_ack (count);
 
@@ -246,7 +234,7 @@ sgen_os_init (void)
 		g_error ("failed sigaction");
 	}
 
-	sinfo.sa_handler = (void*) restart_handler;
+	sinfo.sa_handler = (void (*)(int))restart_handler;
 	if (sigaction (restart_signal_num, &sinfo, NULL) != 0) {
 		g_error ("failed sigaction");
 	}

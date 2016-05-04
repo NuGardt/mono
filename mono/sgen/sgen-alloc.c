@@ -10,18 +10,7 @@
  * Copyright 2011 Xamarin, Inc.
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 /*
@@ -93,15 +82,15 @@ static __thread char **tlab_next_addr MONO_ATTR_USED;
 #define TLAB_REAL_END	(__thread_info__->tlab_real_end)
 #endif
 
-static void*
-alloc_degraded (GCVTable *vtable, size_t size, gboolean for_mature)
+static GCObject*
+alloc_degraded (GCVTable vtable, size_t size, gboolean for_mature)
 {
-	void *p;
+	GCObject *p;
 
 	if (!for_mature) {
 		sgen_client_degraded_allocation (size);
 		SGEN_ATOMIC_ADD_P (degraded_mode, size);
-		sgen_ensure_free_space (size);
+		sgen_ensure_free_space (size, GENERATION_OLD);
 	} else {
 		if (sgen_need_major_collection (size))
 			sgen_perform_collection (size, GENERATION_OLD, "mature allocation failure", !for_mature);
@@ -145,8 +134,8 @@ zero_tlab_if_necessary (void *p, size_t size)
  * so when we scan the thread stacks for pinned objects, we can start
  * a search for the pinned object in SGEN_SCAN_START_SIZE chunks.
  */
-void*
-sgen_alloc_obj_nolock (GCVTable *vtable, size_t size)
+GCObject*
+sgen_alloc_obj_nolock (GCVTable vtable, size_t size)
 {
 	/* FIXME: handle OOM */
 	void **p;
@@ -196,7 +185,7 @@ sgen_alloc_obj_nolock (GCVTable *vtable, size_t size)
 	 */
 
 	if (real_size > SGEN_MAX_SMALL_OBJ_SIZE) {
-		p = sgen_los_alloc_large_inner (vtable, ALIGN_UP (real_size));
+		p = (void **)sgen_los_alloc_large_inner (vtable, ALIGN_UP (real_size));
 	} else {
 		/* tlab_next and tlab_temp_end are TLS vars so accessing them might be expensive */
 
@@ -219,7 +208,7 @@ sgen_alloc_obj_nolock (GCVTable *vtable, size_t size)
 			g_assert (*p == NULL);
 			mono_atomic_store_seq (p, vtable);
 
-			return p;
+			return (GCObject*)p;
 		}
 
 		/* Slow path */
@@ -252,7 +241,7 @@ sgen_alloc_obj_nolock (GCVTable *vtable, size_t size)
 			available_in_tlab = (int)(TLAB_REAL_END - TLAB_NEXT);//We'll never have tlabs > 2Gb
 			if (size > tlab_size || available_in_tlab > SGEN_MAX_NURSERY_WASTE) {
 				/* Allocate directly from the nursery */
-				p = sgen_nursery_alloc (size);
+				p = (void **)sgen_nursery_alloc (size);
 				if (!p) {
 					/*
 					 * We couldn't allocate from the nursery, so we try
@@ -271,9 +260,9 @@ sgen_alloc_obj_nolock (GCVTable *vtable, size_t size)
 					 * always loop we will loop endlessly in the case of
 					 * OOM).
 					 */
-					sgen_ensure_free_space (real_size);
+					sgen_ensure_free_space (real_size, GENERATION_NURSERY);
 					if (!degraded_mode)
-						p = sgen_nursery_alloc (size);
+						p = (void **)sgen_nursery_alloc (size);
 				}
 				if (!p)
 					return alloc_degraded (vtable, size, FALSE);
@@ -285,12 +274,12 @@ sgen_alloc_obj_nolock (GCVTable *vtable, size_t size)
 					SGEN_LOG (3, "Retire TLAB: %p-%p [%ld]", TLAB_START, TLAB_REAL_END, (long)(TLAB_REAL_END - TLAB_NEXT - size));
 				sgen_nursery_retire_region (p, available_in_tlab);
 
-				p = sgen_nursery_alloc_range (tlab_size, size, &alloc_size);
+				p = (void **)sgen_nursery_alloc_range (tlab_size, size, &alloc_size);
 				if (!p) {
 					/* See comment above in similar case. */
-					sgen_ensure_free_space (tlab_size);
+					sgen_ensure_free_space (tlab_size, GENERATION_NURSERY);
 					if (!degraded_mode)
-						p = sgen_nursery_alloc_range (tlab_size, size, &alloc_size);
+						p = (void **)sgen_nursery_alloc_range (tlab_size, size, &alloc_size);
 				}
 				if (!p)
 					return alloc_degraded (vtable, size, FALSE);
@@ -304,7 +293,7 @@ sgen_alloc_obj_nolock (GCVTable *vtable, size_t size)
 				zero_tlab_if_necessary (TLAB_START, alloc_size);
 
 				/* Allocate from the TLAB */
-				p = (void*)TLAB_NEXT;
+				p = (void **)TLAB_NEXT;
 				TLAB_NEXT += size;
 				sgen_set_nursery_scan_start ((char*)p);
 			}
@@ -326,11 +315,11 @@ sgen_alloc_obj_nolock (GCVTable *vtable, size_t size)
 		mono_atomic_store_seq (p, vtable);
 	}
 
-	return p;
+	return (GCObject*)p;
 }
 
-void*
-sgen_try_alloc_obj_nolock (GCVTable *vtable, size_t size)
+GCObject*
+sgen_try_alloc_obj_nolock (GCVTable vtable, size_t size)
 {
 	void **p;
 	char *new_next;
@@ -349,7 +338,7 @@ sgen_try_alloc_obj_nolock (GCVTable *vtable, size_t size)
 
 	if (G_UNLIKELY (size > tlab_size)) {
 		/* Allocate directly from the nursery */
-		p = sgen_nursery_alloc (size);
+		p = (void **)sgen_nursery_alloc (size);
 		if (!p)
 			return NULL;
 		sgen_set_nursery_scan_start ((char*)p);
@@ -380,7 +369,7 @@ sgen_try_alloc_obj_nolock (GCVTable *vtable, size_t size)
 			}
 		} else if (available_in_tlab > SGEN_MAX_NURSERY_WASTE) {
 			/* Allocate directly from the nursery */
-			p = sgen_nursery_alloc (size);
+			p = (void **)sgen_nursery_alloc (size);
 			if (!p)
 				return NULL;
 
@@ -389,7 +378,7 @@ sgen_try_alloc_obj_nolock (GCVTable *vtable, size_t size)
 			size_t alloc_size = 0;
 
 			sgen_nursery_retire_region (p, available_in_tlab);
-			new_next = sgen_nursery_alloc_range (tlab_size, size, &alloc_size);
+			new_next = (char *)sgen_nursery_alloc_range (tlab_size, size, &alloc_size);
 			p = (void**)new_next;
 			if (!p)
 				return NULL;
@@ -414,19 +403,17 @@ sgen_try_alloc_obj_nolock (GCVTable *vtable, size_t size)
 
 	mono_atomic_store_seq (p, vtable);
 
-	return p;
+	return (GCObject*)p;
 }
 
-void*
-sgen_alloc_obj (GCVTable *vtable, size_t size)
+GCObject*
+sgen_alloc_obj (GCVTable vtable, size_t size)
 {
-	void *res;
+	GCObject *res;
 	TLAB_ACCESS_INIT;
 
 	if (!SGEN_CAN_ALIGN_UP (size))
 		return NULL;
-
-#ifndef DISABLE_CRITICAL_REGION
 
 	if (G_UNLIKELY (has_per_allocation_action)) {
 		static int alloc_count;
@@ -446,18 +433,16 @@ sgen_alloc_obj (GCVTable *vtable, size_t size)
 	}
 
 	ENTER_CRITICAL_REGION;
-	res = sgen_try_alloc_obj_nolock ((GCVTable*)vtable, size);
+	res = sgen_try_alloc_obj_nolock (vtable, size);
 	if (res) {
 		EXIT_CRITICAL_REGION;
 		return res;
 	}
 	EXIT_CRITICAL_REGION;
-#endif
+
 	LOCK_GC;
-	res = sgen_alloc_obj_nolock ((GCVTable*)vtable, size);
+	res = sgen_alloc_obj_nolock (vtable, size);
 	UNLOCK_GC;
-	if (G_UNLIKELY (!res))
-		sgen_client_out_of_memory (size);
 	return res;
 }
 
@@ -465,10 +450,10 @@ sgen_alloc_obj (GCVTable *vtable, size_t size)
  * To be used for interned strings and possibly MonoThread, reflection handles.
  * We may want to explicitly free these objects.
  */
-void*
-sgen_alloc_obj_pinned (GCVTable *vtable, size_t size)
+GCObject*
+sgen_alloc_obj_pinned (GCVTable vtable, size_t size)
 {
-	void **p;
+	GCObject *p;
 
 	if (!SGEN_CAN_ALIGN_UP (size))
 		return NULL;
@@ -478,10 +463,10 @@ sgen_alloc_obj_pinned (GCVTable *vtable, size_t size)
 
 	if (size > SGEN_MAX_SMALL_OBJ_SIZE) {
 		/* large objects are always pinned anyway */
-		p = sgen_los_alloc_large_inner ((GCVTable*)vtable, size);
+		p = (GCObject *)sgen_los_alloc_large_inner (vtable, size);
 	} else {
 		SGEN_ASSERT (9, sgen_client_vtable_is_inited (vtable), "class %s:%s is not initialized", sgen_client_vtable_get_namespace (vtable), sgen_client_vtable_get_name (vtable));
-		p = major_collector.alloc_small_pinned_obj ((GCVTable*)vtable, size, SGEN_VTABLE_HAS_REFERENCES ((GCVTable*)vtable));
+		p = major_collector.alloc_small_pinned_obj (vtable, size, SGEN_VTABLE_HAS_REFERENCES (vtable));
 	}
 	if (G_LIKELY (p)) {
 		SGEN_LOG (6, "Allocated pinned object %p, vtable: %p (%s), size: %zd", p, vtable, sgen_client_vtable_get_name (vtable), size);
@@ -491,17 +476,17 @@ sgen_alloc_obj_pinned (GCVTable *vtable, size_t size)
 	return p;
 }
 
-void*
-sgen_alloc_obj_mature (GCVTable *vtable, size_t size)
+GCObject*
+sgen_alloc_obj_mature (GCVTable vtable, size_t size)
 {
-	void *res;
+	GCObject *res;
 
 	if (!SGEN_CAN_ALIGN_UP (size))
 		return NULL;
 	size = ALIGN_UP (size);
 
 	LOCK_GC;
-	res = alloc_degraded ((GCVTable*)vtable, size, TRUE);
+	res = alloc_degraded (vtable, size, TRUE);
 	UNLOCK_GC;
 
 	return res;
@@ -530,15 +515,13 @@ sgen_init_tlab_info (SgenThreadInfo* info)
 void
 sgen_clear_tlabs (void)
 {
-	SgenThreadInfo *info;
-
 	FOREACH_THREAD (info) {
 		/* A new TLAB will be allocated when the thread does its first allocation */
 		*info->tlab_start_addr = NULL;
 		*info->tlab_next_addr = NULL;
 		*info->tlab_temp_end_addr = NULL;
 		*info->tlab_real_end_addr = NULL;
-	} END_FOREACH_THREAD
+	} FOREACH_THREAD_END
 }
 
 void
@@ -554,9 +537,6 @@ sgen_init_allocator (void)
 
 	mono_tls_key_set_offset (TLS_KEY_SGEN_TLAB_NEXT_ADDR, tlab_next_addr_offset);
 	mono_tls_key_set_offset (TLS_KEY_SGEN_TLAB_TEMP_END, tlab_temp_end_offset);
-
-	g_assert (tlab_next_addr_offset != -1);
-	g_assert (tlab_temp_end_offset != -1);
 #endif
 
 #ifdef HEAVY_STATISTICS

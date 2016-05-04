@@ -7,24 +7,12 @@
  *
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 #ifndef __MONO_SGEN_DESCRIPTOR_H__
 #define __MONO_SGEN_DESCRIPTOR_H__
 
 #include <mono/sgen/sgen-conf.h>
-
 
 /*
  * ######################################################################
@@ -131,24 +119,24 @@ enum {
 	ROOT_DESC_TYPE_SHIFT = 3,
 };
 
-typedef void (*SgenUserMarkFunc)     (void **addr, void *gc_data);
+typedef void (*SgenUserMarkFunc)     (GCObject **addr, void *gc_data);
 typedef void (*SgenUserRootMarkFunc) (void *addr, SgenUserMarkFunc mark_func, void *gc_data);
 
-void* sgen_make_user_root_descriptor (SgenUserRootMarkFunc marker);
+SgenDescriptor sgen_make_user_root_descriptor (SgenUserRootMarkFunc marker);
 
-gsize* sgen_get_complex_descriptor (mword desc);
-void* sgen_get_complex_descriptor_bitmap (mword desc);
-SgenUserRootMarkFunc sgen_get_user_descriptor_func (mword desc);
+gsize* sgen_get_complex_descriptor (SgenDescriptor desc);
+void* sgen_get_complex_descriptor_bitmap (SgenDescriptor desc);
+SgenUserRootMarkFunc sgen_get_user_descriptor_func (SgenDescriptor desc);
 
 void sgen_init_descriptors (void);
 
 #ifdef HEAVY_STATISTICS
-void sgen_descriptor_count_scanned_object (mword desc);
-void sgen_descriptor_count_copied_object (mword desc);
+void sgen_descriptor_count_scanned_object (SgenDescriptor desc);
+void sgen_descriptor_count_copied_object (SgenDescriptor desc);
 #endif
 
 static inline gboolean
-sgen_gc_descr_has_references (mword desc)
+sgen_gc_descr_has_references (SgenDescriptor desc)
 {
 	/* This covers SMALL_PTRFREE and COMPLEX_PTRFREE */
 	if ((desc & DESC_TYPE_PTRFREE_MASK) == DESC_TYPE_PTRFREE_BITS)
@@ -188,7 +176,7 @@ sgen_gc_descr_has_references (mword desc)
 			_objptr += ((desc) >> 16) & 0xff;	\
 			_objptr_end = _objptr + (((desc) >> 24) & 0xff);	\
 			while (_objptr < _objptr_end) {	\
-				HANDLE_PTR (_objptr, (obj));	\
+				HANDLE_PTR ((GCObject**)_objptr, (obj)); \
 				_objptr++;	\
 			};	\
 		}	\
@@ -207,7 +195,7 @@ sgen_gc_descr_has_references (mword desc)
 			int _index = GNUC_BUILTIN_CTZ (_bmap);	\
 			_objptr += _index;			\
 			_bmap >>= (_index + 1);			\
-			HANDLE_PTR (_objptr, (obj));		\
+			HANDLE_PTR ((GCObject**)_objptr, (obj));	\
 			++_objptr;				\
 		} while (_bmap);				\
 	} while (0)
@@ -219,7 +207,7 @@ sgen_gc_descr_has_references (mword desc)
 		_objptr += OBJECT_HEADER_WORDS;	\
 		do {	\
 			if ((_bmap & 1)) {	\
-				HANDLE_PTR (_objptr, (obj));	\
+				HANDLE_PTR ((GCObject**)_objptr, (obj));	\
 			}	\
 			_bmap >>= 1;	\
 			++_objptr;	\
@@ -240,7 +228,7 @@ sgen_gc_descr_has_references (mword desc)
 			/*g_print ("bitmap: 0x%x/%d at %p\n", _bmap, bwords, _objptr);*/	\
 			while (_bmap) {	\
 				if ((_bmap & 1)) {	\
-					HANDLE_PTR (_objptr, (obj));	\
+					HANDLE_PTR ((GCObject**)_objptr, (obj));	\
 				}	\
 				_bmap >>= 1;	\
 				++_objptr;	\
@@ -252,7 +240,7 @@ sgen_gc_descr_has_references (mword desc)
 /* this one is untested */
 #define OBJ_COMPLEX_ARR_FOREACH_PTR(desc,obj)	do {	\
 		/* there are pointers */	\
-		GCVTable *vt = (GCVTable*)SGEN_LOAD_VTABLE (obj); \
+		GCVTable vt = SGEN_LOAD_VTABLE (obj); \
 		gsize *mbitmap_data = sgen_get_complex_descriptor ((desc)); \
 		gsize mbwords = (*mbitmap_data++) - 1;	\
 		gsize el_size = sgen_client_array_element_size (vt);	\
@@ -268,7 +256,7 @@ sgen_gc_descr_has_references (mword desc)
 				/*g_print ("bitmap: 0x%x\n", _bmap);*/	\
 				while (_bmap) {	\
 					if ((_bmap & 1)) {	\
-						HANDLE_PTR (_objptr, (obj));	\
+						HANDLE_PTR ((GCObject**)_objptr, (obj));	\
 					}	\
 					_bmap >>= 1;	\
 					++_objptr;	\
@@ -290,7 +278,7 @@ sgen_gc_descr_has_references (mword desc)
 				void **end_refs = (void**)((char*)p + el_size * sgen_client_array_length ((GCObject*)(obj)));	\
 				/* Note: this code can handle also arrays of struct with only references in them */	\
 				while (p < end_refs) {	\
-					HANDLE_PTR (p, (obj));	\
+					HANDLE_PTR ((GCObject**)p, (obj));	\
 					++p;	\
 				}	\
 			} else if (etype == DESC_TYPE_V_RUN_LEN << 14) {	\
@@ -303,7 +291,7 @@ sgen_gc_descr_has_references (mword desc)
 					int i;	\
 					p += offset;	\
 					for (i = 0; i < num_refs; ++i) {	\
-						HANDLE_PTR (p + i, (obj));	\
+						HANDLE_PTR ((GCObject**)p + i, (obj));	\
 					}	\
 					e_start += el_size;	\
 				}	\
@@ -316,7 +304,7 @@ sgen_gc_descr_has_references (mword desc)
 					/* Note: there is no object header here to skip */	\
 					while (_bmap) {	\
 						if ((_bmap & 1)) {	\
-							HANDLE_PTR (p, (obj));	\
+							HANDLE_PTR ((GCObject**)p, (obj));	\
 						}	\
 						_bmap >>= 1;	\
 						++p;	\

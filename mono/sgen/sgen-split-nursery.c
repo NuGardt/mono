@@ -9,18 +9,7 @@
  * Copyright 2011-2012 Xamarin Inc (http://www.xamarin.com)
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
@@ -148,9 +137,9 @@ static AgeAllocationBuffer age_alloc_buffers [MAX_AGE];
 static SgenFragmentAllocator collector_allocator;
 
 static inline int
-get_object_age (char *object)
+get_object_age (GCObject *object)
 {
-	size_t idx = (object - sgen_nursery_start) >> SGEN_TO_SPACE_GRANULE_BITS;
+	size_t idx = ((char*)object - sgen_nursery_start) >> SGEN_TO_SPACE_GRANULE_BITS;
 	return region_age [idx];
 }
 
@@ -179,8 +168,8 @@ mark_bit (char *space_bitmap, char *pos)
 static void
 mark_bits_in_range (char *space_bitmap, char *start, char *end)
 {
-	start = align_down (start, SGEN_TO_SPACE_GRANULE_BITS);
-	end = align_up (end, SGEN_TO_SPACE_GRANULE_BITS);
+	start = (char *)align_down (start, SGEN_TO_SPACE_GRANULE_BITS);
+	end = (char *)align_up (end, SGEN_TO_SPACE_GRANULE_BITS);
 
 	for (;start < end; start += SGEN_TO_SPACE_GRANULE_IN_BYTES)
 		mark_bit (space_bitmap, start);
@@ -244,7 +233,7 @@ alloc_for_promotion_slow_path (int age, size_t objsize)
 	size_t allocated_size;
 	size_t aligned_objsize = (size_t)align_up (objsize, SGEN_TO_SPACE_GRANULE_BITS);
 
-	p = sgen_fragment_allocator_serial_range_alloc (
+	p = (char *)sgen_fragment_allocator_serial_range_alloc (
 		&collector_allocator,
 		MAX (aligned_objsize, AGE_ALLOC_BUFFER_DESIRED_SIZE),
 		MAX (aligned_objsize, AGE_ALLOC_BUFFER_MIN_SIZE),
@@ -258,8 +247,8 @@ alloc_for_promotion_slow_path (int age, size_t objsize)
 	return p;
 }
 
-static inline char*
-alloc_for_promotion (GCVTable *vtable, char *obj, size_t objsize, gboolean has_references)
+static inline GCObject*
+alloc_for_promotion (GCVTable vtable, GCObject *obj, size_t objsize, gboolean has_references)
 {
 	char *p = NULL;
 	int age;
@@ -281,13 +270,13 @@ alloc_for_promotion (GCVTable *vtable, char *obj, size_t objsize, gboolean has_r
 	}
 
 	/* FIXME: assumes object layout */
-	*(GCVTable**)p = vtable;
+	*(GCVTable*)p = vtable;
 
-	return p;
+	return (GCObject*)p;
 }
 
-static char*
-minor_alloc_for_promotion (GCVTable *vtable, char *obj, size_t objsize, gboolean has_references)
+static GCObject*
+minor_alloc_for_promotion (GCVTable vtable, GCObject *obj, size_t objsize, gboolean has_references)
 {
 	/*
 	We only need to check for a non-nursery object if we're doing a major collection.
@@ -336,8 +325,8 @@ prepare_to_space (char *to_space_bitmap, size_t space_bitmap_size)
 	previous = &collector_allocator.alloc_head;
 
 	for (frag = *previous; frag; frag = *previous) {
-		char *start = align_up (frag->fragment_next, SGEN_TO_SPACE_GRANULE_BITS);
-		char *end = align_down (frag->fragment_end, SGEN_TO_SPACE_GRANULE_BITS);
+		char *start = (char *)align_up (frag->fragment_next, SGEN_TO_SPACE_GRANULE_BITS);
+		char *end = (char *)align_down (frag->fragment_end, SGEN_TO_SPACE_GRANULE_BITS);
 
 		/* Fragment is too small to be usable. */
 		if ((end - start) < SGEN_MAX_NURSERY_WASTE) {
@@ -378,12 +367,12 @@ static void
 init_nursery (SgenFragmentAllocator *allocator, char *start, char *end)
 {
 	int alloc_quote = (int)((end - start) * alloc_ratio);
-	promotion_barrier = align_down (start + alloc_quote, 3);
+	promotion_barrier = (char *)align_down (start + alloc_quote, 3);
 	sgen_fragment_allocator_add (allocator, start, promotion_barrier);
 	sgen_fragment_allocator_add (&collector_allocator, promotion_barrier, end);
 
 	region_age_size = (end - start) >> SGEN_TO_SPACE_GRANULE_BITS;
-	region_age = g_malloc0 (region_age_size);
+	region_age = (char *)g_malloc0 (region_age_size);
 }
 
 static gboolean

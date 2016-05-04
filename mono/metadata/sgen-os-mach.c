@@ -9,18 +9,7 @@
  * Copyright 2010 Novell, Inc (http://www.novell.com)
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
@@ -33,17 +22,23 @@
 #include "sgen/sgen-protocol.h"
 #include "sgen/sgen-thread-pool.h"
 #include "metadata/object-internals.h"
-#include "metadata/gc-internal.h"
+#include "metadata/gc-internals.h"
 
 #if defined(__MACH__)
 #include "utils/mach-support.h"
 #endif
 
 #if defined(__MACH__) && MONO_MACH_ARCH_SUPPORTED
+
+#if !defined(USE_COOP_GC)
 gboolean
 sgen_resume_thread (SgenThreadInfo *info)
 {
-	return thread_resume (info->client_info.info.native_handle) == KERN_SUCCESS;
+	kern_return_t ret;
+	do {
+		ret = thread_resume (info->client_info.info.native_handle);
+	} while (ret == KERN_ABORTED);
+	return ret == KERN_SUCCESS;
 }
 
 gboolean
@@ -60,11 +55,15 @@ sgen_suspend_thread (SgenThreadInfo *info)
 	state = (thread_state_t) alloca (mono_mach_arch_get_thread_state_size ());
 	mctx = (mcontext_t) alloca (mono_mach_arch_get_mcontext_size ());
 
-	ret = thread_suspend (info->client_info.info.native_handle);
+	do {
+		ret = thread_suspend (info->client_info.info.native_handle);
+	} while (ret == KERN_ABORTED);
 	if (ret != KERN_SUCCESS)
 		return FALSE;
 
-	ret = mono_mach_arch_get_thread_state (info->client_info.info.native_handle, state, &num_state);
+	do {
+		ret = mono_mach_arch_get_thread_state (info->client_info.info.native_handle, state, &num_state);
+	} while (ret == KERN_ABORTED);
 	if (ret != KERN_SUCCESS)
 		return FALSE;
 
@@ -110,12 +109,11 @@ sgen_thread_handshake (BOOL suspend)
 {
 	SgenThreadInfo *cur_thread = mono_thread_info_current ();
 	kern_return_t ret;
-	SgenThreadInfo *info;
 
 	int count = 0;
 
 	cur_thread->client_info.suspend_done = TRUE;
-	FOREACH_THREAD_SAFE (info) {
+	FOREACH_THREAD (info) {
 		if (info == cur_thread || sgen_thread_pool_is_thread_pool_thread (mono_thread_info_get_tid (info)))
 			continue;
 
@@ -127,12 +125,14 @@ sgen_thread_handshake (BOOL suspend)
 			if (!sgen_suspend_thread (info))
 				continue;
 		} else {
-			ret = thread_resume (info->client_info.info.native_handle);
+			do {
+				ret = thread_resume (info->client_info.info.native_handle);
+			} while (ret == KERN_ABORTED);
 			if (ret != KERN_SUCCESS)
 				continue;
 		}
 		count ++;
-	} END_FOREACH_THREAD_SAFE
+	} FOREACH_THREAD_END
 	return count;
 }
 
@@ -152,5 +152,6 @@ mono_gc_get_restart_signal (void)
 {
 	return -1;
 }
+#endif
 #endif
 #endif

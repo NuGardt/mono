@@ -176,6 +176,7 @@ mono_arch_get_call_filter (MonoTrampInfo **info, gboolean aot)
 static void
 throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, gboolean rethrow)
 {
+	MonoError error;
 	MonoContext ctx;
 
 #ifdef DEBUG_EXCEPTIONS
@@ -194,13 +195,14 @@ throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, gboolean
 	memset (&ctx.sc_fpregs, 0, sizeof (mips_freg) * MONO_SAVED_FREGS);
 	MONO_CONTEXT_SET_IP (&ctx, eip);
 
-	if (mono_object_isinst (exc, mono_defaults.exception_class)) {
+	if (mono_object_isinst_checked (exc, mono_defaults.exception_class, &error)) {
 		MonoException *mono_ex = (MonoException*)exc;
 		if (!rethrow) {
 			mono_ex->stack_trace = NULL;
 			mono_ex->trace_ips = NULL;
 		}
 	}
+	mono_error_assert_ok (&error);
 	mono_handle_exception (&ctx, exc);
 #ifdef DEBUG_EXCEPTIONS
 	g_print ("throw_exception: restore to pc=%p sp=%p fp=%p ctx=%p\n",
@@ -383,7 +385,7 @@ mono_arch_get_throw_corlib_exception (MonoTrampInfo **info, gboolean aot)
 }
 
 /*
- * mono_arch_find_jit_info:
+ * mono_arch_unwind_frame:
  *
  * This function is used to gather information from @ctx, and store it in @frame_info.
  * It unwinds one stack frame, and stores the resulting context into @new_ctx. @lmf
@@ -391,7 +393,7 @@ mono_arch_get_throw_corlib_exception (MonoTrampInfo **info, gboolean aot)
  * Returns TRUE on success, FALSE otherwise.
  */
 gboolean
-mono_arch_find_jit_info (MonoDomain *domain, MonoJitTlsData *jit_tls, 
+mono_arch_unwind_frame (MonoDomain *domain, MonoJitTlsData *jit_tls, 
 							 MonoJitInfo *ji, MonoContext *ctx, 
 							 MonoContext *new_ctx, MonoLMF **lmf, 
 							 mgreg_t **save_locations,
@@ -410,7 +412,10 @@ mono_arch_find_jit_info (MonoDomain *domain, MonoJitTlsData *jit_tls,
 		guint32 unwind_info_len;
 		guint8 *unwind_info;
 
-		frame->type = FRAME_TYPE_MANAGED;
+		if (ji->is_trampoline)
+			frame->type = FRAME_TYPE_TRAMPOLINE;
+		else
+			frame->type = FRAME_TYPE_MANAGED;
 
 		unwind_info = mono_jinfo_get_unwind_info (ji, &unwind_info_len);
 
@@ -455,7 +460,7 @@ mono_arch_find_jit_info (MonoDomain *domain, MonoJitTlsData *jit_tls,
 
 		if (!(*lmf)->method) {
 #ifdef DEBUG_EXCEPTIONS
-			g_print ("mono_arch_find_jit_info: bad lmf @ %p\n", (void *) *lmf);
+			g_print ("mono_arch_unwind_frame: bad lmf @ %p\n", (void *) *lmf);
 #endif
 			return FALSE;
 		}

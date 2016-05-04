@@ -5,8 +5,7 @@ include ../../build/rules.make
 LIBRARY = System.Reactive.Windows.Forms.dll
 LIB_REFS = System System.Core System.Reactive.Interfaces System.Reactive.Core System.Reactive.Linq System.Windows.Forms
 LIB_MCS_FLAGS = \
-		@more_build_args \
-		-r:System.Windows.Forms.dll
+		@more_build_args
 
 ifeq (2.1, $(FRAMEWORK_VERSION))
 LIB_MCS_FLAGS += -d:NO_TASK_DELAY -d:HAS_AWAIT
@@ -21,13 +20,7 @@ TEST_MCS_FLAGS = $(LIB_MCS_FLAGS)
 
 EXTRA_DISTFILES = more_build_args
 
-VALID_PROFILE := $(filter net_4_5, $(PROFILE))
-ifndef VALID_PROFILE
-LIBRARY_NAME = dummy-System.System.Reactive.Windows.Forms.dll
-NO_SIGN_ASSEMBLY = yes
-endif
-
-INSTALL_PROFILE := $(filter net_4_5, $(PROFILE))
+INSTALL_PROFILE := $(filter net_4_x, $(PROFILE))
 ifndef INSTALL_PROFILE
 NO_INSTALL = yes
 endif

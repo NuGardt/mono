@@ -52,7 +52,7 @@ struct sigcontext {
 #define MONO_ARCH_USE_SIGACTION
 #endif
 
-#if defined(__native_client__)
+#if defined(__native_client__) || defined(HOST_WATCHOS)
 #undef MONO_ARCH_USE_SIGACTION
 #endif
 
@@ -165,6 +165,9 @@ typedef struct {
 	gboolean need_stack_frame_inited;
 	gboolean need_stack_frame;
 	int sp_fp_offset, param_area_size;
+	gpointer cinfo;
+	gpointer ss_tramp_var;
+	gpointer bp_tramp_var;
 } MonoCompileArch;
 
 #define MONO_CONTEXT_SET_LLVM_EXC_REG(ctx, exc) do { (ctx)->eax = (gsize)exc; } while (0)
@@ -206,7 +209,6 @@ typedef struct {
 /* X86 uses jit_tls->lmf (See emit_push_lmf ()) */
 #define MONO_ARCH_ENABLE_MONO_LMF_VAR 1
 #endif
-#define MONO_ARCH_HAVE_CREATE_DELEGATE_TRAMPOLINE 1
 #define MONO_ARCH_HAVE_TLS_GET (mono_x86_have_tls_get ())
 #define MONO_ARCH_IMT_REG X86_EDX
 #define MONO_ARCH_VTABLE_REG X86_EDX
@@ -215,10 +217,6 @@ typedef struct {
 #define MONO_ARCH_HAVE_GENERALIZED_IMT_THUNK 1
 #define MONO_ARCH_HAVE_LIVERANGE_OPS 1
 #define MONO_ARCH_HAVE_SIGCTX_TO_MONOCTX 1
-#if defined(__linux__) || defined (__APPLE__)
-#define MONO_ARCH_MONITOR_OBJECT_REG X86_EAX
-#define MONO_ARCH_MONITOR_LOCK_TAKEN_REG X86_EDX
-#endif
 #if !defined(__native_client_codegen__)
 #define MONO_ARCH_HAVE_FULL_AOT_TRAMPOLINES 1
 #endif
@@ -237,12 +235,9 @@ typedef struct {
 #define MONO_ARCH_AOT_SUPPORTED 1
 
 #define MONO_ARCH_GSHARED_SUPPORTED 1
-#define MONO_ARCH_HAVE_LLVM_IMT_TRAMPOLINE 1
 #define MONO_ARCH_LLVM_SUPPORTED 1
 
-#if defined(MONO_ARCH_USE_SIGACTION) || defined(TARGET_WIN32)
 #define MONO_ARCH_SOFT_DEBUG_SUPPORTED 1
-#endif
 
 #define MONO_ARCH_HAVE_EXCEPTIONS_INIT 1
 #define MONO_ARCH_HAVE_HANDLER_BLOCK_GUARD 1
@@ -257,6 +252,7 @@ typedef struct {
 #define MONO_ARCH_HAVE_TRANSLATE_TLS_OFFSET 1
 #define MONO_ARCH_HAVE_TLS_GET_REG 1
 #define MONO_ARCH_HAVE_DUMMY_INIT 1
+#define MONO_ARCH_HAVE_SDB_TRAMPOLINES 1
 #define MONO_ARCH_HAVE_PATCH_CODE_NEW 1
 
 /* Used for optimization, not complete */
@@ -271,13 +267,6 @@ typedef struct {
             MONO_ADD_INS ((cfg)->cbb, inst); \
 			MONO_EMIT_NEW_COND_EXC (cfg, LE_UN, "IndexOutOfRangeException"); \
 	} while (0)
-
-typedef struct {
-	guint8 *address;
-	guint8 saved_byte;
-} MonoBreakpointInfo;
-
-extern MonoBreakpointInfo mono_breakpoint_info [MONO_BREAKPOINT_ARRAY_SIZE];
 
 /* Return value marshalling for calls between gsharedvt and normal code */
 typedef enum {
@@ -312,6 +301,49 @@ typedef struct {
 	int map [MONO_ZERO_LEN_ARRAY];
 } GSharedVtCallInfo;
 
+typedef enum {
+	ArgInIReg,
+	ArgInFloatSSEReg,
+	ArgInDoubleSSEReg,
+	ArgOnStack,
+	ArgValuetypeInReg,
+	ArgOnFloatFpStack,
+	ArgOnDoubleFpStack,
+	/* gsharedvt argument passed by addr */
+	ArgGSharedVt,
+	ArgNone
+} ArgStorage;
+
+typedef struct {
+	gint16 offset;
+	gint8  reg;
+	ArgStorage storage;
+	int nslots;
+	gboolean is_pair;
+
+	/* Only if storage == ArgValuetypeInReg */
+	ArgStorage pair_storage [2];
+	gint8 pair_regs [2];
+} ArgInfo;
+
+typedef struct {
+	int nargs;
+	guint32 stack_usage;
+	guint32 reg_usage;
+	guint32 freg_usage;
+	gboolean need_stack_align;
+	guint32 stack_align_amount;
+	gboolean vtype_retaddr;
+	/* The index of the vret arg in the argument list */
+	int vret_arg_index;
+	int vret_arg_offset;
+	/* Argument space popped by the callee */
+	int callee_stack_pop;
+	ArgInfo ret;
+	ArgInfo sig_cookie;
+	ArgInfo args [1];
+} CallInfo;
+
 guint8*
 mono_x86_emit_tls_get (guint8* code, int dreg, int tls_offset);
 
@@ -319,7 +351,7 @@ guint8*
 mono_x86_emit_tls_get_reg (guint8* code, int dreg, int offset_reg);
 
 guint32
-mono_x86_get_this_arg_offset (MonoGenericSharingContext *gsctx, MonoMethodSignature *sig);
+mono_x86_get_this_arg_offset (MonoMethodSignature *sig);
 
 gboolean
 mono_x86_have_tls_get (void);
@@ -337,6 +369,9 @@ mono_x86_patch (unsigned char* code, gpointer target);
 
 gpointer
 mono_x86_start_gsharedvt_call (GSharedVtCallInfo *info, gpointer *caller, gpointer *callee, gpointer mrgctx_reg);
+
+CallInfo*
+mono_arch_get_call_info (MonoMemPool *mp, MonoMethodSignature *sig);
 
 #endif /* __MONO_MINI_X86_H__ */  
 

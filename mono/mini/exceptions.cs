@@ -24,14 +24,14 @@ using System.Runtime.CompilerServices;
  * the IL code looks.
  */
 
-#if MOBILE
+#if __MOBILE__
 class ExceptionTests
 #else
 class Tests
 #endif
 {
 
-#if !MOBILE
+#if !__MOBILE__
 	public static int Main (string[] args) {
 		return TestDriver.RunTests (typeof (Tests), args);
 	}
@@ -2318,6 +2318,7 @@ class Tests
 		Console.WriteLine ();
 	}
 
+	[Category ("!BITCODE")]
 	public static int test_0_rethrow_stacktrace () {
 		// Check that rethrowing an exception preserves the original stack trace
 		try {
@@ -2589,7 +2590,7 @@ class Tests
 	public static int test_0_lmf_filter () {
 		try {
 			// The invoke calls a runtime-invoke wrapper which has a filter clause
-#if MOBILE
+#if __MOBILE__
 			typeof (ExceptionTests).GetMethod ("lmf_filter").Invoke (null, new object [] { });
 #else
 			typeof (Tests).GetMethod ("lmf_filter").Invoke (null, new object [] { });
@@ -2795,9 +2796,58 @@ class Tests
 		}
 		return 1;
 	}
+
+	static bool finally_called = false;
+
+	static void regress_30472 (int a, int b) {
+			checked {
+				try {
+					int sum = a + b;
+				} finally {
+					finally_called = true;
+				}
+            }
+		}
+
+	public static int test_0_regress_30472 () {
+		finally_called = false;
+		try {
+		    regress_30472 (Int32.MaxValue - 1, 2);
+		} catch (Exception ex) {
+		}
+		return finally_called ? 0 : 1;
+	}
+
+	static int array_len_1 = 1;
+
+	public static int test_0_bounds_check_negative_constant () {
+		try {
+			byte[] arr = new byte [array_len_1];
+			byte b = arr [-1];
+			return 1;
+		} catch {
+		}
+		try {
+			byte[] arr = new byte [array_len_1];
+			arr [-1] = 1;
+			return 2;
+		} catch {
+		}
+		return 0;
+	}
+
+	public static int test_0_string_bounds_check_negative_constant () {
+		try {
+			string s = "A";
+			char c = s [-1];
+			return 1;
+		} catch {
+		}
+		return 0;
+	}
 }
 
-#if !MOBILE
+#if !__MOBILE__
 class ExceptionTests : Tests
 {
 }

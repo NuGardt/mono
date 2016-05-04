@@ -59,7 +59,6 @@ namespace System.Globalization
 		[NonSerialized]
 		int default_calendar_type;
 		bool m_useUserOverride;
-		[NonSerialized]
 		internal volatile NumberFormatInfo numInfo;
 		internal volatile DateTimeFormatInfo dateTimeInfo;
 		volatile TextInfo textInfo;
@@ -143,9 +142,12 @@ namespace System.Globalization
 
 			var locale_name = get_current_locale_name ();
 			CultureInfo ci = null;
-			try {
-				ci = CreateSpecificCulture (locale_name);
-			} catch {
+
+			if (locale_name != null) {
+				try {
+					ci = CreateSpecificCulture (locale_name);
+				} catch {
+				}
 			}
 
 			if (ci == null) {
@@ -411,10 +413,7 @@ namespace System.Globalization
 		public override bool Equals (object value)
 		{
 			CultureInfo b = value as CultureInfo;
-			
-			if (b != null)
-				return b.cultureID == cultureID;
-			return false;
+			return b != null && b.cultureID == cultureID && b.m_name == m_name;
 		}
 
 		public static CultureInfo[] GetCultures(CultureTypes types)
@@ -629,7 +628,7 @@ namespace System.Globalization
 				numInfo = (NumberFormatInfo) numInfo.Clone ();
 			}
 
-			textInfo = CreateTextInfo (read_only);
+			textInfo = TextInfo.Invariant;
 
 			m_name=String.Empty;
 			englishname=
@@ -732,6 +731,9 @@ namespace System.Globalization
 		
 		public static CultureInfo GetCultureInfo (int culture)
 		{
+			if (culture < 1)
+				throw new ArgumentOutOfRangeException ("culture", "Positive number required.");
+
 			CultureInfo c;
 			
 			lock (shared_table_lock){
@@ -819,8 +821,15 @@ namespace System.Globalization
 			CultureInfo ci = new CultureInfo ();
 
 			if (!ci.construct_internal_locale_from_name (name)) {
-				int idx = name.IndexOf ('-');
-				if (idx < 1 || !ci.construct_internal_locale_from_name (name.Substring (0, idx)))
+				int idx = name.Length - 1;
+				if (idx > 0) {
+					while ((idx = name.LastIndexOf ('-', idx - 1)) > 0) {
+						if (ci.construct_internal_locale_from_name (name.Substring (0, idx)))
+							break;
+					}
+				}
+
+				if (idx <= 0)
 					throw CreateNotFoundException (src_name);
 			}
 

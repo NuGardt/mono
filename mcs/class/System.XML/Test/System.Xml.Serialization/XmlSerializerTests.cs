@@ -278,6 +278,7 @@ namespace MonoTests.System.XmlSerialization
 		}
 
 		[Test]
+		[Category ("MobileNotWorking")]
 		public void TestSerializeEnumeration_FromValue_Encoded ()
 		{
 			SerializeEncoded ((int) SimpleEnumeration.SECOND, typeof (SimpleEnumeration));
@@ -375,6 +376,7 @@ namespace MonoTests.System.XmlSerialization
 		}
 
 		[Test]
+		[Category ("MobileNotWorking")]
 		public void TestSerializeEnumDefaultValue_Encoded ()
 		{
 			SerializeEncoded (new EnumDefaultValue ());
@@ -1749,6 +1751,7 @@ namespace MonoTests.System.XmlSerialization
 
 		[Test]
 		[ExpectedException (typeof (InvalidOperationException))]
+		[Category ("MobileNotWorking")]
 		public void TestSerializeXmlNodeArrayIncludesAttribute ()
 		{
 			XmlDocument doc = new XmlDocument ();
@@ -1933,6 +1936,17 @@ namespace MonoTests.System.XmlSerialization
 
 			string res = "<SubclassTestContainer xmlns:xsd='http://www.w3.org/2001/XMLSchema' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'>";
 			res += "<a xsi:type=\"SubclassTestSub\"/></SubclassTestContainer>";
+			Assert.AreEqual (Infoset (res), WriterText);
+		}
+
+		[Test] // Covers #36829
+		public void TestSubclassElementList ()
+		{
+			var o = new SubclassTestList () { Items = new List<object> () { new SubclassTestSub () } };
+			Serialize (o);
+
+			string res = "<SubclassTestList xmlns:xsd='http://www.w3.org/2001/XMLSchema' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'>";
+			res += "<b xsi:type=\"SubclassTestSub\"/></SubclassTestList>";
 			Assert.AreEqual (Infoset (res), WriterText);
 		}
 
@@ -2231,12 +2245,14 @@ namespace MonoTests.System.XmlSerialization
 		}
 
 		[Test]
+		[Category ("MobileNotWorking")]
 		public void XmlArrayAttributeUnqualifiedWithNamespace ()
 		{
 			new XmlSerializer (typeof (XmlArrayUnqualifiedWithNamespace));
 		}
 
 		[Test]
+		[Category ("MobileNotWorking")]
 		public void XmlArrayItemAttributeUnqualifiedWithNamespace ()
 		{
 			new XmlSerializer (typeof (XmlArrayItemUnqualifiedWithNamespace));

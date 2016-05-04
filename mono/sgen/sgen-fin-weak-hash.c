@@ -10,18 +10,7 @@
  * Copyright 2011 Xamarin, Inc.
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
@@ -32,6 +21,7 @@
 #include "mono/sgen/sgen-protocol.h"
 #include "mono/sgen/sgen-pointer-queue.h"
 #include "mono/sgen/sgen-client.h"
+#include "mono/sgen/gc-internal-agnostic.h"
 #include "mono/utils/mono-membar.h"
 
 #define ptr_in_nursery sgen_ptr_in_nursery
@@ -39,9 +29,6 @@
 typedef SgenGrayQueue GrayQueue;
 
 static int no_finalize = 0;
-
-#define DISLINK_OBJECT(l)	(REVEAL_POINTER (*(void**)(l)))
-#define DISLINK_TRACK(l)	((~(size_t)(*(void**)(l))) & 1)
 
 /*
  * The finalizable hash has the object as the key, the 
@@ -115,7 +102,7 @@ sgen_collect_bridge_objects (int generation, ScanCopyContext ctx)
 	SgenHashTable *hash_table = get_finalize_entry_hash_table (generation);
 	GCObject *object;
 	gpointer dummy G_GNUC_UNUSED;
-	char *copy;
+	GCObject *copy;
 	SgenPointerQueue moved_fin_objects;
 
 	sgen_pointer_queue_init (&moved_fin_objects, INTERNAL_MEM_TEMPORARY);
@@ -123,7 +110,7 @@ sgen_collect_bridge_objects (int generation, ScanCopyContext ctx)
 	if (no_finalize)
 		return;
 
-	SGEN_HASH_TABLE_FOREACH (hash_table, object, dummy) {
+	SGEN_HASH_TABLE_FOREACH (hash_table, GCObject *, object, gpointer, dummy) {
 		int tag = tagged_object_get_tag (object);
 		object = tagged_object_get_object (object);
 
@@ -132,7 +119,7 @@ sgen_collect_bridge_objects (int generation, ScanCopyContext ctx)
 			continue;
 
 		/* Object is a bridge object and major heap says it's dead  */
-		if (major_collector.is_object_live ((char*)object))
+		if (major_collector.is_object_live (object))
 			continue;
 
 		/* Nursery says the object is dead. */
@@ -142,10 +129,10 @@ sgen_collect_bridge_objects (int generation, ScanCopyContext ctx)
 		if (!sgen_client_bridge_is_bridge_object (object))
 			continue;
 
-		copy = (char*)object;
-		copy_func ((void**)&copy, queue);
+		copy = object;
+		copy_func (&copy, queue);
 
-		sgen_client_bridge_register_finalized_object ((GCObject*)copy);
+		sgen_client_bridge_register_finalized_object (copy);
 		
 		if (hash_table == &minor_finalizable_hash && !ptr_in_nursery (copy)) {
 			/* remove from the list */
@@ -157,7 +144,7 @@ sgen_collect_bridge_objects (int generation, ScanCopyContext ctx)
 			SGEN_LOG (5, "Promoting finalization of object %p (%s) (was at %p) to major table", copy, sgen_client_vtable_get_name (SGEN_LOAD_VTABLE (copy)), object);
 
 			continue;
-		} else if (copy != (char*)object) {
+		} else if (copy != object) {
 			/* update pointer */
 			SGEN_HASH_TABLE_FOREACH_REMOVE (TRUE);
 
@@ -193,13 +180,13 @@ sgen_finalize_in_range (int generation, ScanCopyContext ctx)
 
 	if (no_finalize)
 		return;
-	SGEN_HASH_TABLE_FOREACH (hash_table, object, dummy) {
+	SGEN_HASH_TABLE_FOREACH (hash_table, GCObject *, object, gpointer, dummy) {
 		int tag = tagged_object_get_tag (object);
 		object = tagged_object_get_object (object);
-		if (!major_collector.is_object_live ((char*)object)) {
+		if (!major_collector.is_object_live (object)) {
 			gboolean is_fin_ready = sgen_gc_is_object_ready_for_finalization (object);
 			GCObject *copy = object;
-			copy_func ((void**)&copy, queue);
+			copy_func (&copy, queue);
 			if (is_fin_ready) {
 				/* remove and put in fin_ready_list */
 				SGEN_HASH_TABLE_FOREACH_REMOVE (TRUE);
@@ -251,12 +238,12 @@ register_for_finalization (GCObject *obj, void *user_data, int generation)
 
 	if (user_data) {
 		if (sgen_hash_table_replace (hash_table, obj, NULL, NULL)) {
-			GCVTable *vt = SGEN_LOAD_VTABLE_UNCHECKED (obj);
+			GCVTable vt = SGEN_LOAD_VTABLE_UNCHECKED (obj);
 			SGEN_LOG (5, "Added finalizer for object: %p (%s) (%d) to %s table", obj, sgen_client_vtable_get_name (vt), hash_table->num_entries, sgen_generation_name (generation));
 		}
 	} else {
 		if (sgen_hash_table_remove (hash_table, obj, NULL)) {
-			GCVTable *vt = SGEN_LOAD_VTABLE_UNCHECKED (obj);
+			GCVTable vt = SGEN_LOAD_VTABLE_UNCHECKED (obj);
 			SGEN_LOG (5, "Removed finalizer for object: %p (%s) (%d)", obj, sgen_client_vtable_get_name (vt), hash_table->num_entries);
 		}
 	}
@@ -453,7 +440,7 @@ add_stage_entry (int num_entries, volatile gint32 *next_entry, StageEntry *entri
 				 * This seems like a good value.  Determined by timing
 				 * sgen-weakref-stress.exe.
 				 */
-				g_usleep (200);
+				mono_thread_info_usleep (200);
 				HEAVY_STAT (++stat_wait_for_processing);
 			}
 			continue;
@@ -580,7 +567,7 @@ finalizers_with_predicate (SgenObjectPredicateFunc predicate, void *user_data, G
 	if (no_finalize || !out_size || !out_array)
 		return 0;
 	count = 0;
-	SGEN_HASH_TABLE_FOREACH (hash_table, object, dummy) {
+	SGEN_HASH_TABLE_FOREACH (hash_table, GCObject *, object, gpointer, dummy) {
 		object = tagged_object_get_object (object);
 
 		if (predicate (object, user_data)) {
@@ -629,149 +616,6 @@ sgen_gather_finalizers_if (SgenObjectPredicateFunc predicate, void *user_data, G
 	return result;
 }
 
-static SgenHashTable minor_disappearing_link_hash = SGEN_HASH_TABLE_INIT (INTERNAL_MEM_DISLINK_TABLE, INTERNAL_MEM_DISLINK, 0, sgen_aligned_addr_hash, NULL);
-static SgenHashTable major_disappearing_link_hash = SGEN_HASH_TABLE_INIT (INTERNAL_MEM_DISLINK_TABLE, INTERNAL_MEM_DISLINK, 0, sgen_aligned_addr_hash, NULL);
-
-static SgenHashTable*
-get_dislink_hash_table (int generation)
-{
-	switch (generation) {
-	case GENERATION_NURSERY: return &minor_disappearing_link_hash;
-	case GENERATION_OLD: return &major_disappearing_link_hash;
-	default: g_assert_not_reached ();
-	}
-}
-
-/* LOCKING: assumes the GC lock is held */
-static void
-add_or_remove_disappearing_link (GCObject *obj, void **link, int generation)
-{
-	SgenHashTable *hash_table = get_dislink_hash_table (generation);
-
-	if (!obj) {
-		if (sgen_hash_table_remove (hash_table, link, NULL)) {
-			SGEN_LOG (5, "Removed dislink %p (%d) from %s table",
-					link, hash_table->num_entries, sgen_generation_name (generation));
-		}
-		return;
-	}
-
-	sgen_hash_table_replace (hash_table, link, NULL, NULL);
-	SGEN_LOG (5, "Added dislink for object: %p (%s) at %p to %s table",
-			obj, sgen_client_vtable_get_name (SGEN_LOAD_VTABLE_UNCHECKED (obj)), link, sgen_generation_name (generation));
-}
-
-/* LOCKING: requires that the GC lock is held */
-void
-sgen_null_link_in_range (int generation, gboolean before_finalization, ScanCopyContext ctx)
-{
-	CopyOrMarkObjectFunc copy_func = ctx.ops->copy_or_mark_object;
-	GrayQueue *queue = ctx.queue;
-	void **link;
-	gpointer dummy G_GNUC_UNUSED;
-	SgenHashTable *hash = get_dislink_hash_table (generation);
-
-	SGEN_HASH_TABLE_FOREACH (hash, link, dummy) {
-		char *object;
-		gboolean track;
-
-		/*
-		We null a weak link before unregistering it, so it's possible that a thread is
-		suspended right in between setting the content to null and staging the unregister.
-
-		The rest of this code cannot handle null links as DISLINK_OBJECT (NULL) produces an invalid address.
-
-		We should simply skip the entry as the staged removal will take place during the next GC.
-		*/
-		if (!*link) {
-			SGEN_LOG (5, "Dislink %p was externally nullified", link);
-			continue;
-		}
-
-		track = DISLINK_TRACK (link);
-		/*
-		 * Tracked references are processed after
-		 * finalization handling whereas standard weak
-		 * references are processed before.  If an
-		 * object is still not marked after finalization
-		 * handling it means that it either doesn't have
-		 * a finalizer or the finalizer has already run,
-		 * so we must null a tracking reference.
-		 */
-		if (track != before_finalization) {
-			object = DISLINK_OBJECT (link);
-			/*
-			We should guard against a null object been hidden. This can sometimes happen.
-			*/
-			if (!object) {
-				SGEN_LOG (5, "Dislink %p with a hidden null object", link);
-				continue;
-			}
-
-			if (!major_collector.is_object_live (object)) {
-				if (sgen_gc_is_object_ready_for_finalization (object)) {
-					*link = NULL;
-					binary_protocol_dislink_update (link, NULL, 0, 0);
-					SGEN_LOG (5, "Dislink nullified at %p to GCed object %p", link, object);
-					SGEN_HASH_TABLE_FOREACH_REMOVE (TRUE);
-					continue;
-				} else {
-					char *copy = object;
-					copy_func ((void**)&copy, queue);
-
-					/* Update pointer if it's moved.  If the object
-					 * has been moved out of the nursery, we need to
-					 * remove the link from the minor hash table to
-					 * the major one.
-					 *
-					 * FIXME: what if an object is moved earlier?
-					 */
-
-					if (hash == &minor_disappearing_link_hash && !ptr_in_nursery (copy)) {
-						SGEN_HASH_TABLE_FOREACH_REMOVE (TRUE);
-
-						g_assert (copy);
-						*link = HIDE_POINTER (copy, track);
-						add_or_remove_disappearing_link ((GCObject*)copy, link, GENERATION_OLD);
-						binary_protocol_dislink_update (link, copy, track, 0);
-
-						SGEN_LOG (5, "Upgraded dislink at %p to major because object %p moved to %p", link, object, copy);
-
-						continue;
-					} else {
-						*link = HIDE_POINTER (copy, track);
-						binary_protocol_dislink_update (link, copy, track, 0);
-						SGEN_LOG (5, "Updated dislink at %p to %p", link, DISLINK_OBJECT (link));
-					}
-				}
-			}
-		}
-	} SGEN_HASH_TABLE_FOREACH_END;
-}
-
-/* LOCKING: requires that the GC lock is held */
-void
-sgen_null_links_if (SgenObjectPredicateFunc predicate, void *data, int generation)
-{
-	void **link;
-	gpointer dummy G_GNUC_UNUSED;
-	SgenHashTable *hash = get_dislink_hash_table (generation);
-	SGEN_HASH_TABLE_FOREACH (hash, link, dummy) {
-		char *object = DISLINK_OBJECT (link);
-
-		if (!*link)
-			continue;
-
-		if (predicate ((GCObject*)object, data)) {
-			*link = NULL;
-			binary_protocol_dislink_update (link, NULL, 0, 0);
-			SGEN_LOG (5, "Dislink nullified by predicate at %p to GCed object %p", link, object);
-			SGEN_HASH_TABLE_FOREACH_REMOVE (FALSE /* TRUE */);
-			continue;
-		}
-	} SGEN_HASH_TABLE_FOREACH_END;
-}
-
 void
 sgen_remove_finalizers_if (SgenObjectPredicateFunc predicate, void *user_data, int generation)
 {
@@ -779,7 +623,7 @@ sgen_remove_finalizers_if (SgenObjectPredicateFunc predicate, void *user_data, i
 	GCObject *object;
 	gpointer dummy G_GNUC_UNUSED;
 
-	SGEN_HASH_TABLE_FOREACH (hash_table, object, dummy) {
+	SGEN_HASH_TABLE_FOREACH (hash_table, GCObject *, object, gpointer, dummy) {
 		object = tagged_object_get_object (object);
 
 		if (predicate (object, user_data)) {
@@ -787,72 +631,6 @@ sgen_remove_finalizers_if (SgenObjectPredicateFunc predicate, void *user_data, i
 			continue;
 		}
 	} SGEN_HASH_TABLE_FOREACH_END;	
-}
-
-/* LOCKING: requires that the GC lock is held */
-static void
-process_dislink_stage_entry (GCObject *obj, void *_link, int index)
-{
-	void **link = _link;
-
-	if (index >= 0)
-		binary_protocol_dislink_process_staged (link, obj, index);
-
-	add_or_remove_disappearing_link (NULL, link, GENERATION_NURSERY);
-	add_or_remove_disappearing_link (NULL, link, GENERATION_OLD);
-	if (obj) {
-		if (ptr_in_nursery (obj))
-			add_or_remove_disappearing_link (obj, link, GENERATION_NURSERY);
-		else
-			add_or_remove_disappearing_link (obj, link, GENERATION_OLD);
-	}
-}
-
-#define NUM_DISLINK_STAGE_ENTRIES	1024
-
-static volatile gint32 next_dislink_stage_entry = 0;
-static StageEntry dislink_stage_entries [NUM_DISLINK_STAGE_ENTRIES];
-
-/* LOCKING: requires that the GC lock is held */
-void
-sgen_process_dislink_stage_entries (void)
-{
-	lock_stage_for_processing (&next_dislink_stage_entry);
-	process_stage_entries (NUM_DISLINK_STAGE_ENTRIES, &next_dislink_stage_entry, dislink_stage_entries, process_dislink_stage_entry);
-}
-
-void
-sgen_register_disappearing_link (GCObject *obj, void **link, gboolean track, gboolean in_gc)
-{
-	if (obj)
-		*link = HIDE_POINTER (obj, track);
-	else
-		*link = NULL;
-
-#if 1
-	if (in_gc) {
-		binary_protocol_dislink_update (link, obj, track, 0);
-		process_dislink_stage_entry (obj, link, -1);
-	} else {
-		int index;
-		binary_protocol_dislink_update (link, obj, track, 1);
-		while ((index = add_stage_entry (NUM_DISLINK_STAGE_ENTRIES, &next_dislink_stage_entry, dislink_stage_entries, obj, link)) == -1) {
-			if (try_lock_stage_for_processing (NUM_DISLINK_STAGE_ENTRIES, &next_dislink_stage_entry)) {
-				LOCK_GC;
-				process_stage_entries (NUM_DISLINK_STAGE_ENTRIES, &next_dislink_stage_entry, dislink_stage_entries, process_dislink_stage_entry);
-				UNLOCK_GC;
-			}
-		}
-		binary_protocol_dislink_update_staged (link, obj, track, index);
-	}
-#else
-	if (!in_gc)
-		LOCK_GC;
-	binary_protocol_dislink_update (link, obj, track, 0);
-	process_dislink_stage_entry (obj, link, -1);
-	if (!in_gc)
-		UNLOCK_GC;
-#endif
 }
 
 void

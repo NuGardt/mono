@@ -123,7 +123,9 @@ namespace Mono.Linker.Steps {
 		{
 			while (!QueueIsEmpty ()) {
 				MethodDefinition method = (MethodDefinition) _methods.Dequeue ();
+				Annotations.Push (method);
 				ProcessMethod (method);
+				Annotations.Pop ();
 			}
 		}
 
@@ -139,8 +141,11 @@ namespace Mono.Linker.Steps {
 
 		void ProcessVirtualMethods ()
 		{
-			foreach (MethodDefinition method in _virtual_methods)
+			foreach (MethodDefinition method in _virtual_methods) {
+				Annotations.Push (method);
 				ProcessVirtualMethod (method);
+				Annotations.Pop ();
+			}
 		}
 
 		void ProcessVirtualMethod (MethodDefinition method)
@@ -191,17 +196,21 @@ namespace Mono.Linker.Steps {
 
 		protected virtual void MarkCustomAttribute (CustomAttribute ca)
 		{
+			Annotations.Push (ca);
 			MarkMethod (ca.Constructor);
 
 			MarkCustomAttributeArguments (ca);
 
 			TypeReference constructor_type = ca.Constructor.DeclaringType;
 			TypeDefinition type = constructor_type.Resolve ();
-			if (type == null)
+			if (type == null) {
+				Annotations.Pop ();
 				throw new ResolutionException (constructor_type);
+			}
 
 			MarkCustomAttributeProperties (ca, type);
 			MarkCustomAttributeFields (ca, type);
+			Annotations.Pop ();
 		}
 
 		protected void MarkSecurityDeclarations (ISecurityDeclarationProvider provider)
@@ -266,10 +275,12 @@ namespace Mono.Linker.Steps {
 		protected void MarkCustomAttributeProperty (CustomAttributeNamedArgument namedArgument, TypeDefinition attribute)
 		{
 			PropertyDefinition property = GetProperty (attribute, namedArgument.Name);
+			Annotations.Push (property);
 			if (property != null)
 				MarkMethod (property.SetMethod);
 
 			MarkIfType (namedArgument.Argument);
+			Annotations.Pop ();
 		}
 
 		PropertyDefinition GetProperty (TypeDefinition type, string propertyname)
@@ -334,6 +345,9 @@ namespace Mono.Linker.Steps {
 					return;
 
 				MarkType (et);
+				if (argument.Value == null)
+					return;
+
 				foreach (var cac in (CustomAttributeArgument[]) argument.Value)
 					MarkWithResolvedScope ((TypeReference) cac.Value);
 			} else if (at.Namespace == "System" && at.Name == "Type") {
@@ -355,7 +369,6 @@ namespace Mono.Linker.Steps {
 			if ((git != null) && git.HasGenericArguments) {
 				foreach (var ga in git.GenericArguments)
 					MarkWithResolvedScope (ga);
-				return;
 			}
 			// we cannot set the Scope of a TypeSpecification but it's element type can be set
 			// e.g. System.String[] -> System.String
@@ -483,6 +496,8 @@ namespace Mono.Linker.Steps {
 			if (CheckProcessed (type))
 				return null;
 
+			Annotations.Push (type);
+
 			MarkScope (type.Scope);
 			MarkType (type.BaseType);
 			MarkType (type.DeclaringType);
@@ -512,13 +527,23 @@ namespace Mono.Linker.Steps {
 			if (type.HasMethods) {
 				MarkMethodsIf (type.Methods, IsVirtualAndHasPreservedParent);
 				MarkMethodsIf (type.Methods, IsStaticConstructorPredicate);
+				MarkMethodsIf (type.Methods, HasSerializationAttribute);
 			}
+
+			DoAdditionalTypeProcessing (type);
+
+			Annotations.Pop ();
 
 			Annotations.Mark (type);
 
 			ApplyPreserveInfo (type);
 
 			return type;
+		}
+
+		// Allow subclassers to mark additional things when marking a method
+		protected virtual void DoAdditionalTypeProcessing (TypeDefinition method)
+		{
 		}
 
 		void MarkTypeSpecialCustomAttributes (TypeDefinition type)
@@ -570,17 +595,21 @@ namespace Mono.Linker.Steps {
 			return argument != null;
 		}
 
-		protected void MarkNamedMethod (TypeDefinition type, string method_name)
+		protected int MarkNamedMethod (TypeDefinition type, string method_name)
 		{
 			if (!type.HasMethods)
-				return;
+				return 0;
 
+			int count = 0;
 			foreach (MethodDefinition method in type.Methods) {
 				if (method.Name != method_name)
 					continue;
 
 				MarkMethod (method);
+				count++;
 			}
+
+			return count;
 		}
 
 		void MarkSoapHeader (MethodDefinition method, CustomAttribute attribute)
@@ -615,8 +644,10 @@ namespace Mono.Linker.Steps {
 				if (property.Name != property_name)
 					continue;
 
+				Annotations.Push (property);
 				MarkMethod (property.GetMethod);
 				MarkMethod (property.SetMethod);
+				Annotations.Pop ();
 			}
 		}
 
@@ -676,8 +707,11 @@ namespace Mono.Linker.Steps {
 		void MarkMethodsIf (ICollection methods, MethodPredicate predicate)
 		{
 			foreach (MethodDefinition method in methods)
-				if (predicate (method))
+				if (predicate (method)) {
+					Annotations.Push (predicate);
 					MarkMethod (method);
+					Annotations.Pop ();
+				}
 		}
 
 		static MethodPredicate IsDefaultConstructorPredicate = new MethodPredicate (IsDefaultConstructor);
@@ -705,6 +739,25 @@ namespace Mono.Linker.Steps {
 		static bool IsStaticConstructor (MethodDefinition method)
 		{
 			return method.IsConstructor && method.IsStatic;
+		}
+
+		static bool HasSerializationAttribute (MethodDefinition method)
+		{
+			if (!method.HasCustomAttributes)
+				return false;
+			foreach (var ca in method.CustomAttributes) {
+				var cat = ca.AttributeType;
+				if (cat.Namespace != "System.Runtime.Serialization")
+					continue;
+				switch (cat.Name) {
+				case "OnDeserializedAttribute":
+				case "OnDeserializingAttribute":
+				case "OnSerializedAttribute":
+				case "OnSerializingAttribute":
+					return true;
+				}
+			}
+			return false;
 		}
 
 		static bool IsSerializable (TypeDefinition td)
@@ -867,6 +920,7 @@ namespace Mono.Linker.Steps {
 			if (reference.DeclaringType is ArrayType)
 				return null;
 
+			Annotations.Push (reference);
 			if (reference.DeclaringType is GenericInstanceType)
 				MarkType (reference.DeclaringType);
 
@@ -875,13 +929,19 @@ namespace Mono.Linker.Steps {
 
 			MethodDefinition method = ResolveMethodDefinition (reference);
 
-			if (method == null)
+			if (method == null) {
+				Annotations.Pop ();
 				throw new ResolutionException (reference);
+			}
 
 			if (Annotations.GetAction (method) == MethodAction.Nothing)
 				Annotations.SetAction (method, MethodAction.Parse);
 
 			EnqueueMethod (method);
+
+			Annotations.Pop ();
+			Annotations.AddDependency (method);
+
 			return method;
 		}
 
@@ -919,6 +979,7 @@ namespace Mono.Linker.Steps {
 			if (CheckProcessed (method))
 				return;
 
+			Annotations.Push (method);
 			MarkType (method.DeclaringType);
 			MarkCustomAttributes (method);
 			MarkSecurityDeclarations (method);
@@ -957,9 +1018,17 @@ namespace Mono.Linker.Steps {
 			if (ShouldParseMethodBody (method))
 				MarkMethodBody (method.Body);
 
+			DoAdditionalMethodProcessing (method);
+
 			Annotations.Mark (method);
 
 			ApplyPreserveMethods (method);
+			Annotations.Pop ();
+		}
+
+		// Allow subclassers to mark additional things when marking a method
+		protected virtual void DoAdditionalMethodProcessing (MethodDefinition method)
+		{
 		}
 
 		void MarkBaseMethods (MethodDefinition method)

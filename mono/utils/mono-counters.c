@@ -1,6 +1,7 @@
 /*
  * Copyright 2006-2010 Novell
  * Copyright 2011 Xamarin Inc
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include <stdlib.h>
@@ -8,7 +9,7 @@
 #include "config.h"
 #include "mono-counters.h"
 #include "mono-proclib.h"
-#include "mono-mutex.h"
+#include "mono-os-mutex.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -138,7 +139,7 @@ mono_counters_init (void)
 	if (initialized)
 		return;
 
-	mono_mutex_init (&counters_mutex);
+	mono_os_mutex_init (&counters_mutex);
 
 	initialize_system_counters ();
 
@@ -155,19 +156,19 @@ register_internal (const char *name, int type, void *addr, int size)
 	if ((type & MONO_COUNTER_VARIANCE_MASK) == 0)
 		type |= MONO_COUNTER_MONOTONIC;
 
-	mono_mutex_lock (&counters_mutex);
+	mono_os_mutex_lock (&counters_mutex);
 
 	for (counter = counters; counter; counter = counter->next) {
 		if (counter->addr == addr) {
 			g_warning ("you are registering twice the same counter address");
-			mono_mutex_unlock (&counters_mutex);
+			mono_os_mutex_unlock (&counters_mutex);
 			return;
 		}
 	}
 
 	counter = (MonoCounter *) malloc (sizeof (MonoCounter));
 	if (!counter) {
-		mono_mutex_unlock (&counters_mutex);
+		mono_os_mutex_unlock (&counters_mutex);
 		return;
 	}
 	counter->name = g_strdup (name);
@@ -191,7 +192,7 @@ register_internal (const char *name, int type, void *addr, int size)
 	for (register_callback = register_callbacks; register_callback; register_callback = register_callback->next)
 		((MonoCounterRegisterCallback)register_callback->data) (counter);
 
-	mono_mutex_unlock (&counters_mutex);
+	mono_os_mutex_unlock (&counters_mutex);
 }
 
 /**
@@ -291,9 +292,9 @@ mono_counters_on_register (MonoCounterRegisterCallback callback)
 		return;
 	}
 
-	mono_mutex_lock (&counters_mutex);
+	mono_os_mutex_lock (&counters_mutex);
 	register_callbacks = g_slist_append (register_callbacks, (gpointer) callback);
-	mono_mutex_unlock (&counters_mutex);
+	mono_os_mutex_unlock (&counters_mutex);
 }
 
 typedef int (*IntFunc) (void);
@@ -437,16 +438,16 @@ mono_counters_foreach (CountersEnumCallback cb, gpointer user_data)
 		return;
 	}
 
-	mono_mutex_lock (&counters_mutex);
+	mono_os_mutex_lock (&counters_mutex);
 
 	for (counter = counters; counter; counter = counter->next) {
 		if (!cb (counter, user_data)) {
-			mono_mutex_unlock (&counters_mutex);
+			mono_os_mutex_unlock (&counters_mutex);
 			return;
 		}
 	}
 
-	mono_mutex_unlock (&counters_mutex);
+	mono_os_mutex_unlock (&counters_mutex);
 }
 
 #define COPY_COUNTER(type,functype) do {	\
@@ -560,7 +561,7 @@ dump_counter (MonoCounter *counter, FILE *outfile) {
 }
 
 static const char
-section_names [][10] = {
+section_names [][12] = {
 	"JIT",
 	"GC",
 	"Metadata",
@@ -568,6 +569,8 @@ section_names [][10] = {
 	"Security",
 	"Runtime",
 	"System",
+	"", // MONO_COUNTER_PERFCOUNTERS - not used.
+	"Profiler",
 };
 
 static void
@@ -600,10 +603,10 @@ mono_counters_dump (int section_mask, FILE *outfile)
 	if (!initialized)
 		return;
 
-	mono_mutex_lock (&counters_mutex);
+	mono_os_mutex_lock (&counters_mutex);
 
 	if (!counters) {
-		mono_mutex_unlock (&counters_mutex);
+		mono_os_mutex_unlock (&counters_mutex);
 		return;
 	}
 
@@ -622,7 +625,7 @@ mono_counters_dump (int section_mask, FILE *outfile)
 	}
 
 	fflush (outfile);
-	mono_mutex_unlock (&counters_mutex);
+	mono_os_mutex_unlock (&counters_mutex);
 }
 
 /**
@@ -638,7 +641,7 @@ mono_counters_cleanup (void)
 	if (!initialized)
 		return;
 
-	mono_mutex_lock (&counters_mutex);
+	mono_os_mutex_lock (&counters_mutex);
 
 	counter = counters;
 	counters = NULL;
@@ -649,7 +652,7 @@ mono_counters_cleanup (void)
 		free (tmp);
 	}
 
-	mono_mutex_unlock (&counters_mutex);
+	mono_os_mutex_unlock (&counters_mutex);
 }
 
 static MonoResourceCallback limit_reached = NULL;

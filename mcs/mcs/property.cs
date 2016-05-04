@@ -82,8 +82,6 @@ namespace Mono.CSharp
 			}
 		}
 
-		public abstract void PrepareEmit ();
-
 		protected override bool VerifyClsCompliance ()
 		{
 			if (!base.VerifyClsCompliance ())
@@ -246,7 +244,7 @@ namespace Mono.CSharp
 			protected override void ApplyToExtraTarget (Attribute a, MethodSpec ctor, byte[] cdata, PredefinedAttributes pa)
 			{
 				if (a.Target == AttributeTargets.Parameter) {
-					parameters[0].ApplyAttributeBuilder (a, ctor, cdata, pa);
+					parameters[parameters.Count - 1].ApplyAttributeBuilder (a, ctor, cdata, pa);
 					return;
 				}
 
@@ -619,8 +617,7 @@ namespace Mono.CSharp
 						GetSignatureForError ());
 				}
 			} else if ((ModFlags & Modifiers.OVERRIDE) == 0 && 
-				(Get == null && (Set.ModFlags & Modifiers.AccessibilityMask) != 0) ||
-				(Set == null && (Get.ModFlags & Modifiers.AccessibilityMask) != 0)) {
+				((Get == null && (Set.ModFlags & Modifiers.AccessibilityMask) != 0) || (Set == null && (Get.ModFlags & Modifiers.AccessibilityMask) != 0))) {
 				Report.Error (276, Location, 
 					      "`{0}': accessibility modifiers on accessors may only be used if the property or indexer has both a get and a set accessor",
 					      GetSignatureForError ());
@@ -904,7 +901,7 @@ namespace Mono.CSharp
 
 		public override void Emit ()
 		{
-			if ((AccessorFirst.ModFlags & (Modifiers.STATIC | Modifiers.COMPILER_GENERATED)) == Modifiers.COMPILER_GENERATED && Parent.PartialContainer.HasExplicitLayout) {
+			if ((AccessorFirst.ModFlags & (Modifiers.STATIC | Modifiers.AutoProperty)) == Modifiers.AutoProperty && Parent.PartialContainer.HasExplicitLayout) {
 				Report.Error (842, Location,
 					"Automatically implemented property `{0}' cannot be used inside a type with an explicit StructLayout attribute",
 					GetSignatureForError ());
@@ -1452,6 +1449,8 @@ namespace Mono.CSharp
 
 		public override void PrepareEmit ()
 		{
+			base.PrepareEmit ();
+
 			add.PrepareEmit ();
 			remove.PrepareEmit ();
 
@@ -1761,9 +1760,8 @@ namespace Mono.CSharp
 
 		public override void PrepareEmit ()
 		{
-			parameters.ResolveDefaultValues (this);
-
 			base.PrepareEmit ();
+			parameters.ResolveDefaultValues (this);
 		}
 
 		protected override bool VerifyClsCompliance ()

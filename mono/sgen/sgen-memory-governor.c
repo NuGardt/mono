@@ -10,18 +10,7 @@
  * Copyright 2011 Xamarin Inc (http://www.xamarin.com)
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
@@ -56,6 +45,9 @@ static gboolean debug_print_allowance = FALSE;
 /* use this to tune when to do a major/minor collection */
 static mword major_collection_trigger_size;
 
+static mword major_pre_sweep_heap_size;
+static mword major_start_heap_size;
+
 static mword last_major_num_sections = 0;
 static mword last_los_memory_usage = 0;
 
@@ -73,6 +65,7 @@ static void
 sgen_memgov_calculate_minor_collection_allowance (void)
 {
 	size_t new_major, new_heap_size, allowance_target, allowance;
+	size_t decrease;
 
 	if (!need_calculate_minor_collection_allowance)
 		return;
@@ -86,9 +79,19 @@ sgen_memgov_calculate_minor_collection_allowance (void)
 	 * We allow the heap to grow by one third its current size before we start the next
 	 * major collection.
 	 */
-	allowance_target = new_heap_size / 3;
+	allowance_target = new_heap_size * SGEN_DEFAULT_ALLOWANCE_HEAP_SIZE_RATIO;
 
 	allowance = MAX (allowance_target, MIN_MINOR_COLLECTION_ALLOWANCE);
+
+	/*
+	 * For the concurrent collector, we decrease the allowance relative to the memory
+	 * growth during the M&S phase, survival rate of the collection and the allowance
+	 * ratio.
+	 */
+	decrease = (major_pre_sweep_heap_size - major_start_heap_size) * ((float)new_heap_size / major_pre_sweep_heap_size) * (SGEN_DEFAULT_ALLOWANCE_HEAP_SIZE_RATIO + 1);
+	if (decrease > allowance)
+		decrease = allowance;
+	allowance -= decrease;
 
 	if (new_heap_size + allowance > soft_heap_limit) {
 		if (new_heap_size > soft_heap_limit)
@@ -112,13 +115,33 @@ sgen_memgov_calculate_minor_collection_allowance (void)
 	}
 }
 
+static inline size_t
+get_heap_size (void)
+{
+	return major_collector.get_num_major_sections () * major_collector.section_size + los_memory_usage;
+}
+
 gboolean
 sgen_need_major_collection (mword space_needed)
 {
 	size_t heap_size;
 
-	if (sgen_concurrent_collection_in_progress ())
+	if (sgen_concurrent_collection_in_progress ()) {
+		heap_size = get_heap_size ();
+
+		if (heap_size <= major_collection_trigger_size)
+			return FALSE; 
+
+		/*
+		 * The more the heap grows, the more we need to decrease the allowance above,
+		 * in order to have similar trigger sizes as the synchronous collector.
+		 * If the heap grows so much that we would need to have a negative allowance,
+		 * we force the finishing of the collection, to avoid increased memory usage.
+		 */
+		if ((heap_size - major_start_heap_size) > major_start_heap_size * SGEN_DEFAULT_ALLOWANCE_HEAP_SIZE_RATIO)
+			return TRUE;
 		return FALSE;
+	}
 
 	/* FIXME: This is a cop-out.  We should have some way of figuring this out. */
 	if (!major_collector.have_swept ())
@@ -129,7 +152,7 @@ sgen_need_major_collection (mword space_needed)
 
 	sgen_memgov_calculate_minor_collection_allowance ();
 
-	heap_size = major_collector.get_num_major_sections () * major_collector.section_size + los_memory_usage;
+	heap_size = get_heap_size ();
 
 	return heap_size > major_collection_trigger_size;
 }
@@ -145,12 +168,35 @@ sgen_memgov_minor_collection_end (void)
 }
 
 void
+sgen_memgov_major_pre_sweep (void)
+{
+	if (sgen_concurrent_collection_in_progress ()) {
+		major_pre_sweep_heap_size = get_heap_size ();
+	} else {
+		/* We decrease the allowance only in the concurrent case */
+		major_pre_sweep_heap_size = major_start_heap_size;
+	}
+}
+
+void
+sgen_memgov_major_post_sweep (void)
+{
+	mword num_major_sections = major_collector.get_num_major_sections ();
+
+	mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "GC_MAJOR_SWEEP: major %dK/%dK",
+		num_major_sections * major_collector.section_size / 1024,
+		last_major_num_sections * major_collector.section_size / 1024);
+	last_major_num_sections = num_major_sections;
+}
+
+void
 sgen_memgov_major_collection_start (void)
 {
 	need_calculate_minor_collection_allowance = TRUE;
+	major_start_heap_size = get_heap_size ();
 
 	if (debug_print_allowance) {
-		SGEN_LOG (0, "Starting collection with heap size %ld bytes", (long)(major_collector.get_num_major_sections () * major_collector.section_size + los_memory_usage));
+		SGEN_LOG (0, "Starting collection with heap size %ld bytes", (long)major_start_heap_size);
 	}
 }
 
@@ -178,6 +224,7 @@ sgen_memgov_collection_end (int generation, GGTimingInfo* info, int info_count)
 		if (info[i].generation != -1)
 			sgen_client_log_timing (&info [i], last_major_num_sections, last_los_memory_usage);
 	}
+	last_los_memory_usage = los_memory_usage;
 }
 
 /*

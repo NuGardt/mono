@@ -8,6 +8,7 @@
  * Copyright 2003-2008 Ximian, Inc.
  *
  * See LICENSE for licensing information.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 #include <config.h>
 #include <signal.h>
@@ -29,7 +30,7 @@
 #include <mono/metadata/mono-config.h>
 #include <mono/metadata/environment.h>
 #include <mono/metadata/mono-debug.h>
-#include <mono/metadata/gc-internal.h>
+#include <mono/metadata/gc-internals.h>
 #include <mono/metadata/threads-types.h>
 #include <mono/metadata/verify.h>
 #include <mono/metadata/verify-internals.h>
@@ -38,7 +39,7 @@
 #include <mono/utils/mono-math.h>
 #include <mono/utils/mono-compiler.h>
 #include <mono/utils/mono-counters.h>
-#include <mono/utils/mono-logger-internal.h>
+#include <mono/utils/mono-logger-internals.h>
 #include <mono/utils/mono-mmap.h>
 #include <mono/utils/dtrace.h>
 
@@ -50,16 +51,22 @@
 
 #include "jit-icalls.h"
 
+#ifdef _WIN32
+#include <mmsystem.h>
+#endif
+
 void
 mono_runtime_install_handlers (void)
 {
 #ifndef MONO_CROSS_COMPILE
-	win32_seh_init();
-	win32_seh_set_handler(SIGFPE, mono_sigfpe_signal_handler);
-	win32_seh_set_handler(SIGILL, mono_sigill_signal_handler);
-	win32_seh_set_handler(SIGSEGV, mono_sigsegv_signal_handler);
-	if (mini_get_debug_options ()->handle_sigint)
-		win32_seh_set_handler(SIGINT, mono_sigint_signal_handler);
+	if (!mono_aot_only) {
+		win32_seh_init();
+		win32_seh_set_handler(SIGFPE, mono_sigfpe_signal_handler);
+		win32_seh_set_handler(SIGILL, mono_sigill_signal_handler);
+		win32_seh_set_handler(SIGSEGV, mono_sigsegv_signal_handler);
+		if (mini_get_debug_options ()->handle_sigint)
+			win32_seh_set_handler(SIGINT, mono_sigint_signal_handler);
+	}
 #endif
 }
 
@@ -67,7 +74,9 @@ void
 mono_runtime_cleanup_handlers (void)
 {
 #ifndef MONO_CROSS_COMPILE
-	win32_seh_cleanup();
+	if (!mono_aot_only) {
+		win32_seh_cleanup();
+	}
 #endif
 }
 

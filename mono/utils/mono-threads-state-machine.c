@@ -5,6 +5,7 @@
 #include <mono/utils/mono-tls.h>
 #include <mono/utils/mono-memory-model.h>
 #include <mono/utils/atomic.h>
+#include <mono/utils/checked-build.h>
 
 #include <errno.h>
 
@@ -89,6 +90,8 @@ trace_state_change (const char *transition, MonoThreadInfo *info, int cur_raw_st
 		state_name (next_state),
 		get_thread_suspend_count (cur_raw_state),
 		get_thread_suspend_count (cur_raw_state) + suspend_count_delta);
+
+	CHECKED_BUILD_THREAD_TRANSITION (transition, info, get_thread_state (cur_raw_state), get_thread_suspend_count (cur_raw_state), next_state, suspend_count_delta);
 }
 
 /*
@@ -110,7 +113,7 @@ retry_state_change:
 		trace_state_change ("ATTACH", info, raw_state, STATE_RUNNING, 0);
 		break;
 	default:
-		g_error ("Cannot transition current thread from %s with ATTACH", state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition current thread from %s with ATTACH", state_name (cur_state));
 	}
 }
 
@@ -145,7 +148,7 @@ STATE_BLOCKING: This is a bug in the coop code that forgot to do a finish blocki
 STATE_BLOCKING_AND_SUSPENDED: This is a bug in coop x suspend that resulted the thread in an undetachable state.
 */
 	default:
-		g_error ("Cannot transition current thread %p from %s with DETACH", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition current thread %p from %s with DETACH", info, state_name (cur_state));
 	}
 }
 
@@ -187,7 +190,7 @@ STATE_BLOCKING_AND_SUSPENDED: Self suspension cannot be started when the thread 
 If this turns to be an issue we can introduce a new suspend request state for when both have been requested.
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with SUSPEND_REQUEST", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with SUSPEND_REQUEST", mono_thread_info_get_tid (info), state_name (cur_state));
 	}
 }
 
@@ -199,6 +202,7 @@ Returns one of the following values:
 - AsyncSuspendInitSuspend: Thread suspend requested, async suspend needs to be done.
 - AsyncSuspendAlreadySuspended: Thread already suspended, nothing to do.
 - AsyncSuspendWait: Self suspend in progress, asked it to notify us. Caller must add target to the notification set.
+- AsyncSuspendBlocking: Thread in blocking state
 */
 MonoRequestAsyncSuspendResult
 mono_threads_transition_request_async_suspension (MonoThreadInfo *info)
@@ -238,7 +242,7 @@ retry_state_change:
 		if (InterlockedCompareExchange (&info->thread_state, build_thread_state (cur_state, suspend_count + 1), raw_state) != raw_state)
 			goto retry_state_change;
 		trace_state_change ("ASYNC_SUSPEND_REQUESTED", info, raw_state, cur_state, 1);
-		return AsyncSuspendAlreadySuspended; //A thread in the blocking state has its state saved so we can treat it as suspended.
+		return AsyncSuspendBlocking; //A thread in the blocking state has its state saved so we can treat it as suspended.
 
 /*
 
@@ -248,7 +252,7 @@ The expected behavior is that the target should poll its state very soon so the 
 STATE_ASYNC_SUSPEND_REQUESTED: Since there can only be one async suspend in progress and it must finish, it should not be possible to witness this.
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with ASYNC_SUSPEND_REQUESTED", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with ASYNC_SUSPEND_REQUESTED", mono_thread_info_get_tid (info), state_name (cur_state));
 	}
 	return (MonoRequestAsyncSuspendResult) FALSE;
 }
@@ -297,7 +301,7 @@ STATE_BLOCKING:
 STATE_BLOCKING_AND_SUSPENDED: Pool is a local state transition. No VM activities are allowed while in blocking mode.
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with STATE_POLL", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with STATE_POLL", mono_thread_info_get_tid (info), state_name (cur_state));
 	}
 }
 
@@ -397,7 +401,7 @@ If this turns to be a problem we should either implement [2] or make this an inv
 
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with REQUEST_RESUME", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with REQUEST_RESUME", mono_thread_info_get_tid (info), state_name (cur_state));
 	}
 }
 
@@ -433,7 +437,7 @@ STATE_SELF_SUSPEND_REQUESTED: When self suspend and async suspend happen togethe
 STATE_BLOCKING: Async suspend only begins if a transition to async suspend requested happened. Blocking would have put us into blocking with positive suspend count if it raced with async finish.
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with FINISH_ASYNC_SUSPEND", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with FINISH_ASYNC_SUSPEND", mono_thread_info_get_tid (info), state_name (cur_state));
 	}
 }
 
@@ -477,7 +481,7 @@ STATE_BLOCKING_AND_SUSPENDED
 STATE_SELF_SUSPEND_REQUESTED: All those are invalid end states of a sucessfull finish async suspend
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with COMPENSATE_FINISH_ASYNC_SUSPEND", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with COMPENSATE_FINISH_ASYNC_SUSPEND", mono_thread_info_get_tid (info), state_name (cur_state));
 
 	}
 }
@@ -522,7 +526,7 @@ STATE_BLOCKING:
 STATE_BLOCKING_AND_SUSPENDED: Blocking is not nestabled
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with DO_BLOCKING", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with DO_BLOCKING", mono_thread_info_get_tid (info), state_name (cur_state));
 	}
 }
 
@@ -570,7 +574,7 @@ STATE_SELF_SUSPEND_REQUESTED: A blocking operation must not be done while trying
 STATE_BLOCKING_AND_SUSPENDED: This an exit state of done blocking
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with DONE_BLOCKING", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with DONE_BLOCKING", mono_thread_info_get_tid (info), state_name (cur_state));
 	}
 }
 
@@ -608,9 +612,9 @@ retry_state_change:
 			trace_state_change ("ABORT_BLOCKING", info, raw_state, STATE_RUNNING, 0);
 			return AbortBlockingOk;
 		} else {
-			if (InterlockedCompareExchange (&info->thread_state, build_thread_state (STATE_ASYNC_SUSPEND_REQUESTED, suspend_count), raw_state) != raw_state)
+			if (InterlockedCompareExchange (&info->thread_state, build_thread_state (STATE_SELF_SUSPEND_REQUESTED, suspend_count), raw_state) != raw_state)
 				goto retry_state_change;
-			trace_state_change ("ABORT_BLOCKING", info, raw_state, STATE_ASYNC_SUSPEND_REQUESTED, 0);
+			trace_state_change ("ABORT_BLOCKING", info, raw_state, STATE_SELF_SUSPEND_REQUESTED, 0);
 			return AbortBlockingOkAndPool;
 		}
 /*
@@ -620,7 +624,7 @@ STATE_SELF_SUSPEND_REQUESTED: A blocking operation must not be done while trying
 STATE_BLOCKING_AND_SUSPENDED: This is an exit state of done blocking, can't happen here.
 */
 	default:
-		g_error ("Cannot transition thread %p from %s with DONE_BLOCKING", info, state_name (cur_state));
+		mono_fatal_with_history ("Cannot transition thread %p from %s with DONE_BLOCKING", mono_thread_info_get_tid (info), state_name (cur_state));
 	}
 }
 
@@ -690,4 +694,10 @@ int
 mono_thread_info_current_state (MonoThreadInfo *info)
 {
 	return get_thread_state (info->thread_state);
+}
+
+const char*
+mono_thread_state_name (int state)
+{
+	return state_name (state);
 }

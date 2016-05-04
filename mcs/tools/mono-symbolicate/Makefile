@@ -5,15 +5,15 @@ include ../../build/rules.make
 PROGRAM = mono-symbolicate.exe
 
 LOCAL_MCS_FLAGS = \
-	/r:Mono.Cecil.dll	\
-	/r:Mono.CompilerServices.SymbolWriter.dll \
-	/r:System.Xml
+	/D:NO_AUTHENTICODE
+
+LIB_REFS = Mono.Cecil Mono.Cecil.Mdb System.Xml System.Core System
 
 include ../../build/executable.make
 
 LIB_PATH = $(topdir)/class/lib/$(PROFILE)
 
-MONO = MONO_PATH=$(LIB_PATH)$(PLATFORM_PATH_SEPARATOR)$$MONO_PATH $(RUNTIME) -O=-inline
+MONO = MONO_PATH="$(LIB_PATH)$(PLATFORM_PATH_SEPARATOR)$$MONO_PATH" $(RUNTIME) -O=-inline
 
 OUT_DIR = Test/out
 TEST_CS = Test/StackTraceDumper.cs
@@ -34,19 +34,25 @@ CHECK_DIFF = @\
 		exit 1; \
 	fi
 
-BUILD_TEST_EXE = @\
+BUILD_TEST_EXE = \
 	rm -rf $(OUT_DIR); \
 	mkdir -p $(OUT_DIR); \
-	$(MCS) -debug $(TEST_CS) -out:$(TEST_EXE)
+	$(CSCOMPILE) $(TEST_CS) -out:$(TEST_EXE)
 
-check: all
+check: test-local
+
+AOT_SUPPORTED = $(shell $(MONO) --aot 2>&1 | grep -q "AOT compilation is not supported" && echo 0 || echo 1)
+
+test-local: all
 	$(BUILD_TEST_EXE)
-	@echo "Checking $(PROGRAM) without AOT"
+	@echo "Checking $(TEST_EXE) without AOT"
 	$(CHECK_DIFF)
-	@echo "Checking $(PROGRAM) with AOT"
+ifeq ($(AOT_SUPPORTED), 1)
+	@echo "Checking $(TEST_EXE) with AOT"
 	@MONO_DEBUG=gen-compact-seq-points $(MONO) --aot $(TEST_EXE) > /dev/null
 	$(CHECK_DIFF)
-	@echo "Checking $(PROGRAM) with AOT (using .msym)"
+	@echo "Checking $(TEST_EXE) with AOT (using .msym)"
 	$(BUILD_TEST_EXE)
 	@MONO_DEBUG=gen-compact-seq-points $(MONO) --aot=gen-seq-points-file $(TEST_EXE) > /dev/null
 	$(CHECK_DIFF)
+endif

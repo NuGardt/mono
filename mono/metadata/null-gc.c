@@ -4,12 +4,13 @@
  * Copyright 2001-2003 Ximian, Inc (http://www.ximian.com)
  * Copyright 2004-2011 Novell, Inc (http://www.novell.com)
  * Copyright 2011 Xamarin, Inc (http://www.xamarin.com)
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
 #include <glib.h>
 #include <mono/metadata/mono-gc.h>
-#include <mono/metadata/gc-internal.h>
+#include <mono/metadata/gc-internals.h>
 #include <mono/metadata/runtime.h>
 #include <mono/utils/atomic.h>
 #include <mono/utils/mono-threads.h>
@@ -34,6 +35,11 @@ mono_gc_base_init (void)
 	mono_threads_init (&cb, sizeof (MonoThreadInfo));
 
 	mono_thread_info_attach (&dummy);
+}
+
+void
+mono_gc_base_cleanup (void)
+{
 }
 
 void
@@ -112,7 +118,7 @@ mono_gc_enable_alloc_events (void)
 }
 
 int
-mono_gc_register_root (char *start, size_t size, void *descr)
+mono_gc_register_root (char *start, size_t size, void *descr, MonoGCRootSource source, const char *msg)
 {
 	return TRUE;
 }
@@ -171,7 +177,7 @@ mono_gc_make_root_descr_all_refs (int numbits)
 }
 
 void*
-mono_gc_alloc_fixed (size_t size, void *descr)
+mono_gc_alloc_fixed (size_t size, void *descr, MonoGCRootSource source, const char *msg)
 {
 	return g_malloc0 (size);
 }
@@ -227,6 +233,18 @@ mono_gc_alloc_string (MonoVTable *vtable, size_t size, gint32 len)
 	obj->chars [len] = 0;
 
 	return obj;
+}
+
+void*
+mono_gc_alloc_mature (MonoVTable *vtable, size_t size)
+{
+	return mono_gc_alloc_obj (vtable, size);
+}
+
+void*
+mono_gc_alloc_pinned_obj (MonoVTable *vtable, size_t size)
+{
+	return mono_gc_alloc_obj (vtable, size);
 }
 
 void
@@ -513,7 +531,7 @@ BOOL APIENTRY mono_gc_dllmain (HMODULE module_handle, DWORD reason, LPVOID reser
 #endif
 
 guint
-mono_gc_get_vtable_bits (MonoClass *class)
+mono_gc_get_vtable_bits (MonoClass *klass)
 {
 	return 0;
 }
@@ -524,7 +542,7 @@ mono_gc_register_altstack (gpointer stack, gint32 stack_size, gpointer altstack,
 }
 
 gboolean
-mono_gc_set_allow_synchronous_major (gboolean flag)
+mono_gc_is_null (void)
 {
 	return TRUE;
 }

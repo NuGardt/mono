@@ -1,4 +1,4 @@
-﻿//
+//
 // MemoryCacheTest.cs
 //
 // Authors:
@@ -844,7 +844,7 @@ namespace MonoTests.System.Runtime.Caching
 			};
 			cip.AbsoluteExpiration = DateTimeOffset.Now.AddMilliseconds (50);
 			mc.Set ("key", "value", cip);
-			Thread.Sleep (100);
+			Thread.Sleep (500);
 
 			Assert.IsFalse (expired, "#A1");
 			object value = mc.Get ("key");
@@ -892,7 +892,7 @@ namespace MonoTests.System.Runtime.Caching
 
 			cip = new CacheItemPolicy ();
 			cip.RemovedCallback = removedCb;
-			cip.AbsoluteExpiration = DateTimeOffset.Now.AddMilliseconds (sleepPeriod + 100);
+			cip.AbsoluteExpiration = DateTimeOffset.Now.AddMilliseconds (sleepPeriod + 500);
 			mc.Set ("key4", "value4", cip);
 			
 			Thread.Sleep (sleepPeriod);
@@ -930,7 +930,7 @@ namespace MonoTests.System.Runtime.Caching
 			};
 
 			mc.Set ("key4", "value4", cip);
-			Thread.Sleep (100);
+			Thread.Sleep (500);
 
 			enumerator = ((IEnumerable) mc).GetEnumerator ();
 			int count = 0;
@@ -949,7 +949,7 @@ namespace MonoTests.System.Runtime.Caching
 			};
 
 			mc.Set ("key5", "value5", cip);
-			Thread.Sleep (100);
+			Thread.Sleep (500);
 
 			enumerator2 = mc.DoGetEnumerator ();
 			count = 0;
@@ -1172,11 +1172,10 @@ namespace MonoTests.System.Runtime.Caching
 			for (int i = 0; i < 10; i++)
 				mc.Set ("key" + i.ToString (), "value" + i.ToString (), null);
 
-			// .NET doesn't touch the freshest 10 entries
 			Assert.AreEqual (10, mc.GetCount (), "#A1-1");
 			long trimmed = mc.Trim (50);
-			Assert.AreEqual (0, trimmed, "#A1-2");
-			Assert.AreEqual (10, mc.GetCount (), "#A1-3");
+			Assert.AreEqual (5, trimmed, "#A1-2");
+			Assert.AreEqual (5, mc.GetCount (), "#A1-3");
 
 			mc = new MemoryCache ("MyCache", config);
 			// Only entries 11- are considered for removal
@@ -1185,8 +1184,8 @@ namespace MonoTests.System.Runtime.Caching
 
 			Assert.AreEqual (11, mc.GetCount (), "#A2-1");
 			trimmed = mc.Trim (50);
-			Assert.AreEqual (1, trimmed, "#A2-2");
-			Assert.AreEqual (10, mc.GetCount (), "#A2-3");
+			Assert.AreEqual (6, trimmed, "#A2-2");
+			Assert.AreEqual (5, mc.GetCount (), "#A2-3");
 
 			mc = new MemoryCache ("MyCache", config);
 			// Only entries 11- are considered for removal
@@ -1195,8 +1194,8 @@ namespace MonoTests.System.Runtime.Caching
 
 			Assert.AreEqual (125, mc.GetCount (), "#A3-1");
 			trimmed = mc.Trim (50);
-			Assert.AreEqual (62, trimmed, "#A3-2");
-			Assert.AreEqual (63, mc.GetCount (), "#A3-3");
+			Assert.AreEqual (63, trimmed, "#A3-2");
+			Assert.AreEqual (62, mc.GetCount (), "#A3-3");
 
 			// Testing the removal order
 			mc = new MemoryCache ("MyCache", config);
@@ -1294,7 +1293,7 @@ namespace MonoTests.System.Runtime.Caching
 
 				Assert.AreEqual (10, mc.GetCount (), "#EGV2");
 
-				global::System.Threading.Thread.Sleep (1000);
+				global::System.Threading.Thread.Sleep (4 * 1000);
 
 				// we have waited but the items won't be expired by the timer since it wont have fired yet
 				Assert.AreEqual (10, mc.GetCount (), "#EGV3");

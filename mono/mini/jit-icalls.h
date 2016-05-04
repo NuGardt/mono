@@ -67,6 +67,8 @@ gpointer mono_ldtoken_wrapper_generic_shared (MonoImage *image, int token, MonoM
 
 guint64 mono_fconv_u8 (double v);
 
+guint64 mono_rconv_u8 (float v);
+
 gint64 mono_fconv_i8 (double v);
 
 guint32 mono_fconv_u4 (double v);
@@ -181,10 +183,41 @@ mono_object_isinst_with_cache (MonoObject *obj, MonoClass *klass, gpointer *cach
 MonoObject*
 mono_object_castclass_with_cache (MonoObject *obj, MonoClass *klass, gpointer *cache);
 
+void
+ves_icall_runtime_class_init (MonoVTable *vtable);
+
+void
+mono_generic_class_init (MonoVTable *vtable);
+
+void mono_interruption_checkpoint_from_trampoline (void);
+
 MonoObject*
 mono_gsharedvt_constrained_call (gpointer mp, MonoMethod *cmethod, MonoClass *klass, gboolean deref_arg, gpointer *args);
 
 void mono_gsharedvt_value_copy (gpointer dest, gpointer src, MonoClass *klass);
 
-#endif /* __MONO_JIT_ICALLS_H__ */
+gpointer mono_fill_class_rgctx (MonoVTable *vtable, int index);
 
+gpointer mono_fill_method_rgctx (MonoMethodRuntimeGenericContext *mrgctx, int index);
+
+gpointer mono_resolve_iface_call_gsharedvt (MonoObject *this_obj, int imt_slot, MonoMethod *imt_method, gpointer *out_arg);
+
+gpointer mono_resolve_vcall_gsharedvt (MonoObject *this_obj, int imt_slot, MonoMethod *imt_method, gpointer *out_arg);
+
+MonoFtnDesc* mono_resolve_generic_virtual_call (MonoVTable *vt, int slot, MonoMethod *imt_method);
+
+MonoFtnDesc* mono_resolve_generic_virtual_iface_call (MonoVTable *vt, int imt_slot, MonoMethod *imt_method);
+
+gpointer mono_init_vtable_slot (MonoVTable *vtable, int slot);
+
+void mono_llvmonly_init_delegate (MonoDelegate *del);
+
+void mono_llvmonly_init_delegate_virtual (MonoDelegate *del, MonoObject *target, MonoMethod *method);
+
+MonoObject* mono_get_assembly_object (MonoImage *image);
+
+MonoObject* mono_get_method_object (MonoMethod *method);
+
+double mono_ckfinite (double d);
+
+#endif /* __MONO_JIT_ICALLS_H__ */

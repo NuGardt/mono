@@ -1,5 +1,6 @@
 # Copyright 2011-2013 Xamarin, Inc (http://www.xamarin.com)
 # Copyright 2003-2011 Novell, Inc (http://www.novell.com)
+# Licensed under the MIT license. See LICENSE file in the project root for full license information.
 # arm64 cpu description file
 # this file is read by genmdesc to pruduce a table with all the relevant information
 # about the cpu instructions that may be used by the regsiter allocator, the scheduler
@@ -478,3 +479,6 @@ atomic_store_i8: dest:b src1:i len:12
 atomic_store_u8: dest:b src1:i len:12
 atomic_store_r4: dest:b src1:f len:24
 atomic_store_r8: dest:b src1:f len:20
+
+generic_class_init: src1:a len:44 clob:c
+gc_safe_point: src1:i len:12 clob:c

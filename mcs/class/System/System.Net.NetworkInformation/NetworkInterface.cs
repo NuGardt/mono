@@ -70,6 +70,11 @@ namespace System.Net.NetworkInformation {
 			}
 		}
 
+		public static IPAddress GetNetMask (IPAddress address)
+		{
+			return nif.GetNetMask (address);
+		}
+
 		public abstract IPInterfaceProperties GetIPProperties ();
 		public abstract IPv4InterfaceStatistics GetIPv4Statistics ();
 		public abstract PhysicalAddress GetPhysicalAddress ();
@@ -101,12 +106,12 @@ namespace System.Net.NetworkInformation {
 
 		class MacOsNetworkInterfaceAPI : UnixNetworkInterfaceAPI
 		{
+			const int AF_INET  = 2;
+			const int AF_INET6 = 30;
+			const int AF_LINK  = 18;
+
 			public override NetworkInterface [] GetAllNetworkInterfaces ()
 			{
-				const int AF_INET  = 2;
-				const int AF_INET6 = 30;
-				const int AF_LINK  = 18;
-
 				var interfaces = new Dictionary <string, MacOsNetworkInterface> ();
 				IntPtr ifap;
 				if (getifaddrs (out ifap) != 0)
@@ -210,10 +215,45 @@ namespace System.Net.NetworkInformation {
 			{
 				return if_nametoindex ("lo0");
 			}
+
+			public override IPAddress GetNetMask (IPAddress address)
+			{
+				IntPtr ifap;
+				if (getifaddrs (out ifap) != 0)
+					throw new SystemException ("getifaddrs() failed");
+
+				try {
+					IntPtr next = ifap;
+					while (next != IntPtr.Zero) {
+						MacOsStructs.ifaddrs addr = (MacOsStructs.ifaddrs) Marshal.PtrToStructure (next, typeof (MacOsStructs.ifaddrs));
+
+						if (addr.ifa_addr != IntPtr.Zero) {
+							// optain IPAddress
+							MacOsStructs.sockaddr sockaddr = (MacOsStructs.sockaddr) Marshal.PtrToStructure (addr.ifa_addr, typeof (MacOsStructs.sockaddr));
+
+							if (sockaddr.sa_family == AF_INET) {
+								MacOsStructs.sockaddr_in sockaddrin = (MacOsStructs.sockaddr_in) Marshal.PtrToStructure (addr.ifa_addr, typeof (MacOsStructs.sockaddr_in));
+								var saddress = new IPAddress (sockaddrin.sin_addr);
+								if (address.Equals (saddress))
+									return new IPAddress(((sockaddr_in)Marshal.PtrToStructure(addr.ifa_netmask, typeof(sockaddr_in))).sin_addr);
+							}
+						}
+						next = addr.ifa_next;
+					}
+				} finally {
+					freeifaddrs (ifap);
+				}
+
+				return null;
+			}
 		}
 
 		class LinuxNetworkInterfaceAPI : UnixNetworkInterfaceAPI
 		{
+			const int AF_INET = 2;
+			const int AF_INET6 = 10;
+			const int AF_PACKET = 17;
+
 			static void FreeInterfaceAddresses (IntPtr ifap)
 			{
 #if MONODROID
@@ -234,9 +274,6 @@ namespace System.Net.NetworkInformation {
 
 			public override NetworkInterface [] GetAllNetworkInterfaces ()
 			{
-				const int AF_INET   = 2;
-				const int AF_INET6  = 10;
-				const int AF_PACKET = 17;
 
 				var interfaces = new Dictionary <string, LinuxNetworkInterface> ();
 				IntPtr ifap;
@@ -367,8 +404,50 @@ namespace System.Net.NetworkInformation {
 			{
 				return if_nametoindex ("lo");
 			}
+
+			public override IPAddress GetNetMask (IPAddress address)
+			{
+				foreach (ifaddrs networkInteface in GetNetworkInterfaces()) {
+					if (networkInteface.ifa_addr == IntPtr.Zero)
+						continue;
+
+					var sockaddr = (sockaddr_in)Marshal.PtrToStructure(networkInteface.ifa_addr, typeof(sockaddr_in));
+
+					if (sockaddr.sin_family != AF_INET)
+						continue;
+
+					if (!address.Equals(new IPAddress(sockaddr.sin_addr)))
+						continue;
+
+					var netmask = (sockaddr_in)Marshal.PtrToStructure(networkInteface.ifa_netmask, typeof(sockaddr_in));
+					return new IPAddress(netmask.sin_addr);
+				}
+
+				return null;
+			}
+
+			private static IEnumerable<ifaddrs> GetNetworkInterfaces()
+			{
+				IntPtr ifap = IntPtr.Zero;
+
+				try {
+					if (GetInterfaceAddresses(out ifap) != 0)
+						yield break;
+
+					var next = ifap;
+					while (next != IntPtr.Zero) {
+						var addr = (ifaddrs)Marshal.PtrToStructure(next, typeof(ifaddrs));
+						yield return addr;
+						next = addr.ifa_next;
+					}
+				} finally {
+					if (ifap != IntPtr.Zero)
+						FreeInterfaceAddresses(ifap);
+				}
+			}
 		}
 
+#if !MOBILE
 		class Win32NetworkInterfaceAPI : NetworkInterfaceFactory
 		{
 			[DllImport ("iphlpapi.dll", SetLastError = true)]
@@ -410,14 +489,21 @@ namespace System.Net.NetworkInformation {
 			{
 				throw new NotImplementedException ();
 			}
+
+			public override IPAddress GetNetMask (IPAddress address)
+			{
+				throw new NotImplementedException ();
+			}
 		}
+#endif
 
 		public abstract NetworkInterface [] GetAllNetworkInterfaces ();
 		public abstract int GetLoopbackInterfaceIndex ();
+		public abstract IPAddress GetNetMask (IPAddress address);
 
 		public static NetworkInterfaceFactory Create ()
 		{
-#if MONOTOUCH
+#if MONOTOUCH || XAMMAC
 			return new MacOsNetworkInterfaceAPI ();
 #else
 			Version windowsVer51 = new Version (5, 1);
@@ -430,8 +516,10 @@ namespace System.Net.NetworkInformation {
 				return new LinuxNetworkInterfaceAPI ();
 			}
 
+#if !MOBILE
 			if (Environment.OSVersion.Version >= windowsVer51)
 				return new Win32NetworkInterfaceAPI ();
+#endif
 
 			throw new NotImplementedException ();
 #endif
@@ -671,6 +759,7 @@ namespace System.Net.NetworkInformation {
 		}
 	}
 
+#if !MOBILE
 	class Win32NetworkInterface2 : NetworkInterface
 	{
 		[DllImport ("iphlpapi.dll", SetLastError = true)]
@@ -783,5 +872,6 @@ namespace System.Net.NetworkInformation {
 			get { return !addr.NoMulticast; }
 		}
 	}
+#endif
 }
 

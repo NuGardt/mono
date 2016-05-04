@@ -159,42 +159,47 @@ namespace System.Threading
 
 		public static bool Wait(object obj, int millisecondsTimeout, bool exitContext) {
 			try {
-				if (exitContext) {
-#if MONOTOUCH
-					throw new NotSupportedException ("exitContext == true is not supported");
-#else
+#if !DISABLE_REMOTING
+				if (exitContext)
 					SynchronizationAttribute.ExitContext ();
 #endif
-				}
 				return Wait (obj, millisecondsTimeout);
 			}
 			finally {
-				if (exitContext) SynchronizationAttribute.EnterContext ();
+#if !DISABLE_REMOTING
+				if (exitContext)
+					SynchronizationAttribute.EnterContext ();
+#endif
 			}
 		}
 
 		public static bool Wait(object obj, TimeSpan timeout, bool exitContext) {
 			try {
-				if (exitContext) {
-#if MONOTOUCH
-					throw new NotSupportedException ("exitContext == true is not supported");
-#else
+#if !DISABLE_REMOTING
+				if (exitContext)
 					SynchronizationAttribute.ExitContext ();
 #endif
-				}
 				return Wait (obj, timeout);
 			}
 			finally {
-				if (exitContext) SynchronizationAttribute.EnterContext ();
+#if !DISABLE_REMOTING
+				if (exitContext)
+					SynchronizationAttribute.EnterContext ();
+#endif
 			}
 		}
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		extern static void try_enter_with_atomic_var (object obj, int millisecondsTimeout, ref bool lockTaken);
 
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		extern static void enter_with_atomic_var (object obj, ref bool lockTaken);
+
+		// Can't make this an icall since it has the same name as the other Enter method
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public static void Enter (object obj, ref bool lockTaken)
 		{
-			TryEnter (obj, Timeout.Infinite, ref lockTaken);
+			enter_with_atomic_var (obj, ref lockTaken);
 		}
 
 		public static void TryEnter (object obj, ref bool lockTaken)

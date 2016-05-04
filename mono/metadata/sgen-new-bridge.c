@@ -3,38 +3,10 @@
  *
  * Copyright 2011 Novell, Inc (http://www.novell.com)
  * Copyright 2011 Xamarin Inc (http://www.xamarin.com)
- *
- * THIS MATERIAL IS PROVIDED AS IS, WITH ABSOLUTELY NO WARRANTY EXPRESSED
- * OR IMPLIED.  ANY USE IS AT YOUR OWN RISK.
- *
- * Permission is hereby granted to use or copy this program
- * for any purpose,  provided the above notices are retained on all copies.
- * Permission to modify the code and to distribute modified code is granted,
- * provided the above notices are retained, and a notice that the code was
- * modified is included with the above copyright notice.
- *
- *
  * Copyright 2001-2003 Ximian, Inc
  * Copyright 2003-2010 Novell, Inc.
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice shall be
- * included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
- * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
- * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
@@ -45,12 +17,12 @@
 #include <errno.h>
 
 #include "sgen/sgen-gc.h"
-#include "sgen-bridge-internal.h"
+#include "sgen-bridge-internals.h"
 #include "sgen/sgen-hash-table.h"
 #include "sgen/sgen-qsort.h"
 #include "sgen/sgen-client.h"
 #include "tabledefs.h"
-#include "utils/mono-logger-internal.h"
+#include "utils/mono-logger-internals.h"
 
 //#define NEW_XREFS
 #ifdef NEW_XREFS
@@ -199,7 +171,7 @@ dyn_array_ensure_capacity (DynArray *da, int capacity, int elem_size)
 	while (capacity > da->capacity)
 		da->capacity *= 2;
 
-	new_data = sgen_alloc_internal_dynamic (elem_size * da->capacity, INTERNAL_MEM_BRIDGE_DATA, TRUE);
+	new_data = (char *)sgen_alloc_internal_dynamic (elem_size * da->capacity, INTERNAL_MEM_BRIDGE_DATA, TRUE);
 	memcpy (new_data, da->data, elem_size * da->size);
 	if (old_capacity > 0)
 		sgen_free_internal_dynamic (da->data, elem_size * old_capacity, INTERNAL_MEM_BRIDGE_DATA);
@@ -276,7 +248,7 @@ dyn_array_int_empty (DynIntArray *da)
 static void
 dyn_array_int_add (DynIntArray *da, int x)
 {
-	int *p = dyn_array_add (&da->array, sizeof (int));
+	int *p = (int *)dyn_array_add (&da->array, sizeof (int));
 	*p = x;
 }
 
@@ -374,13 +346,13 @@ dyn_array_ptr_add (DynPtrArray *da, void *ptr)
 		void *ptr0 = da->array.data;
 		void **p0;
 		dyn_array_init (&da->array);
-		p0 = dyn_array_add (&da->array, sizeof (void*));
+		p0 = (void **)dyn_array_add (&da->array, sizeof (void*));
 		*p0 = ptr0;
-		p = dyn_array_add (&da->array, sizeof (void*));
+		p = (void **)dyn_array_add (&da->array, sizeof (void*));
 	} else
 #endif
 	{
-		p = dyn_array_add (&da->array, sizeof (void*));
+		p = (void **)dyn_array_add (&da->array, sizeof (void*));
 	}
 	*p = ptr;
 }
@@ -431,7 +403,7 @@ dyn_array_scc_size (DynSCCArray *da)
 static SCC*
 dyn_array_scc_add (DynSCCArray *da)
 {
-	return dyn_array_add (&da->array, sizeof (SCC));
+	return (SCC *)dyn_array_add (&da->array, sizeof (SCC));
 }
 
 static SCC*
@@ -465,28 +437,28 @@ enable_accounting (void)
 }
 
 static MonoGCBridgeObjectKind
-class_kind (MonoClass *class)
+class_kind (MonoClass *klass)
 {
-	MonoGCBridgeObjectKind res = bridge_callbacks.bridge_class_kind (class);
+	MonoGCBridgeObjectKind res = bridge_callbacks.bridge_class_kind (klass);
 
 	/* If it's a bridge, nothing we can do about it. */
 	if (res == GC_BRIDGE_TRANSPARENT_BRIDGE_CLASS || res == GC_BRIDGE_OPAQUE_BRIDGE_CLASS)
 		return res;
 
 	/* Non bridge classes with no pointers will never point to a bridge, so we can savely ignore them. */
-	if (!class->has_references) {
-		SGEN_LOG (6, "class %s is opaque\n", class->name);
+	if (!klass->has_references) {
+		SGEN_LOG (6, "class %s is opaque\n", klass->name);
 		return GC_BRIDGE_OPAQUE_CLASS;
 	}
 
 	/* Some arrays can be ignored */
-	if (class->rank == 1) {
-		MonoClass *elem_class = class->element_class;
+	if (klass->rank == 1) {
+		MonoClass *elem_class = klass->element_class;
 
 		/* FIXME the bridge check can be quite expensive, cache it at the class level. */
 		/* An array of a sealed type that is not a bridge will never get to a bridge */
 		if ((elem_class->flags & TYPE_ATTRIBUTE_SEALED) && !elem_class->has_references && !bridge_callbacks.bridge_class_kind (elem_class)) {
-			SGEN_LOG (6, "class %s is opaque\n", class->name);
+			SGEN_LOG (6, "class %s is opaque\n", klass->name);
 			return GC_BRIDGE_OPAQUE_CLASS;
 		}
 	}
@@ -497,7 +469,7 @@ class_kind (MonoClass *class)
 static HashEntry*
 get_hash_entry (MonoObject *obj, gboolean *existing)
 {
-	HashEntry *entry = sgen_hash_table_lookup (&hash_table, obj);
+	HashEntry *entry = (HashEntry *)sgen_hash_table_lookup (&hash_table, obj);
 	HashEntry new_entry;
 
 	if (entry) {
@@ -515,7 +487,7 @@ get_hash_entry (MonoObject *obj, gboolean *existing)
 
 	sgen_hash_table_replace (&hash_table, obj, &new_entry, NULL);
 
-	return sgen_hash_table_lookup (&hash_table, obj);
+	return (HashEntry *)sgen_hash_table_lookup (&hash_table, obj);
 }
 
 static void
@@ -532,7 +504,7 @@ free_data (void)
 	int total_srcs = 0;
 	int max_srcs = 0;
 
-	SGEN_HASH_TABLE_FOREACH (&hash_table, obj, entry) {
+	SGEN_HASH_TABLE_FOREACH (&hash_table, MonoObject *, obj, HashEntry *, entry) {
 		int entry_size = dyn_array_ptr_size (&entry->srcs);
 		total_srcs += entry_size;
 		if (entry_size > max_srcs)
@@ -647,10 +619,10 @@ dfs1 (HashEntry *obj_entry)
 		char *start;
 		++dfs1_passes;
 
-		obj_entry = dyn_array_ptr_pop (&dfs_stack);
+		obj_entry = (HashEntry *)dyn_array_ptr_pop (&dfs_stack);
 		if (obj_entry) {
 			/* obj_entry needs to be expanded */
-			src = dyn_array_ptr_pop (&dfs_stack);
+			src = (HashEntry *)dyn_array_ptr_pop (&dfs_stack);
 
 			if (src)
 				g_assert (!src->v.dfs1.forwarded_to);
@@ -664,7 +636,7 @@ dfs1 (HashEntry *obj_entry)
 
 			if (!obj_entry->v.dfs1.is_visited) {
 				int num_links = 0;
-				mword desc = sgen_obj_get_descriptor_safe (start);
+				mword desc = sgen_obj_get_descriptor_safe (obj);
 
 				obj_entry->v.dfs1.is_visited = 1;
 
@@ -686,8 +658,8 @@ dfs1 (HashEntry *obj_entry)
 				 */
 #ifdef OPTIMIZATION_FORWARD
 				if (!obj_entry->is_bridge && num_links == 1) {
-					HashEntry *dst_entry = dyn_array_ptr_pop (&dfs_stack);
-					HashEntry *obj_entry_again = dyn_array_ptr_pop (&dfs_stack);
+					HashEntry *dst_entry = (HashEntry *)dyn_array_ptr_pop (&dfs_stack);
+					HashEntry *obj_entry_again = (HashEntry *)dyn_array_ptr_pop (&dfs_stack);
 					g_assert (obj_entry_again == obj_entry);
 					g_assert (!dst_entry->v.dfs1.forwarded_to);
 					if (obj_entry != dst_entry) {
@@ -709,7 +681,7 @@ dfs1 (HashEntry *obj_entry)
 		} else {
 			/* obj_entry needs to be finished */
 
-			obj_entry = dyn_array_ptr_pop (&dfs_stack);
+			obj_entry = (HashEntry *)dyn_array_ptr_pop (&dfs_stack);
 
 			//g_print ("finish %s\n", sgen_safe_name (obj_entry->obj));
 			register_finishing_time (obj_entry, ++current_time);
@@ -838,7 +810,7 @@ dfs2 (HashEntry *entry)
 	dyn_array_ptr_push (&dfs_stack, entry);
 
 	do {
-		entry = dyn_array_ptr_pop (&dfs_stack);
+		entry = (HashEntry *)dyn_array_ptr_pop (&dfs_stack);
 		++dfs2_passes;
 
 		if (entry->v.dfs2.scc_index >= 0) {
@@ -910,7 +882,7 @@ dump_graph (void)
 	MonoObject *obj;
 	HashEntry *entry;
 	size_t prefix_len = strlen (dump_prefix);
-	char *filename = alloca(prefix_len + 64);
+	char *filename = (char *)alloca (prefix_len + 64);
 	FILE *file;
 	int edge_id = 0;
 
@@ -931,18 +903,18 @@ dump_graph (void)
 			"</attributes>\n");
 
 	fprintf (file, "<nodes>\n");
-	SGEN_HASH_TABLE_FOREACH (&hash_table, obj, entry) {
-		MonoVTable *vt = (MonoVTable*) SGEN_LOAD_VTABLE (obj);
+	SGEN_HASH_TABLE_FOREACH (&hash_table, MonoObject *, obj, HashEntry *, entry) {
+		MonoVTable *vt = SGEN_LOAD_VTABLE (obj);
 		fprintf (file, "<node id=\"%p\"><attvalues><attvalue for=\"0\" value=\"%s.%s\"/><attvalue for=\"1\" value=\"%s\"/></attvalues></node>\n",
 				obj, vt->klass->name_space, vt->klass->name, entry->is_bridge ? "true" : "false");
 	} SGEN_HASH_TABLE_FOREACH_END;
 	fprintf (file, "</nodes>\n");
 
 	fprintf (file, "<edges>\n");
-	SGEN_HASH_TABLE_FOREACH (&hash_table, obj, entry) {
+	SGEN_HASH_TABLE_FOREACH (&hash_table, MonoObject *, obj, HashEntry *, entry) {
 		int i;
 		for (i = 0; i < dyn_array_ptr_size (&entry->srcs); ++i) {
-			HashEntry *src = dyn_array_ptr_get (&entry->srcs, i);
+			HashEntry *src = (HashEntry *)dyn_array_ptr_get (&entry->srcs, i);
 			fprintf (file, "<edge id=\"%d\" source=\"%p\" target=\"%p\"/>\n", edge_id++, sgen_hash_table_key_for_value_pointer (src), obj);
 		}
 	} SGEN_HASH_TABLE_FOREACH_END;
@@ -968,7 +940,7 @@ compare_hash_entries (const HashEntry *e1, const HashEntry *e2)
 
 DEF_QSORT_INLINE(hash_entries, HashEntry*, compare_hash_entries)
 
-static unsigned long step_1, step_2, step_3, step_4, step_5, step_6;
+static gint64 step_1, step_2, step_3, step_4, step_5, step_6;
 static int fist_pass_links, second_pass_links, sccs_links;
 static int max_sccs_links = 0;
 
@@ -1017,13 +989,13 @@ processing_stw_step (void)
 	*/
 	bridge_count = dyn_array_ptr_size (&registered_bridges);
 	for (i = 0; i < bridge_count ; ++i)
-		register_bridge_object (dyn_array_ptr_get (&registered_bridges, i));
+		register_bridge_object ((MonoObject *)dyn_array_ptr_get (&registered_bridges, i));
 
 	for (i = 0; i < bridge_count; ++i)
-		dfs1 (get_hash_entry (dyn_array_ptr_get (&registered_bridges, i), NULL));
+		dfs1 (get_hash_entry ((MonoObject *)dyn_array_ptr_get (&registered_bridges, i), NULL));
 
 	/* Remove all forwarded objects. */
-	SGEN_HASH_TABLE_FOREACH (&hash_table, obj, entry) {
+	SGEN_HASH_TABLE_FOREACH (&hash_table, MonoObject *, obj, HashEntry *, entry) {
 		if (entry->v.dfs1.forwarded_to) {
 			g_assert (dyn_array_ptr_size (&entry->srcs) == 0);
 			SGEN_HASH_TABLE_FOREACH_REMOVE (TRUE);
@@ -1066,10 +1038,10 @@ processing_build_callback_data (int generation)
 
 	/* alloc and fill array of all entries */
 
-	all_entries = sgen_alloc_internal_dynamic (sizeof (HashEntry*) * hash_table.num_entries, INTERNAL_MEM_BRIDGE_DATA, TRUE);
+	all_entries = (HashEntry **)sgen_alloc_internal_dynamic (sizeof (HashEntry*) * hash_table.num_entries, INTERNAL_MEM_BRIDGE_DATA, TRUE);
 
 	j = 0;
-	SGEN_HASH_TABLE_FOREACH (&hash_table, obj, entry) {
+	SGEN_HASH_TABLE_FOREACH (&hash_table, MonoObject *, obj, HashEntry *, entry) {
 		g_assert (entry->v.dfs1.finishing_time > 0);
 		all_entries [j++] = entry;
 		fist_pass_links += dyn_array_ptr_size (&entry->srcs);
@@ -1080,7 +1052,7 @@ processing_build_callback_data (int generation)
 	/* sort array according to decreasing finishing time */
 	qsort_hash_entries (all_entries, hash_table.num_entries);
 
-	SGEN_HASH_TABLE_FOREACH (&hash_table, obj, entry) {
+	SGEN_HASH_TABLE_FOREACH (&hash_table, MonoObject *, obj, HashEntry *, entry) {
 		entry->v.dfs2.scc_index = -1;
 	} SGEN_HASH_TABLE_FOREACH_END;
 
@@ -1201,7 +1173,7 @@ processing_build_callback_data (int generation)
 			HashEntryWithAccounting *entry = (HashEntryWithAccounting*)all_entries [i];
 			if (entry->entry.is_bridge) {
 				MonoObject *obj = sgen_hash_table_key_for_value_pointer (entry);
-				MonoClass *klass = ((MonoVTable*)SGEN_LOAD_VTABLE (obj))->klass;
+				MonoClass *klass = SGEN_LOAD_VTABLE (obj)->klass;
 				mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC, "OBJECT %s::%s (%p) weight %f", klass->name_space, klass->name, obj, entry->weight);
 			}
 		}
@@ -1231,7 +1203,7 @@ processing_build_callback_data (int generation)
 		max_sccs_links = MAX (max_sccs_links, dyn_array_int_size (&scc->XREFS));
 	}
 
-	api_sccs = sgen_alloc_internal_dynamic (sizeof (MonoGCBridgeSCC*) * num_sccs, INTERNAL_MEM_BRIDGE_DATA, TRUE);
+	api_sccs = (MonoGCBridgeSCC **)sgen_alloc_internal_dynamic (sizeof (MonoGCBridgeSCC*) * num_sccs, INTERNAL_MEM_BRIDGE_DATA, TRUE);
 	num_xrefs = 0;
 	j = 0;
 	for (i = 0; i < dyn_array_scc_size (&sccs); ++i) {
@@ -1239,7 +1211,7 @@ processing_build_callback_data (int generation)
 		if (!scc->num_bridge_entries)
 			continue;
 
-		api_sccs [j] = sgen_alloc_internal_dynamic (sizeof (MonoGCBridgeSCC) + sizeof (MonoObject*) * scc->num_bridge_entries, INTERNAL_MEM_BRIDGE_DATA, TRUE);
+		api_sccs [j] = (MonoGCBridgeSCC *)sgen_alloc_internal_dynamic (sizeof (MonoGCBridgeSCC) + sizeof (MonoObject*) * scc->num_bridge_entries, INTERNAL_MEM_BRIDGE_DATA, TRUE);
 		api_sccs [j]->is_alive = FALSE;
 		api_sccs [j]->num_objs = scc->num_bridge_entries;
 		scc->num_bridge_entries = 0;
@@ -1248,14 +1220,14 @@ processing_build_callback_data (int generation)
 		num_xrefs += dyn_array_int_size (&scc->XREFS);
 	}
 
-	SGEN_HASH_TABLE_FOREACH (&hash_table, obj, entry) {
+	SGEN_HASH_TABLE_FOREACH (&hash_table, MonoObject *, obj, HashEntry *, entry) {
 		if (entry->is_bridge) {
 			SCC *scc = dyn_array_scc_get_ptr (&sccs, entry->v.dfs2.scc_index);
 			api_sccs [scc->api_index]->objs [scc->num_bridge_entries++] = sgen_hash_table_key_for_value_pointer (entry);
 		}
 	} SGEN_HASH_TABLE_FOREACH_END;
 
-	api_xrefs = sgen_alloc_internal_dynamic (sizeof (MonoGCBridgeXRef) * num_xrefs, INTERNAL_MEM_BRIDGE_DATA, TRUE);
+	api_xrefs = (MonoGCBridgeXRef *)sgen_alloc_internal_dynamic (sizeof (MonoGCBridgeXRef) * num_xrefs, INTERNAL_MEM_BRIDGE_DATA, TRUE);
 	j = 0;
 	for (i = 0; i < dyn_array_scc_size (&sccs); ++i) {
 		int k;
@@ -1325,7 +1297,7 @@ processing_after_callback (int generation)
 	if (bridge_accounting_enabled) {
 		for (i = 0; i < num_sccs; ++i) {
 			for (j = 0; j < api_sccs [i]->num_objs; ++j) {
-				GCVTable *vtable = SGEN_LOAD_VTABLE (api_sccs [i]->objs [j]);
+				GCVTable vtable = SGEN_LOAD_VTABLE (api_sccs [i]->objs [j]);
 				mono_trace (G_LOG_LEVEL_INFO, MONO_TRACE_GC,
 					"OBJECT %s (%p) SCC [%d] %s",
 						sgen_client_vtable_get_namespace (vtable), sgen_client_vtable_get_name (vtable), api_sccs [i]->objs [j],
@@ -1364,7 +1336,7 @@ describe_pointer (GCObject *obj)
 		}
 	}
 
-	entry = sgen_hash_table_lookup (&hash_table, obj);
+	entry = (HashEntry *)sgen_hash_table_lookup (&hash_table, obj);
 	if (!entry)
 		return;
 
