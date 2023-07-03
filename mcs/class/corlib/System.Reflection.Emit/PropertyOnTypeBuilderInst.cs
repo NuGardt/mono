@@ -27,7 +27,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System;
 using System.Globalization;
 using System.Reflection;
@@ -41,10 +41,10 @@ namespace System.Reflection.Emit
 	[StructLayout (LayoutKind.Sequential)]
 	internal class PropertyOnTypeBuilderInst : PropertyInfo
 	{
-		MonoGenericClass instantiation;
+		TypeBuilderInstantiation instantiation;
 		PropertyInfo prop;
 
-		internal PropertyOnTypeBuilderInst (MonoGenericClass instantiation, PropertyInfo prop)
+		internal PropertyOnTypeBuilderInst (TypeBuilderInstantiation instantiation, PropertyInfo prop)
 		{
 			this.instantiation = instantiation;
 			this.prop = prop;

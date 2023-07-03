@@ -20,10 +20,11 @@
 // THE SOFTWARE.
 // 
 
+[assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.AssemblyExtensions))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.BindingFlags))]
-
-//Missing: [assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.AssemblyExtensions))]
-//Missing: [assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.EventInfoExtensions))]
-//Missing: [assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.MethodInfoExtensions))]
-//Missing: [assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.PropertyInfoExtensions))]
-//Missing: [assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.TypeExtensions))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.EventInfoExtensions))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.MemberInfoExtensions))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.MethodInfoExtensions))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.ModuleExtensions))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.PropertyInfoExtensions))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedToAttribute(typeof(System.Reflection.TypeExtensions))]

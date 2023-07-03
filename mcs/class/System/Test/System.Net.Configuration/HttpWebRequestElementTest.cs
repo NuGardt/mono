@@ -7,7 +7,7 @@
 // (C) 2005 Novell
 //
 
-#if !MOBILE
+#if !MOBILE && !XAMMAC_4_5
 
 using System.Net.Configuration;
 

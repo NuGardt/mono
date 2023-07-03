@@ -10,7 +10,7 @@
 //
 
 
-#if !MOBILE
+#if !MOBILE && !XAMMAC_4_5
 using NUnit.Framework;
 
 using System;

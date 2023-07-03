@@ -40,9 +40,8 @@
 	<p>The output of the SCC analysis is passed to the
 	`cross_references()` callback.  It is expected to set the
 	`is_alive` flag on those strongly connected components that it
-	wishes to be kept alive.  Only bridged objects will be
-	reported to the callback, i.e., non-bridged objects are
-	removed from the callback graph.
+	wishes to be kept alive.  The value of `is_alive` will be
+	ignored on any SCCs which lack bridges.
 	
 	<p>In monodroid each bridged object has a corresponding Java
 	mirror object.  In the bridge callback it reifies the Mono
@@ -63,7 +62,7 @@
 
 <div class="mapi-header">
 enum {
-        SGEN_BRIDGE_VERSION = 4
+        SGEN_BRIDGE_VERSION = 5
 };
         
 typedef enum {
@@ -109,6 +108,12 @@ typedef struct {
 <h4><a name="api:mono_gc_wait_for_bridge_processing">mono_gc_wait_for_bridge_processing</a></h4>
 
 <h3>Write Barriers</h3>
+
+	<p>SGen is a concurrent and generational GC, features which require
+	tracking changes to the state of the heap. This is achieved through
+	write barriers. Whenever native code is changing the state of the
+	heap by storing references into another managed object, it needs to
+	do it using this write barrier API.
 
 <h4><a name="api:mono_gc_wbarrier_arrayref_copy">mono_gc_wbarrier_arrayref_copy</a></h4>
 <h4><a name="api:mono_gc_wbarrier_generic_nostore">mono_gc_wbarrier_generic_nostore</a></h4>

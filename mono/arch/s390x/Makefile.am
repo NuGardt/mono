@@ -1,3 +1,4 @@
+MAKEFLAGS := $(MAKEFLAGS) --no-builtin-rules
 
 AM_CPPFLAGS = $(GLIB_CFLAGS) -I$(top_srcdir)
 

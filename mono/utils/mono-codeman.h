@@ -1,3 +1,7 @@
+/**
+ * \file
+ */
+
 #ifndef __MONO_CODEMAN_H__
 #define __MONO_CODEMAN_H__
 
@@ -5,45 +9,40 @@
 
 typedef struct _MonoCodeManager MonoCodeManager;
 
-MONO_API MonoCodeManager* mono_code_manager_new     (void);
-MONO_API MonoCodeManager* mono_code_manager_new_dynamic (void);
-MONO_API void             mono_code_manager_destroy (MonoCodeManager *cman);
-MONO_API void             mono_code_manager_invalidate (MonoCodeManager *cman);
-MONO_API void             mono_code_manager_set_read_only (MonoCodeManager *cman);
+#define MONO_CODE_MANAGER_CALLBACKS \
+	MONO_CODE_MANAGER_CALLBACK (void, chunk_new, (void *chunk, int size)) \
+	MONO_CODE_MANAGER_CALLBACK (void, chunk_destroy, (void *chunk)) \
 
-MONO_API void*            mono_code_manager_reserve_align (MonoCodeManager *cman, int size, int alignment);
+typedef struct {
 
-MONO_API void*            mono_code_manager_reserve (MonoCodeManager *cman, int size);
-MONO_API void             mono_code_manager_commit  (MonoCodeManager *cman, void *data, int size, int newsize);
-MONO_API int              mono_code_manager_size    (MonoCodeManager *cman, int *used_size);
-MONO_API void             mono_code_manager_init (void);
-MONO_API void             mono_code_manager_cleanup (void);
+#undef MONO_CODE_MANAGER_CALLBACK
+#define MONO_CODE_MANAGER_CALLBACK(ret, name, sig) ret (*name) sig;
+
+    MONO_CODE_MANAGER_CALLBACKS
+
+} MonoCodeManagerCallbacks;
+
+MonoCodeManager* mono_code_manager_new     (void);
+MonoCodeManager* mono_code_manager_new_dynamic (void);
+void             mono_code_manager_destroy (MonoCodeManager *cman);
+void             mono_code_manager_invalidate (MonoCodeManager *cman);
+void             mono_code_manager_set_read_only (MonoCodeManager *cman);
+
+void*            mono_code_manager_reserve_align (MonoCodeManager *cman, int size, int alignment);
+
+void*            mono_code_manager_reserve (MonoCodeManager *cman, int size);
+void             mono_code_manager_commit  (MonoCodeManager *cman, void *data, int size, int newsize);
+int              mono_code_manager_size    (MonoCodeManager *cman, int *used_size);
+void             mono_code_manager_init (void);
+void             mono_code_manager_cleanup (void);
+void             mono_code_manager_install_callbacks (const MonoCodeManagerCallbacks* callbacks);
 
 /* find the extra block allocated to resolve branches close to code */
 typedef int    (*MonoCodeManagerFunc)      (void *data, int csize, int size, void *user_data);
 void            mono_code_manager_foreach  (MonoCodeManager *cman, MonoCodeManagerFunc func, void *user_data);
 
-#if defined( __native_client_codegen__ ) && defined( __native_client__ )
-
-#ifdef __arm__
-#define kNaClBundleSize 16
-#else
-#define kNaClBundleSize 32
-#endif
-#define kNaClBundleMask (kNaClBundleSize-1)
-
-#ifndef USE_JUMP_TABLES
-extern __thread unsigned char **patch_source_base;
-extern __thread unsigned char **patch_dest_base;
-extern __thread int patch_current_depth;
-#endif
-
-int              nacl_is_code_address             (void *target);
-void*            nacl_code_manager_get_code_dest  (MonoCodeManager *cman, void *data);
-void             nacl_allow_target_modification   (int val);
-void*            nacl_modify_patch_target         (unsigned char *target);
-void*            nacl_inverse_modify_patch_target (unsigned char *target);
-#endif /* __native_client__ */
+void mono_codeman_enable_write (void);
+void mono_codeman_disable_write (void);
 
 #endif /* __MONO_CODEMAN_H__ */
 

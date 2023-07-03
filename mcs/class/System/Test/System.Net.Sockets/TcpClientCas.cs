@@ -50,7 +50,6 @@ namespace MonoCasTests.System.Net.Sockets {
 		}
 
 		// async tests (for stack propagation)
-/* Oops - not yet implemented in Mono
 		private void ConnectCallback (IAsyncResult ar)
 		{
 			TcpClient c = (TcpClient)ar.AsyncState;
@@ -77,7 +76,7 @@ namespace MonoCasTests.System.Net.Sockets {
 			TcpClient s = new TcpClient ();
 			message = "AsyncConnect";
 			reset.Reset ();
-			IAsyncResult r = s.BeginConnect ("www.google.com", 80, new AsyncCallback (ConnectCallback), s);
+			IAsyncResult r = s.BeginConnect ("www.example.com", 80, new AsyncCallback (ConnectCallback), s);
 			Assert.IsNotNull (r, "IAsyncResult");
 			if (!reset.WaitOne (timeout, true))
 				Assert.Ignore ("Timeout");
@@ -89,7 +88,7 @@ namespace MonoCasTests.System.Net.Sockets {
 		[Category ("InetAccess")]
 		public void AsyncConnect_IPAddressIntAsyncCallbackObject ()
 		{
-			IPHostEntry host = Dns.Resolve ("www.google.com");
+			IPHostEntry host = Dns.Resolve ("www.example.com");
 			TcpClient s = new TcpClient ();
 			message = "AsyncConnect";
 			reset.Reset ();
@@ -105,7 +104,7 @@ namespace MonoCasTests.System.Net.Sockets {
 		[Category ("InetAccess")]
 		public void AsyncConnect_IPAddressArrayIntAsyncCallbackObject ()
 		{
-			IPHostEntry host = Dns.Resolve ("www.google.com");
+			IPHostEntry host = Dns.Resolve ("www.example.com");
 			TcpClient s = new TcpClient ();
 			message = "AsyncConnect";
 			reset.Reset ();
@@ -115,6 +114,5 @@ namespace MonoCasTests.System.Net.Sockets {
 				Assert.Ignore ("Timeout");
 			Assert.IsNull (message, message);
 		}
-*/
 	}
 }

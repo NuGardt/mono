@@ -257,10 +257,9 @@ namespace MonoTests.System.Configuration {
 		[Test]
 		public void exePath_UserLevelNone ()
 		{
-			string basedir = AppDomain.CurrentDomain.BaseDirectory;
-			string name = TestUtil.ThisDllName;
+			string name = TestUtil.ThisApplicationPath;
 			SysConfig config = ConfigurationManager.OpenExeConfiguration (name);
-			Assert.AreEqual (Path.Combine (basedir, name + ".config"), config.FilePath);
+			Assert.AreEqual (TestUtil.ThisApplicationPath + ".config", config.FilePath);
 		}
 
 		[Test]
@@ -615,16 +614,11 @@ namespace MonoTests.System.Configuration {
 		[Test]
 		public void TestConnectionStringRetrieval ()
 		{
-			var currentAssembly = Assembly.GetExecutingAssembly().Location;
-			Assert.IsTrue (File.Exists (currentAssembly + ".config"),
-			               String.Format ("This test cannot succeed without the .config file being in the same place as the assembly ({0})",
-			                              currentAssembly));
-
 			var connStringObj = ConfigurationManager.ConnectionStrings ["test-connstring"];
 			Assert.IsNotNull (connStringObj);
 			var connString = connStringObj.ConnectionString;
 			Assert.IsFalse (String.IsNullOrEmpty (connString));
-			Assert.AreEqual ("Server=(local);Initial Catalog=someDb;User Id=someUser;Password=somePassword;Application Name=someAppName;Min Pool Size=5;Max Pool Size=500;Connect Timeout=10;Connection Lifetime=29;",
+			Assert.AreEqual ("Server=(local);Initial Catalog=someDb;User Id=someUser;Password=PLACEHOLDER;Application Name=someAppName;Min Pool Size=5;Max Pool Size=500;Connect Timeout=10;Connection Lifetime=29;",
 			                 connString);
 		}
 

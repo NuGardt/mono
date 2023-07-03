@@ -5,14 +5,16 @@
 // 
 // ==--==
 //
-// <OWNER>[....]</OWNER>
+// <OWNER>Microsoft</OWNER>
 ////////////////////////////////////////////////////////////////////////////////
 
 using System;
 using System.Security;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+#if !MONO
 using System.Security.Permissions;
+#endif
 using System.Diagnostics.Contracts;
 using System.Runtime;
 
@@ -37,8 +39,9 @@ namespace System.Threading
     /// </para>
     /// </remarks>
     [ComVisible(false)]
+#if !MONO
     [HostProtection(Synchronization = true, ExternalThreading = true)]
-
+#endif
     public class CancellationTokenSource : IDisposable
     {
         //static sources that can be used as the backing source for 'fixed' CancellationTokens that never change state.
@@ -716,7 +719,11 @@ namespace System.Threading
 
                 // If a cancellation has since come in, we will try to undo the registration and run the callback ourselves.
                 // (this avoids leaving the callback orphaned)
+#if MONO
+                bool deregisterOccurred = registration.Unregister();
+#else
                 bool deregisterOccurred = registration.TryDeregister();
+#endif
 
                 if (!deregisterOccurred)
                 {
@@ -826,7 +833,7 @@ namespace System.Threading
                                 m_executingCallback = currArrayFragment[i];
                                 if (m_executingCallback != null)
                                 {
-                                    //Transition to the target [....] context (if necessary), and continue our work there.
+                                    //Transition to the target sync context (if necessary), and continue our work there.
                                     CancellationCallbackCoreWorkArguments args = new CancellationCallbackCoreWorkArguments(currArrayFragment, i);
 
                                     // marshal exceptions: either aggregate or perform an immediate rethrow
@@ -892,7 +899,7 @@ namespace System.Threading
             {
                 if (callback.TargetExecutionContext != null)
                 {
-                    // we are running via a custom [....] context, so update the executing threadID
+                    // we are running via a custom sync context, so update the executing threadID
                     callback.CancellationTokenSource.ThreadIDExecutingCallbacks = Thread.CurrentThread.ManagedThreadId;
                 }
                 callback.ExecuteCallback();
@@ -988,7 +995,7 @@ namespace System.Threading
     // ----------------------------------------------------------
     // -- CancellationCallbackCoreWorkArguments --
     // ----------------------------------------------------------
-    // Helper struct for passing data to the target [....] context
+    // Helper struct for passing data to the target sync context
     internal struct CancellationCallbackCoreWorkArguments
     {
         internal SparselyPopulatedArrayFragment<CancellationCallbackInfo> m_currArrayFragment;
@@ -1080,7 +1087,9 @@ namespace System.Threading
     /// <typeparam name="T">The kind of elements contained within.</typeparam>
     internal class SparselyPopulatedArray<T> where T : class
     {
+#if DEBUG        
         private readonly SparselyPopulatedArrayFragment<T> m_head;
+#endif
         private volatile SparselyPopulatedArrayFragment<T> m_tail;
 
         /// <summary>
@@ -1089,7 +1098,10 @@ namespace System.Threading
         /// <param name="initialSize">How many array slots to pre-allocate.</param>
         internal SparselyPopulatedArray(int initialSize)
         {
-            m_head = m_tail = new SparselyPopulatedArrayFragment<T>(initialSize);
+#if DEBUG            
+            m_head = 
+#endif
+            m_tail = new SparselyPopulatedArrayFragment<T>(initialSize);
         }
 
 #if DEBUG

@@ -1,5 +1,6 @@
-/*
- * mono-threads-coop.h: Cooperative suspend thread helpers
+/**
+ * \file
+ * Cooperative suspend thread helpers
  *
  * Author:
  *	Rodrigo Kumpera (kumpera@gmail.com)
@@ -14,43 +15,98 @@
 #include <glib.h>
 
 #include "checked-build.h"
-
-G_BEGIN_DECLS
+#include "mono-threads.h"
+#include "mono-threads-api.h"
+#include "mono/metadata/icalls.h"
 
 /* JIT specific interface */
 extern volatile size_t mono_polling_required;
 
-/* Runtime consumable API */
-
-static gboolean G_GNUC_UNUSED
-mono_threads_is_coop_enabled (void)
-{
-#if defined(USE_COOP_GC)
-	return TRUE;
-#else
-	static gboolean is_coop_enabled = -1;
-	if (G_UNLIKELY (is_coop_enabled == -1))
-		is_coop_enabled = g_getenv ("MONO_ENABLE_COOP") != NULL ? TRUE : FALSE;
-	return is_coop_enabled;
-#endif
-}
-
 /* Internal API */
 
+ICALL_EXTERN_C
 void
 mono_threads_state_poll (void);
 
-gpointer
-mono_threads_prepare_blocking (gpointer stackdata);
+// 0 also used internally for uninitialized
+typedef enum {
+	MONO_THREADS_SUSPEND_FULL_PREEMPTIVE = 1,
+	MONO_THREADS_SUSPEND_FULL_COOP       = 2,
+	MONO_THREADS_SUSPEND_HYBRID          = 3,
+} MonoThreadsSuspendPolicy;
+
+static inline gboolean
+mono_threads_suspend_policy_is_blocking_transition_enabled (MonoThreadsSuspendPolicy p)
+{
+	switch (p) {
+	case MONO_THREADS_SUSPEND_FULL_COOP:
+	case MONO_THREADS_SUSPEND_HYBRID:
+		return TRUE;
+	case MONO_THREADS_SUSPEND_FULL_PREEMPTIVE:
+		return FALSE;
+	default:
+		g_assert_not_reached ();
+	}
+}
+
+static inline gboolean
+mono_threads_suspend_policy_are_safepoints_enabled (MonoThreadsSuspendPolicy p)
+{
+	switch (p) {
+	case MONO_THREADS_SUSPEND_FULL_COOP:
+	case MONO_THREADS_SUSPEND_HYBRID:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static inline gboolean
+mono_threads_suspend_policy_is_multiphase_stw_enabled (MonoThreadsSuspendPolicy p)
+{
+	/* So far, hybrid suspend is the only one using a multi-phase STW */
+	return p == MONO_THREADS_SUSPEND_HYBRID;
+}
+
+gboolean
+mono_threads_suspend_policy_is_blocking_transition_enabled (MonoThreadsSuspendPolicy p);
+
+extern char mono_threads_suspend_policy_hidden_dont_modify;
+
+static inline MonoThreadsSuspendPolicy
+mono_threads_suspend_policy (void) {
+	return (MonoThreadsSuspendPolicy)mono_threads_suspend_policy_hidden_dont_modify;
+}
 
 void
-mono_threads_finish_blocking (gpointer cookie, gpointer stackdata);
+mono_threads_suspend_policy_init (void);
 
-gpointer
-mono_threads_reset_blocking_start (gpointer stackdata);
+const char*
+mono_threads_suspend_policy_name (MonoThreadsSuspendPolicy p);
 
-void
-mono_threads_reset_blocking_end (gpointer cookie, gpointer stackdata);
+static inline gboolean
+mono_threads_is_blocking_transition_enabled (void)
+{
+	return mono_threads_suspend_policy_is_blocking_transition_enabled (mono_threads_suspend_policy ());
+}
+
+gboolean
+mono_threads_is_cooperative_suspension_enabled (void);
+
+gboolean
+mono_threads_is_hybrid_suspension_enabled (void);
+
+static inline gboolean
+mono_threads_are_safepoints_enabled (void)
+{
+	return mono_threads_suspend_policy_are_safepoints_enabled (mono_threads_suspend_policy ());
+}
+
+static inline gboolean
+mono_threads_is_multiphase_stw_enabled (void)
+{
+	return mono_threads_suspend_policy_is_multiphase_stw_enabled (mono_threads_suspend_policy ());
+}
 
 static inline void
 mono_threads_safepoint (void)
@@ -59,25 +115,51 @@ mono_threads_safepoint (void)
 		mono_threads_state_poll ();
 }
 
-#define MONO_PREPARE_BLOCKING	\
-	MONO_REQ_GC_NOT_CRITICAL;		\
+/* Don't use this. */
+void mono_threads_suspend_override_policy (MonoThreadsSuspendPolicy new_policy);
+
+/*
+ * The following are used when detaching a thread. We need to pass the MonoThreadInfo*
+ * as a paramater as the thread info TLS key is being destructed, meaning that
+ * mono_thread_info_current_unchecked will return NULL, which would lead to a
+ * runtime assertion error when trying to switch the state of the current thread.
+ */
+
+MONO_PROFILER_API
+gpointer
+mono_threads_enter_gc_safe_region_with_info (THREAD_INFO_TYPE *info, MonoStackData *stackdata);
+
+#define MONO_ENTER_GC_SAFE_WITH_INFO(info)	\
 	do {	\
-		gpointer __dummy;	\
-		gpointer __blocking_cookie = mono_threads_prepare_blocking (&__dummy)
+		MONO_STACKDATA (__gc_safe_dummy); \
+		gpointer __gc_safe_cookie = mono_threads_enter_gc_safe_region_with_info ((info), &__gc_safe_dummy)
 
-#define MONO_FINISH_BLOCKING \
-		mono_threads_finish_blocking (__blocking_cookie, &__dummy);	\
-	} while (0)
+#define MONO_EXIT_GC_SAFE_WITH_INFO	MONO_EXIT_GC_SAFE
 
-#define MONO_PREPARE_RESET_BLOCKING	\
+MONO_PROFILER_API
+gpointer
+mono_threads_enter_gc_unsafe_region_with_info (THREAD_INFO_TYPE *, MonoStackData *stackdata);
+
+#define MONO_ENTER_GC_UNSAFE_WITH_INFO(info)	\
 	do {	\
-		gpointer __dummy;	\
-		gpointer __reset_cookie = mono_threads_reset_blocking_start (&__dummy)
+		MONO_STACKDATA (__gc_unsafe_dummy); \
+		gpointer __gc_unsafe_cookie = mono_threads_enter_gc_unsafe_region_with_info ((info), &__gc_unsafe_dummy)
 
-#define MONO_FINISH_RESET_BLOCKING \
-		mono_threads_reset_blocking_end (__reset_cookie, &__dummy);	\
-	} while (0)
+#define MONO_EXIT_GC_UNSAFE_WITH_INFO	MONO_EXIT_GC_UNSAFE
 
-G_END_DECLS
+G_EXTERN_C // due to THREAD_INFO_TYPE varying
+gpointer
+mono_threads_enter_gc_unsafe_region_unbalanced_with_info (THREAD_INFO_TYPE *info, MonoStackData *stackdata);
+
+extern char mono_threads_is_runtime_startup_finished_hidden_do_not_modify;
+
+static inline gboolean
+mono_threads_is_runtime_startup_finished (void)
+{
+	return mono_threads_is_runtime_startup_finished_hidden_do_not_modify != 0;
+}
+
+void
+mono_threads_set_runtime_startup_finished (void);
 
 #endif

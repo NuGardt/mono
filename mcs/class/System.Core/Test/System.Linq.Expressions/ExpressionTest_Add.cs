@@ -29,6 +29,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions
 {
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_Add
 	{
 		[Test]
@@ -183,7 +184,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void AddTestNullable ()
 		{
 			var a = Expression.Parameter (typeof (int?), "a");
@@ -238,7 +238,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void UserDefinedAddLifted ()
 		{
 			var l = Expression.Parameter (typeof (Slot?), "l");
@@ -378,7 +377,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void AddLiftedDecimals ()
 		{
 			var l = Expression.Parameter (typeof (decimal?), "l");

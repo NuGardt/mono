@@ -48,16 +48,11 @@ namespace System {
 	public static partial class Environment {
 
 		/*
-		 * This is the version number of the corlib-runtime interface. When
-		 * making changes to this interface (by changing the layout
-		 * of classes the runtime knows about, changing icall signature or
-		 * semantics etc), increment this variable. Also increment the
-		 * pair of this variable in the runtime in metadata/appdomain.c.
-		 * Changes which are already detected at runtime, like the addition
-		 * of icalls, do not require an increment.
+		 * This is the version of the corlib-runtime interface.
+		 * It is defined in configure.ac.
 		 */
 #pragma warning disable 169
-		private const int mono_corlib_version = 146;
+		private const string mono_corlib_version = Consts.MonoCorlibVersion;
 #pragma warning restore 169
 
 		[ComVisible (true)]
@@ -156,10 +151,10 @@ namespace System {
 		public static string CurrentDirectory
 		{
 			get {
-				return Directory.GetCurrentDirectory ();
+				return Directory.InsecureGetCurrentDirectory ();
 			}
 			set {
-				Directory.SetCurrentDirectory (value);
+				Directory.InsecureSetCurrentDirectory  (value);
 			}
 		}
 		
@@ -219,7 +214,7 @@ namespace System {
 		//
 		static OperatingSystem os;
 
-		static extern PlatformID Platform {
+		static internal PlatformID Platform {
 			[MethodImplAttribute (MethodImplOptions.InternalCall)]
 			get;
 		}
@@ -322,7 +317,7 @@ namespace System {
 				return trace.ToString ();
 			}
 		}
-#if !NET_2_1
+
 		/// <summary>
 		/// Get a fully qualified path to the system directory
 		/// </summary>
@@ -331,7 +326,7 @@ namespace System {
 				return GetFolderPath (SpecialFolder.System);
 			}
 		}
-#endif
+
 		/// <summary>
 		/// Get the number of milliseconds that have elapsed since the system was booted
 		/// </summary>
@@ -472,7 +467,15 @@ namespace System {
 		public extern static string[] GetCommandLineArgs ();
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		internal extern static string internalGetEnvironmentVariable (string variable);
+		internal extern static string internalGetEnvironmentVariable_native (IntPtr variable);
+
+		internal static string internalGetEnvironmentVariable (string variable) {
+			if (variable == null)
+				return null;
+			using (var h = Mono.RuntimeMarshal.MarshalString (variable)) {
+				return internalGetEnvironmentVariable_native (h.Value);
+			}
+		}
 
 		/// <summary>
 		/// Return a string containing the value of the environment
@@ -480,7 +483,7 @@ namespace System {
 		/// </summary>
 		public static string GetEnvironmentVariable (string variable)
 		{
-#if !NET_2_1
+#if MONO_FEATURE_CAS
 			if (SecurityManager.SecurityEnabled) {
 				new EnvironmentPermission (EnvironmentPermissionAccess.Read, variable).Demand ();
 			}
@@ -503,7 +506,7 @@ namespace System {
 		/// <summary>
 		/// Return a set of all environment variables and their values
 		/// </summary>
-#if !NET_2_1
+#if !MOBILE
 		public static IDictionary GetEnvironmentVariables ()
 		{
 			StringBuilder sb = null;
@@ -560,12 +563,14 @@ namespace System {
 
 			string dir = null;
 
+#pragma warning disable 162
 			if (Environment.IsRunningOnWindows)
 				dir = GetWindowsFolderPath ((int) folder);
 			else
 				dir = UnixGetFolderPath (folder, option);
+#pragma warning restore 162
 
-#if !NET_2_1
+#if MONO_FEATURE_CAS
 			if ((dir != null) && (dir.Length > 0) && SecurityManager.SecurityEnabled) {
 				new FileIOPermission (FileIOPermissionAccess.PathDiscovery, dir).Demand ();
 			}
@@ -607,8 +612,7 @@ namespace System {
 						}
 					}
 				}
-			} catch (FileNotFoundException) {
-			}
+			} catch {}
 
 			return Path.Combine (home_dir, fallback);
 		}
@@ -862,6 +866,22 @@ namespace System {
 			}
 		}
 #else
+		public static string GetEnvironmentVariable (string variable, EnvironmentVariableTarget target)
+		{
+			if (target == EnvironmentVariableTarget.Process)
+				return GetEnvironmentVariable (variable);
+
+			return null;
+		}
+
+		public static IDictionary GetEnvironmentVariables (EnvironmentVariableTarget target)
+		{
+			if (target == EnvironmentVariableTarget.Process)
+				return GetEnvironmentVariables ();
+
+			return (IDictionary)new Hashtable ();
+		}
+
 		public static void SetEnvironmentVariable (string variable, string value)
 		{
 			if (variable == null)
@@ -875,26 +895,46 @@ namespace System {
 
 			InternalSetEnvironmentVariable (variable, value);
 		}
+
+		public static void SetEnvironmentVariable (string variable, string value, EnvironmentVariableTarget target)
+		{
+			if (target == EnvironmentVariableTarget.Process)
+				SetEnvironmentVariable (variable, value);
+
+			// other targets ignored
+		}
 #endif
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		internal static extern void InternalSetEnvironmentVariable (string variable, string value);
+		internal unsafe static extern void InternalSetEnvironmentVariable (char *variable, int variable_length,
+									    char *value, int value_length);
+
+		internal unsafe static void InternalSetEnvironmentVariable (string variable, string value)
+		{
+			fixed (char *fixed_variable = variable)
+			fixed (char *fixed_value = value)
+			InternalSetEnvironmentVariable (fixed_variable, variable?.Length ?? 0,
+							fixed_value,    value?.Length ?? 0);
+		}
 
 		[SecurityPermission (SecurityAction.LinkDemand, UnmanagedCode=true)]
 		public static void FailFast (string message)
 		{
-			throw new NotImplementedException ();
+			FailFast (message, null, null);
 		}
 
 		internal static void FailFast (String message, uint exitCode)
 		{
-			throw new NotImplementedException ();
+			FailFast (message, null, null);
 		}
 
 		[SecurityCritical]
 		public static void FailFast (string message, Exception exception)
 		{
-			throw new NotImplementedException ();
+			FailFast (message, exception, null);
 		}
+
+		[MethodImplAttribute (MethodImplOptions.InternalCall)]
+		internal extern static void FailFast (string message, Exception exception, string errorSource);
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		extern static bool GetIs64BitOperatingSystem ();
@@ -919,7 +959,7 @@ namespace System {
 		}
 
 		// private methods
-#if (MONOTOUCH || MONODROID || XAMMAC)
+#if (MONOTOUCH || MONODROID || XAMMAC || WASM) && !MOBILE_DESKTOP_HOST
 		internal const bool IsRunningOnWindows = false;
 #else
 		internal static bool IsRunningOnWindows {
@@ -927,7 +967,7 @@ namespace System {
 		}
 #endif
 
-#if !NET_2_1
+#if !MOBILE
 		//
 		// Used by gacutil.exe
 		//
@@ -948,7 +988,7 @@ namespace System {
 		internal extern static string internalGetGacPath ();
 #endif
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		private extern static string [] GetLogicalDrivesInternal ();
+		internal extern static string [] GetLogicalDrivesInternal ();
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private extern static string [] GetEnvironmentVariableNames ();
@@ -961,6 +1001,14 @@ namespace System {
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		internal extern static int GetPageSize ();
+
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		extern private static string get_bundled_machine_config ();
+
+		internal static string GetBundledMachineConfig ()
+		{
+			return get_bundled_machine_config ();
+		}
 
 		static internal bool IsUnix {
 			get {
@@ -997,6 +1045,15 @@ namespace System {
 
 			// Do not include a trailing newline for backwards compatibility
 			return st.ToString( System.Diagnostics.StackTrace.TraceFormat.Normal );
+		}
+
+		// Copied from referencesource Environment
+		internal static bool IsWinRTSupported
+		{
+			get
+			{
+				return true;
+			}
 		}
 	}
 }

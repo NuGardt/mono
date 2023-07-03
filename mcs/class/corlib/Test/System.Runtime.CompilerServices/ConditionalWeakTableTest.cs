@@ -29,6 +29,7 @@
 
 using NUnit.Framework;
 using System;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -36,6 +37,7 @@ using System.Runtime.Serialization;
 using System.Security.Permissions;
 using System.Collections.Generic;
 using System.Threading;
+using MonoTests.Helpers;
 
 
 namespace MonoTests.System.Runtime.CompilerServices {
@@ -191,17 +193,16 @@ namespace MonoTests.System.Runtime.CompilerServices {
 	}
 
 	[Test]
+	[Category ("MultiThreaded")]
 	public void Reachability () {
 		if (GC.MaxGeneration == 0) /*Boehm doesn't handle ephemerons */
 			Assert.Ignore ("Not working on Boehm.");
 		var cwt = new ConditionalWeakTable <object,object> ();
 		List<object> keepAlive = null;
 		List<WeakReference> keys = null;
-		Thread t = new Thread (delegate () {
+		FinalizerHelpers.PerformNoPinAction (delegate () {
 				FillStuff (cwt, out keepAlive, out keys);
 			});
-		t.Start ();
-		t.Join ();
 
 		GC.Collect ();
 
@@ -242,6 +243,7 @@ namespace MonoTests.System.Runtime.CompilerServices {
 	}
 
 	[Test]
+	[Category ("MultiThreaded")]
 	public void InsertStress () {
 		if (GC.MaxGeneration == 0) /*Boehm doesn't handle ephemerons */
 			Assert.Ignore ("Not working on Boehm.");
@@ -254,10 +256,7 @@ namespace MonoTests.System.Runtime.CompilerServices {
 		cwt.Add (b, new object ());
 
 		List<WeakReference> res = null;
-		ThreadStart dele = () => { res = FillWithNetwork (cwt); };
-		var th = new Thread(dele);
-		th.Start ();
-		th.Join ();
+		FinalizerHelpers.PerformNoPinAction (() => { res = FillWithNetwork (cwt); });
 
 		GC.Collect ();
 		GC.Collect ();
@@ -293,6 +292,8 @@ namespace MonoTests.System.Runtime.CompilerServices {
 	}
 
 	[Test]
+	[Category ("MultiThreaded")]
+	[Category ("NotWorkingRuntimeInterpreter")] // Flaky due to false pinning
 	public void OldGenStress () {
 		if (GC.MaxGeneration == 0) /*Boehm doesn't handle ephemerons */
 			Assert.Ignore ("Not working on Boehm.");
@@ -301,16 +302,12 @@ namespace MonoTests.System.Runtime.CompilerServices {
 		List<WeakReference> res, res2;
 		res = res2 = null;
 
-		ThreadStart dele = () => {
+		FinalizerHelpers.PerformNoPinAction (() => {
 			res = FillWithNetwork2 (cwt);
 			ForcePromotion ();
 			k = FillReachable (cwt);
 			res2 = FillWithNetwork2 (cwt);
-		};
-
-		var th = new Thread(dele);
-		th.Start ();
-		th.Join ();
+		});
 
 		GC.Collect ();
 
@@ -439,16 +436,14 @@ namespace MonoTests.System.Runtime.CompilerServices {
 	}
 
 	[Test]
+	[Category ("MultiThreaded")]
 	public void FinalizableObjectsThatRetainDeadKeys ()
 	{
 		if (GC.MaxGeneration == 0) /*Boehm doesn't handle ephemerons */
 			Assert.Ignore ("Not working on Boehm.");
 		lock (_lock1) { 
 			var cwt = new ConditionalWeakTable <object,object> ();
-			ThreadStart dele = () => { FillWithFinalizable (cwt); };
-			var th = new Thread(dele);
-			th.Start ();
-			th.Join ();
+			FinalizerHelpers.PerformNoPinAction (() => { FillWithFinalizable (cwt); });
 			GC.Collect ();
 			GC.Collect ();
 
@@ -463,6 +458,7 @@ namespace MonoTests.System.Runtime.CompilerServices {
 	}
 
 	[Test]
+	[Category("WASM")] //This test takes forever under WASM due to over allocating
 	public void OldGenKeysMakeNewGenObjectsReachable ()
 	{
 		if (GC.MaxGeneration == 0) /*Boehm doesn't handle ephemerons */
@@ -491,6 +487,20 @@ namespace MonoTests.System.Runtime.CompilerServices {
 			foreach (var key in keys)
 				Assert.IsTrue (table.Remove (key), "#2-" + i + "-k-" + key);
 		}
+	}
+
+	[Test]
+	public void ConditionalWeakTableEnumerable()
+	{
+		var cwt = new ConditionalWeakTable<string, string>();
+		Assert.AreEqual(0, cwt.ToArray().Length);
+		cwt.Add("test1", "foo1");
+		cwt.Add("test2", "foo2");
+		Assert.AreEqual(2, cwt.ToArray().Length);
+		cwt.Remove("test1");
+		Assert.AreEqual(1, cwt.ToArray().Length);
+		cwt.Remove("test2");
+		Assert.AreEqual(0, cwt.ToArray().Length);
 	}
 	}
 }

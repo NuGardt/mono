@@ -36,14 +36,14 @@ namespace MonoTests.System.Xml
 		public void EmptyCtorCannotResolve ()
 		{
 			XmlSecureResolver r = new XmlSecureResolver (null, (Evidence)null);
-			r.ResolveUri (null, "http://www.go-mono.com");
+			r.ResolveUri (null, "http://www.example.com");
 		}
 
 		[Test]
 		public void EmptyEvidenceWontMatter ()
 		{
 			XmlSecureResolver r = new XmlSecureResolver (new XmlUrlResolver (), (Evidence)null);
-			Uri uri = r.ResolveUri (null, "http://www.go-mono.com");
+			Uri uri = r.ResolveUri (null, "http://www.example.com");
 			Assert.IsNotNull (uri);
 		}
 
@@ -51,17 +51,17 @@ namespace MonoTests.System.Xml
 		public void CreateEvidenceForUrl_Basic ()
 		{
 			Evidence e = XmlSecureResolver.CreateEvidenceForUrl (null);
-#if DISABLE_CAS_USE
-			Assert.IsNull (e);
-#else
+#if MONO_FEATURE_CAS
 			Assert.AreEqual (0, e.Count, "null");
+#else
+			Assert.IsNull (e);
 #endif
 
 			e = XmlSecureResolver.CreateEvidenceForUrl (String.Empty);
-#if DISABLE_CAS_USE
-			Assert.IsNull (e);
-#else
+#if MONO_FEATURE_CAS
 			Assert.AreEqual (0, e.Count, "String.Empty");
+#else
+			Assert.IsNull (e);
 #endif
 		}
 
@@ -71,7 +71,9 @@ namespace MonoTests.System.Xml
 		{
 			// "normal" path
 			Evidence e = XmlSecureResolver.CreateEvidenceForUrl (Assembly.GetExecutingAssembly ().Location);
+#pragma warning disable 612
 			Assert.AreEqual (2, e.Count, "Assembly.GetExecutingAssembly ().Location");
+#pragma warning restore
 			bool url = false;
 			bool zone = false;
 			IEnumerator en = e.GetHostEnumerator ();
@@ -86,7 +88,9 @@ namespace MonoTests.System.Xml
 
 			// file://
 			e = XmlSecureResolver.CreateEvidenceForUrl (Assembly.GetExecutingAssembly ().CodeBase);
+#pragma warning disable 612
 			Assert.AreEqual (2, e.Count, "Assembly.GetExecutingAssembly ().CodeBase");
+#pragma warning restore
 			url = false;
 			zone = false;
 			en = e.GetHostEnumerator ();
@@ -105,8 +109,10 @@ namespace MonoTests.System.Xml
 		public void CreateEvidenceForUrl_Http ()
 		{
 			// http://
-			Evidence e = XmlSecureResolver.CreateEvidenceForUrl ("http://www.go-mono.com");
-			Assert.AreEqual (3, e.Count, "http://www.go-mono.com");
+			Evidence e = XmlSecureResolver.CreateEvidenceForUrl ("http://www.example.com");
+#pragma warning disable 612
+			Assert.AreEqual (3, e.Count, "http://www.example.com");
+#pragma warning restore
 			bool url = false;
 			bool zone = false;
 			bool site = false;
@@ -124,7 +130,6 @@ namespace MonoTests.System.Xml
 			Assert.IsTrue (site, "Site-2");
 		}
 
-#if NET_4_5
 		[Test]
 		[Category("Async")]
 		public void TestAsync ()
@@ -137,9 +142,8 @@ namespace MonoTests.System.Xml
 			Assert.AreEqual ("file", resolved.Scheme);
 			var task = sr.GetEntityAsync (resolved, null, typeof (Stream));
 			Assert.That (task.Wait (3000));
-			Assert.IsInstanceOfType (typeof (Stream), task.Result);
+			Assert.IsTrue (task.Result is FileStream, "Unexpected type: " + task.Result.GetType());
 		}
-#endif
 
 	}
 }

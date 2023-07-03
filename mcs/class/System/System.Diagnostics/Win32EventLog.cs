@@ -7,7 +7,6 @@
 // Copyright (C) 2006 Novell, Inc (http://www.novell.com)
 //
 //
-// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -48,7 +47,7 @@ namespace System.Diagnostics
 		private IntPtr _readHandle;
 		private Thread _notifyThread;
 		private int _lastEntryWritten;
-		private bool _notifying;
+		private Object _eventLock = new object();
 
 		public Win32EventLog (EventLog coreEventLog)
 			: base (coreEventLog)
@@ -68,9 +67,11 @@ namespace System.Diagnostics
 
 		public override void Close ()
 		{
-			if (_readHandle != IntPtr.Zero) {
-				CloseEventLog (_readHandle);
-				_readHandle = IntPtr.Zero;
+			lock (_eventLock) {
+				if (_readHandle != IntPtr.Zero) {
+					CloseEventLog (_readHandle);
+					_readHandle = IntPtr.Zero;
+				}
 			}
 		}
 
@@ -260,7 +261,7 @@ namespace System.Diagnostics
 			ReadEventLog (index, buffer, ref bytesRead, ref minBufferNeeded);
 
 			MemoryStream ms = new MemoryStream (buffer);
-			BinaryReader br = new BinaryReader (ms);
+			BinaryReader br = new BinaryReader (ms, Encoding.Unicode);
 
 			// skip first 8 bytes
 			br.ReadBytes (8);
@@ -703,45 +704,59 @@ namespace System.Diagnostics
 
 		public override void DisableNotification ()
 		{
-			if (_notifyResetEvent != null) {
-				_notifyResetEvent.Close ();
-				_notifyResetEvent = null;
-			}
-
-			if (_notifyThread != null) {
-				if (_notifyThread.ThreadState == System.Threading.ThreadState.Running)
-					_notifyThread.Abort ();
+			lock (_eventLock) {
+				if (_notifyResetEvent != null) {
+					_notifyResetEvent.Close ();
+					_notifyResetEvent = null;
+				}
 				_notifyThread = null;
 			}
 		}
 
 		public override void EnableNotification ()
 		{
-			_notifyResetEvent = new ManualResetEvent (false);
-			_lastEntryWritten = OldestEventLogEntry + EntryCount;
-			if (PInvoke.NotifyChangeEventLog (ReadHandle, _notifyResetEvent.Handle) == 0)
-				throw new InvalidOperationException (string.Format (
-					CultureInfo.InvariantCulture, "Unable to receive notifications"
-					+ " for log '{0}' on computer '{1}'.", CoreEventLog.GetLogName (),
-					CoreEventLog.MachineName), new Win32Exception ());
-			_notifyThread = new Thread (new ThreadStart (NotifyEventThread));
-			_notifyThread.IsBackground = true;
-			_notifyThread.Start ();
+			lock (_eventLock) {
+				if (_notifyResetEvent != null)
+					return;
+
+				_notifyResetEvent = new ManualResetEvent (false);
+				_lastEntryWritten = OldestEventLogEntry + EntryCount;
+				if (PInvoke.NotifyChangeEventLog (ReadHandle, _notifyResetEvent.SafeWaitHandle.DangerousGetHandle ()) == 0)
+					throw new InvalidOperationException (string.Format (
+						CultureInfo.InvariantCulture, "Unable to receive notifications"
+						+ " for log '{0}' on computer '{1}'.", CoreEventLog.GetLogName (),
+						CoreEventLog.MachineName), new Win32Exception ());
+				_notifyThread = new Thread (() => NotifyEventThread(_notifyResetEvent));
+				_notifyThread.IsBackground = true;
+				_notifyThread.Start ();
+			}
 		}
 
-		private void NotifyEventThread ()
+		private void NotifyEventThread (ManualResetEvent resetEvent)
 		{
+			if (resetEvent == null)
+				return;
+
 			while (true) {
-				_notifyResetEvent.WaitOne ();
-				lock (this) {
-					// after a clear, we something get notified
-					// twice for the same entry
-					if (_notifying)
-						return;
-					_notifying = true;
+				try {
+					resetEvent.WaitOne ();
+				} catch (ObjectDisposedException) {
+					// Notifications have been disabled and event 
+					// has been closed but not yet nulled. End thread.
+					break;
 				}
 
-				try {
+				lock (_eventLock) {
+					if (resetEvent != _notifyResetEvent) {
+						// A new thread has started with another reset event instance
+ 						// or DisableNotifications has been called, setting
+ 						// _notifyResetEvent to null. In both cases end this thread.
+						break;
+					}
+
+					if (_readHandle == IntPtr.Zero)
+						break;
+
 					int oldest_entry = OldestEventLogEntry;
 					if (_lastEntryWritten < oldest_entry)
 						_lastEntryWritten = oldest_entry;
@@ -752,9 +767,6 @@ namespace System.Diagnostics
 						CoreEventLog.OnEntryWritten (entry);
 					}
 					_lastEntryWritten = last_entry;
-				} finally {
-					lock (this)
-						_notifying = false;
 				}
 			}
 		}
@@ -784,7 +796,7 @@ namespace System.Diagnostics
 
 		private class PInvoke
 		{
-			[DllImport ("advapi32.dll", SetLastError=true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, SetLastError=true)]
 			public static extern int ClearEventLog (IntPtr hEventLog, string lpBackupFileName);
 
 			[DllImport ("advapi32.dll", SetLastError=true)]
@@ -799,10 +811,10 @@ namespace System.Diagnostics
 			[DllImport ("kernel32", SetLastError=true)]
 			public static extern bool FreeLibrary (IntPtr hModule);
 
-			[DllImport ("advapi32.dll", SetLastError=true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, SetLastError=true)]
 			public static extern int GetNumberOfEventLogRecords (IntPtr hEventLog, ref int NumberOfRecords);
 
-			[DllImport ("advapi32.dll", SetLastError=true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, SetLastError=true)]
 			public static extern int GetOldestEventLogRecord (IntPtr hEventLog, ref int OldestRecord);
 
 			[DllImport ("kernel32", SetLastError=true)]
@@ -811,7 +823,7 @@ namespace System.Diagnostics
 			[DllImport ("kernel32", SetLastError=true)]
 			public static extern IntPtr LocalFree (IntPtr hMem);
 
-			[DllImport ("advapi32.dll", SetLastError=true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, EntryPoint = "LookupAccountSidW", SetLastError=true)]
 			public static extern bool LookupAccountSid (
 				string lpSystemName,
 				[MarshalAs (UnmanagedType.LPArray)] byte [] Sid,
@@ -821,21 +833,21 @@ namespace System.Diagnostics
 				ref uint cchReferencedDomainName,
 				out SidNameUse peUse);
 
-			[DllImport ("advapi32.dll", SetLastError = true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 			public static extern int NotifyChangeEventLog (IntPtr hEventLog, IntPtr hEvent);
 
-			[DllImport ("advapi32.dll", SetLastError=true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, SetLastError=true)]
 			public static extern IntPtr OpenEventLog (string machineName, string logName);
 
-			[DllImport ("advapi32.dll", SetLastError=true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, SetLastError=true)]
 			public static extern IntPtr RegisterEventSource (string machineName, string sourceName);
 
-			[DllImport ("advapi32.dll", SetLastError=true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, SetLastError=true)]
 			public static extern int ReportEvent (IntPtr hHandle, ushort wType,
 				ushort wCategory, uint dwEventID, IntPtr sid, ushort wNumStrings,
 				uint dwDataSize, string [] lpStrings, byte [] lpRawData);
 
-			[DllImport ("advapi32.dll", SetLastError=true)]
+			[DllImport ("advapi32.dll", CharSet = CharSet.Unicode, SetLastError=true)]
 			public static extern int ReadEventLog (IntPtr hEventLog, ReadFlags dwReadFlags, int dwRecordOffset, byte [] buffer, int nNumberOfBytesToRead, ref int pnBytesRead, ref int pnMinNumberOfBytesNeeded);
 
 			public const int ERROR_INSUFFICIENT_BUFFER = 122;

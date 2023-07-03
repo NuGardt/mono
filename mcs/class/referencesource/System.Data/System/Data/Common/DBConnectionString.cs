@@ -2,8 +2,8 @@
 // <copyright file="DBConnectionString.cs" company="Microsoft">
 //      Copyright (c) Microsoft Corporation.  All rights reserved.
 // </copyright>
-// <owner current="true" primary="true">[....]</owner>
-// <owner current="true" primary="false">[....]</owner>
+// <owner current="true" primary="true">Microsoft</owner>
+// <owner current="true" primary="false">Microsoft</owner>
 //------------------------------------------------------------------------------
 
 namespace System.Data.Common {
@@ -42,7 +42,7 @@ namespace System.Data.Common {
         // a linked list of key/value and their length in _encryptedUsersConnectionString
         readonly private NameValuePair _keychain;
 
-        // track the existance of "password" or "pwd" in the connection string
+        // track the existence of "password" or "pwd" in the connection string
         // not used for anything anymore but must keep it set correct for V1.1 serialization
         readonly private bool          _hasPassword;
 
@@ -86,7 +86,7 @@ namespace System.Data.Common {
             _encryptedUsersConnectionString = connectionOptions.UsersConnectionString(false);
             _hasPassword = connectionOptions.HasPasswordKeyword;
             _parsetable = connectionOptions.Parsetable;
-            _keychain = connectionOptions.KeyChain;
+            _keychain = connectionOptions._keyChain;
 
             // we do not want to serialize out user password unless directed so by "persist security info=true"
             // otherwise all instances of user's password will be replaced with "*"
@@ -251,7 +251,7 @@ namespace System.Data.Common {
                 //Debug.WriteLine("14/15/16 this AllowOnly and entry AllowOnly but no restrictions");
             }
 
-            // verify _hasPassword & _parsetable are in [....] between Everett/Whidbey
+            // verify _hasPassword & _parsetable are in sync between Everett/Whidbey
             Debug.Assert(!_hasPassword || ContainsKey(KEY.Password) || ContainsKey(KEY.Pwd), "OnDeserialized password mismatch this");
             Debug.Assert(null == entry || !entry._hasPassword || entry.ContainsKey(KEY.Password) || entry.ContainsKey(KEY.Pwd), "OnDeserialized password mismatch entry");
 

@@ -5,38 +5,52 @@ LIBRARY = Mono.Debugger.Soft.dll
 LIBRARY_SNK = ../mono.snk
 
 LIB_REFS = System Mono.Cecil System.Core
-LIB_MCS_FLAGS = /unsafe -D:MONO_DATACONVERTER_STATIC_METHODS -keyfile:$(LIBRARY_SNK) /publicsign
+LIB_MCS_FLAGS = /unsafe -D:MONO_DATACONVERTER_STATIC_METHODS -D:ENABLE_CECIL /publicsign
+KEYFILE = $(LIBRARY_SNK)
 
-TEST_MCS_FLAGS =
-TEST_LIB_REFS = Mono.Cecil System System.Core
-
-VALID_TEST_PROFILE := $(filter net_4_x, $(PROFILE))
-
-# The test exe is not profile specific, and compiling a 2.0 will make the 4.5 tests fail
-ifdef VALID_TEST_PROFILE
-
-test-local: dtest-app.exe dtest-excfilter.exe
-
-dtest-app.exe: Test/dtest-app.cs
-	$(CSCOMPILE) -r:$(topdir)/class/lib/$(PROFILE)/System.Core.dll -r:$(topdir)/class/lib/$(PROFILE)/System.dll -out:$@ -unsafe $(PLATFORM_DEBUG_FLAGS) -optimize- Test/dtest-app.cs
-
-dtest-excfilter.exe: Test/dtest-excfilter.il
-	MONO_PATH=$(topdir)/class/lib/$(PROFILE) $(INTERNAL_ILASM) -out:$@ /exe /debug Test/dtest-excfilter.il
-
-else
-
-NO_TEST=1
-check:
-
+ifndef MCS_MODE
+DTEST_APP_FLAGS = -langversion:preview
 endif
 
-CLEAN_FILES = dtest-app.exe dtest-app.exe.mdb dtest-app.pdb dtest-excfilter.exe dtest-excfilter.exe.mdb dtest-excfilter.pdb
+TEST_LIB_REFS = Mono.Cecil System System.Core
+
+ifneq ($(filter monodroid monotouch monotouch_tv monotouch_watch wasm net_4_x,$(PROFILE)),)
+test-local: build-dtest
+endif
+
+ifneq ($(filter monodroid monotouch monotouch_tv monotouch_watch wasm,$(PROFILE)),)
+NO_INSTALL=1
+NO_BUILD=1
+NO_TEST=1
+endif
+
+test_output_dir=$(topdir)/class/lib/$(PROFILE)/tests
+
+$(test_output_dir):
+	mkdir -p $@
+
+build-dtest: $(test_output_dir)/dtest-app.exe $(test_output_dir)/dtest-excfilter.exe $(test_output_dir)/dtest-app-opt.exe
+
+$(test_output_dir)/dtest-excfilter.exe: Test/dtest-excfilter.il | $(test_output_dir)
+	$(ILASM) -out:$@ /exe /debug Test/dtest-excfilter.il
+
+$(test_output_dir)/dtest-app.exe: Test/dtest-app.cs $(TEST_HELPERS_SOURCES) | $(test_output_dir)
+	$(CSCOMPILE) -r:$(topdir)/class/lib/$(PROFILE)/mscorlib.dll -r:$(topdir)/class/lib/$(PROFILE)/System.Core.dll -r:$(topdir)/class/lib/$(PROFILE)/System.dll -r:$(topdir)/class/lib/$(PROFILE)/System.Runtime.CompilerServices.Unsafe.dll -sourcelink:Test/sourcelink.json -out:$@ -unsafe $(PLATFORM_DEBUG_FLAGS) $(DTEST_APP_FLAGS) -optimize- Test/dtest-app.cs $(TEST_HELPERS_SOURCES)
+
+$(test_output_dir)/dtest-app-opt.exe: Test/dtest-app-opt.cs $(TEST_HELPERS_SOURCES) | $(test_output_dir)
+	$(CSCOMPILE) -r:$(topdir)/class/lib/$(PROFILE)/mscorlib.dll -r:$(topdir)/class/lib/$(PROFILE)/System.Core.dll -r:$(topdir)/class/lib/$(PROFILE)/System.dll -sourcelink:Test/sourcelink.json -out:$@ -unsafe $(PLATFORM_DEBUG_FLAGS) $(DTEST_APP_FLAGS) -optimize+ Test/dtest-app-opt.cs $(TEST_HELPERS_SOURCES)
+
+TEST_HELPERS_SOURCES = \
+	../test-helpers/NetworkHelpers.cs \
+	Test/TypeLoadClass.cs
 
 EXTRA_DISTFILES = \
 	Test/dtest-app.cs \
 	Test/dtest.cs \
-	Test/dtest-excfilter.il
+	Test/dtest-excfilter.il \
+	Test/sourcelink.json \
+	$(TEST_HELPERS_SOURCES)
 
-#NO_TEST = yes
+CLEAN_FILES = $(addprefix $(test_output_dir)/, dtest-app.exe dtest-app.exe.mdb dtest-app.pdb dtest-excfilter.exe dtest-excfilter.exe.mdb dtest-excfilter.pdb)
 
 include ../../build/library.make

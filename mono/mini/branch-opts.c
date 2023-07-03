@@ -1,5 +1,6 @@
-/*
- * branch-opts.c: Branch optimizations support 
+/**
+ * \file
+ * Branch optimizations support
  *
  * Authors:
  *   Patrik Torstensson (Patrik.Torstesson at gmail.com)
@@ -8,10 +9,13 @@
  * Copyright 2011 Xamarin Inc.  http://www.xamarin.com
  * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
- #include "mini.h"
 
+#include "config.h"
+#include <mono/utils/mono-compiler.h>
 #ifndef DISABLE_JIT
- 
+
+#include "mini.h"
+#include "mini-runtime.h"
 
 /*
  * Returns true if @bb is a basic block which falls through the next block.
@@ -50,7 +54,7 @@ mono_branch_optimize_exception_target (MonoCompile *cfg, MonoBasicBlock *bb, con
 	for (i = 0; i < header->num_clauses; ++i) {
 		clause = &header->clauses [i];
 		if (MONO_OFFSET_IN_CLAUSE (clause, bb->real_offset)) {
-			if (clause->flags == MONO_EXCEPTION_CLAUSE_NONE && clause->data.catch_class && mono_class_is_assignable_from (clause->data.catch_class, exclass)) {
+			if (clause->flags == MONO_EXCEPTION_CLAUSE_NONE && clause->data.catch_class && mono_class_is_assignable_from_internal (clause->data.catch_class, exclass)) {
 				MonoBasicBlock *tbb;
 
 				/* get the basic block for the handler and 
@@ -90,7 +94,7 @@ mono_branch_optimize_exception_target (MonoCompile *cfg, MonoBasicBlock *bb, con
 						jump->inst_true_bb = targetbb;
 
 						if (cfg->verbose_level > 2) 
-							g_print ("found exception to optimize - returning branch to BB%d (%s) (instead of throw) for method %s:%s\n", targetbb->block_num, clause->data.catch_class->name, cfg->method->klass->name, cfg->method->name);
+							g_print ("found exception to optimize - returning branch to BB%d (%s) (instead of throw) for method %s:%s\n", targetbb->block_num, m_class_get_name (clause->data.catch_class), m_class_get_name (cfg->method->klass), cfg->method->name);
 
 						return jump;
 					} 
@@ -110,6 +114,7 @@ mono_branch_optimize_exception_target (MonoCompile *cfg, MonoBasicBlock *bb, con
 	return NULL;
 }
 
+#ifdef MONO_ARCH_HAVE_CMOV_OPS
 static const int int_cmov_opcodes [] = {
 	OP_CMOV_IEQ,
 	OP_CMOV_INE_UN,
@@ -136,7 +141,7 @@ static const int long_cmov_opcodes [] = {
 	OP_CMOV_LGT_UN
 };
 
-static G_GNUC_UNUSED int
+static int
 br_to_br_un (int opcode)
 {
 	switch (opcode) {
@@ -157,6 +162,7 @@ br_to_br_un (int opcode)
 		return -1;
 	}
 }
+#endif
 
 /**
  * mono_replace_ins:
@@ -201,7 +207,7 @@ mono_replace_ins (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst *ins, MonoInst 
 		else
 			bb->last_ins = last_bb->last_ins;
 		*prev = last_bb->last_ins;
-		bb->has_array_access |= first_bb->has_array_access;
+		bb->needs_decompose |= first_bb->needs_decompose;
 	} else {
 		int i, count;
 		MonoBasicBlock **tmp_bblocks, *tmp;
@@ -209,9 +215,11 @@ mono_replace_ins (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst *ins, MonoInst 
 
 		/* Multiple BBs */
 
-		/* Set region */
-		for (tmp = first_bb; tmp; tmp = tmp->next_bb)
+		/* Set region/real_offset */
+		for (tmp = first_bb; tmp; tmp = tmp->next_bb) {
 			tmp->region = bb->region;
+			tmp->real_offset = bb->real_offset;
+		}
 
 		/* Split the original bb */
 		if (ins->next)
@@ -227,7 +235,7 @@ mono_replace_ins (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst *ins, MonoInst 
 		} else {
 			last_bb->code = next;
 		}
-		last_bb->has_array_access |= bb->has_array_access;
+		last_bb->needs_decompose |= bb->needs_decompose;
 
 		if (next) {
 			for (last = next; last->next != NULL; last = last->next)
@@ -246,7 +254,7 @@ mono_replace_ins (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst *ins, MonoInst 
 			bb->code = first_bb->code;
 		}
 		bb->last_ins = first_bb->last_ins;
-		bb->has_array_access |= first_bb->has_array_access;
+		bb->needs_decompose |= first_bb->needs_decompose;
 
 		/* Delete the links between the original bb and its successors */
 		tmp_bblocks = mono_mempool_alloc0 (cfg->mempool, sizeof (MonoBasicBlock*) * bb->out_count);
@@ -296,6 +304,16 @@ mono_if_conversion (MonoCompile *cfg)
 		MonoBasicBlock *bb1, *bb2;
 
 	restart:
+		if (!(bb->out_count == 2 && !bb->extended))
+			continue;
+
+		bb1 = bb->out_bb [0];
+		bb2 = bb->out_bb [1];
+
+		/* If either bb1 or bb2 is a try block, abort the optimization attempt. */
+		if (bb1->try_start || bb2->try_start)
+			continue;
+
 		/* Look for the IR code generated from cond ? a : b
 		 * which is:
 		 * BB:
@@ -307,12 +325,6 @@ mono_if_conversion (MonoCompile *cfg)
 		 * <var> <- <b>
 		 * br BB3
 		 */
-		if (!(bb->out_count == 2 && !bb->extended))
-			continue;
-
-		bb1 = bb->out_bb [0];
-		bb2 = bb->out_bb [1];
-
 		if (bb1->in_count == 1 && bb2->in_count == 1 && bb1->out_count == 1 && bb2->out_count == 1 && bb1->out_bb [0] == bb2->out_bb [0]) {
 			MonoInst *compare, *branch, *ins1, *ins2, *cmov, *move, *tmp;
 			MonoBasicBlock *true_bb, *false_bb;
@@ -814,17 +826,9 @@ replace_in_block (MonoBasicBlock *bb, MonoBasicBlock *orig, MonoBasicBlock *repl
 }
 
 static void
-replace_out_block_in_code (MonoBasicBlock *bb, MonoBasicBlock *orig, MonoBasicBlock *repl) {
+replace_out_block_in_code (MonoBasicBlock *bb, MonoBasicBlock *orig, MonoBasicBlock *repl)
+{
 	MonoInst *ins;
-
-#if defined(__native_client_codegen__)
-	/* Need to maintain this flag for the new block because */
-	/* we can't jump indirectly to a non-aligned block.     */
-	if (orig->flags & BB_INDIRECT_JUMP_TARGET)
-	{
-		repl->flags |= BB_INDIRECT_JUMP_TARGET;
-	}
-#endif
 	
 	for (ins = bb->code; ins != NULL; ins = ins->next) {
 		switch (ins->opcode) {
@@ -969,14 +973,11 @@ mono_merge_basic_blocks (MonoCompile *cfg, MonoBasicBlock *bb, MonoBasicBlock *b
 	MonoBasicBlock *prev_bb;
 	int i;
 
-	bb->has_array_access |= bbn->has_array_access;
-	bb->extended |= bbn->extended;
+	/* There may be only one control flow edge between two BBs that we merge, and it should connect these BBs together. */
+	g_assert (bb->out_count == 1 && bbn->in_count == 1 && bb->out_bb [0] == bbn && bbn->in_bb [0] == bb);
 
-	/* Compute prev_bb if possible to avoid the linear search below */
-	prev_bb = NULL;
-	for (i = 0; i < bbn->in_count; ++i)
-		if (bbn->in_bb [0]->next_bb == bbn)
-			prev_bb = bbn->in_bb [0];
+	bb->needs_decompose |= bbn->needs_decompose;
+	bb->extended |= bbn->extended;
 
 	mono_unlink_bblock (cfg, bb, bbn);
 	for (i = 0; i < bbn->out_count; ++i)
@@ -1030,10 +1031,14 @@ mono_merge_basic_blocks (MonoCompile *cfg, MonoBasicBlock *bb, MonoBasicBlock *b
 		bb->last_ins = bbn->last_ins;
 	}
 
-	if (!prev_bb) {
+
+	/* Check if the control flow predecessor is also the linear IL predecessor. */
+	if (bbn->in_bb [0]->next_bb == bbn)
+		prev_bb = bbn->in_bb [0];
+	else
+		/* If it isn't, look for one among all basic blocks. */
 		for (prev_bb = cfg->bb_entry; prev_bb && prev_bb->next_bb != bbn; prev_bb = prev_bb->next_bb)
 			;
-	}
 	if (prev_bb) {
 		prev_bb->next_bb = bbn->next_bb;
 	} else {
@@ -1247,7 +1252,7 @@ mono_optimize_branches (MonoCompile *cfg)
 	int filter = FILTER_IL_SEQ_POINT;
 
 	/*
-	 * Some crazy loops could cause the code below to go into an infinite
+	 * Possibly some loops could cause the code below to go into an infinite
 	 * loop, see bug #53003 for an example. To prevent this, we put an upper
 	 * bound on the number of iterations.
 	 */
@@ -1476,4 +1481,8 @@ mono_optimize_branches (MonoCompile *cfg)
 	} while (changed && (niterations > 0));
 }
 
-#endif /* DISABLE_JIT */
+#else /* !DISABLE_JIT */
+
+MONO_EMPTY_SOURCE_FILE (branch_opts);
+
+#endif /* !DISABLE_JIT */

@@ -7,6 +7,8 @@ using System.Runtime.Remoting.Channels;
 using System.Runtime.Remoting.Channels.Http;
 using NUnit.Framework;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.Remoting.Http
 {
 	//Test for Bug 324362 - SoapFormatter cannot deserialize the same MBR twice
@@ -18,11 +20,15 @@ namespace MonoTests.Remoting.Http
 		[Ignore ("This test somehow keeps http channel registered and then blocks any further http tests working. This also happens under .NET, so this test itself is wrong with nunit 2.4.8.")]
 		public void Test ()
 		{
-			new HttpChannel (8086);
+			var port = NetworkHelpers.FindFreePort ();
+			Hashtable props = new Hashtable ();
+			props["port"] = port;
+			props["bindTo"] = "127.0.0.1";
+			new HttpChannel (props, null, null);
 			RemotingServices.Marshal (new Service (), "test");
 
 			Service remObj = (Service) RemotingServices.Connect (
-				typeof (Service), "http://localhost:8086/test");
+				typeof (Service), $"http://127.0.0.1:{port}/test");
 
 			ArrayList list;
 			remObj.Test (out list);
@@ -67,13 +73,17 @@ namespace MonoTests.Remoting.Http
 		[Test]
 		public void Main ()
 		{
-			channel = new HttpChannel (3344);
+			var port = NetworkHelpers.FindFreePort ();
+			Hashtable props = new Hashtable ();
+			props["port"] = port;
+			props["bindTo"] = "127.0.0.1";
+			channel = new HttpChannel (props, null, null);
 			ChannelServices.RegisterChannel (channel);
 			RemotingConfiguration.RegisterWellKnownServiceType
 				(typeof (Bug321420),"Server.soap", WellKnownObjectMode.Singleton);
 			
 			Bug321420 s = (Bug321420) Activator.GetObject (typeof
-				(Bug321420), "http://localhost:3344/Server.soap");
+				(Bug321420), $"http://127.0.0.1:{port}/Server.soap");
 			
 			// this works: s.Method ("a", "b");
 			s.Method ("a", "a");
@@ -98,7 +108,7 @@ namespace MonoTests.Remoting.Http
 		public void Main ()
 		{
 			Foo foo = (Foo) Activator.GetObject (typeof (Foo),
-				"http://localhost:4321/Test");
+				$"http://127.0.0.1:{server.HttpPort}/Test");
 
 			Bar bar = foo.Login ();
 			if (bar != null)
@@ -142,7 +152,11 @@ namespace MonoTests.Remoting.Http
 			
 			public void Start ()
 			{
-				c = new HttpChannel (4321);
+				HttpPort = NetworkHelpers.FindFreePort ();
+				Hashtable props = new Hashtable ();
+				props["port"] = HttpPort;
+				props["bindTo"] = "127.0.0.1";
+				c = new HttpChannel (props, null, null);
 				ChannelServices.RegisterChannel (c);
 				
 				Type t = typeof(Foo);
@@ -155,6 +169,8 @@ namespace MonoTests.Remoting.Http
 				c.StopListening (null);
 				ChannelServices.UnregisterChannel (c);
 			}
+
+			public int HttpPort { get; private set; }
 		}
 	}
 	
@@ -168,17 +184,16 @@ namespace MonoTests.Remoting.Http
 		[Test]
 		public void Main ()
 		{
-			channel = new HttpChannel (0);
-			try {
+			Hashtable props = new Hashtable ();
+			props["port"] = 0;
+			props["bindTo"] = "127.0.0.1";
+			channel = new HttpChannel (props, null, null);
 			ChannelServices.RegisterChannel (channel);
 			MarshalByRefObject obj = (MarshalByRefObject) RemotingServices.Connect (
 				typeof (IFactorial),
-				"http://localhost:60000/MyEndPoint");
+				$"http://127.0.0.1:{server.HttpPort}/MyEndPoint");
 			IFactorial cal = (IFactorial) obj;
-			Assert.AreEqual (cal.CalculateFactorial (4), 24); 
-			} finally {
-			ChannelServices.UnregisterChannel (channel);
-			}
+			Assert.AreEqual (cal.CalculateFactorial (4), 24);
 		}
 		
 		[TestFixtureSetUp]
@@ -213,7 +228,11 @@ namespace MonoTests.Remoting.Http
 			
 			public void Start ()
 			{
-				c = new HttpChannel (60000);
+				HttpPort = NetworkHelpers.FindFreePort ();
+				Hashtable props = new Hashtable ();
+				props["port"] = HttpPort;
+				props["bindTo"] = "127.0.0.1";
+				c = new HttpChannel (props, null, null);
 				ChannelServices.RegisterChannel (c);
 				
 				Type t = typeof(Calculator);
@@ -226,6 +245,8 @@ namespace MonoTests.Remoting.Http
 				c.StopListening (null);
 				ChannelServices.UnregisterChannel (c);
 			}
+
+			public int HttpPort { get; private set; }
 		}
 		
 		public class Calculator : MarshalByRefObject, IFactorial

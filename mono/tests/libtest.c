@@ -7,6 +7,14 @@
 #include <errno.h>
 #include <time.h>
 #include <math.h>
+#include <setjmp.h>
+#include <signal.h>
+#include "../utils/mono-errno.h"
+#include "../utils/mono-compiler.h"
+
+#ifndef HOST_WIN32
+#include <dlfcn.h>
+#endif
 
 #ifdef WIN32
 #include <windows.h>
@@ -15,10 +23,15 @@
 #include <pthread.h>
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifdef WIN32
 #define STDCALL __stdcall
 #else
 #define STDCALL
+#define __thiscall /* nothing */
 #endif
 
 #ifdef __GNUC__
@@ -34,7 +47,7 @@ typedef int (STDCALL *SimpleDelegate) (int a);
 #if defined(WIN32) && defined (_MSC_VER)
 #define LIBTEST_API __declspec(dllexport)
 #elif defined(__GNUC__)
-#define LIBTEST_API  __attribute__ ((visibility ("default")))
+#define LIBTEST_API  __attribute__ ((__visibility__ ("default")))
 #else
 #define LIBTEST_API
 #endif
@@ -71,14 +84,10 @@ static void* marshal_alloc0 (gsize size)
 static char* marshal_strdup (const char *str)
 {
 #ifdef WIN32
-	int len;
-	char *buf;
-
 	if (!str)
 		return NULL;
 
-	len = strlen (str);
-	buf = (char *) CoTaskMemAlloc (len + 1);
+	char *buf = (char *) CoTaskMemAlloc (strlen (str) + 1);
 	return strcpy (buf, str);
 #else
 	return g_strdup (str);
@@ -88,10 +97,8 @@ static char* marshal_strdup (const char *str)
 static gunichar2* marshal_bstr_alloc(const gchar* str)
 {
 #ifdef WIN32
-	gunichar2* ret = NULL;
-	gunichar2* temp = NULL;
-	temp = g_utf8_to_utf16 (str, -1, NULL, NULL, NULL);
-	ret = SysAllocString (temp);
+	gunichar2* temp = g_utf8_to_utf16 (str, -1, NULL, NULL, NULL);
+	gunichar2* ret = SysAllocString (temp);
 	g_free (temp);
 	return ret;
 #else
@@ -124,7 +131,7 @@ mono_cominterop_is_supported (void)
 }
 
 LIBTEST_API unsigned short* STDCALL
-test_lpwstr_marshal (unsigned short* chars, long length)
+test_lpwstr_marshal (unsigned short* chars, int length)
 {
 	int i = 0;
 	unsigned short *res;
@@ -278,6 +285,25 @@ mono_return_nested_float (void)
 	f.fi.f3 = 3.0;
 	f.f4 = 4.0;
 	return f;
+}
+
+struct Scalar4 {
+	double val[4];
+};
+
+struct Rect {
+	int x;
+	int y;
+	int width;
+	int height;
+};
+
+LIBTEST_API char * STDCALL
+mono_return_struct_4_double (void *ptr, struct Rect rect, struct Scalar4 sc4, int a, int b, int c)
+{
+	char *buffer = (char *)marshal_alloc (1024 * sizeof (char));
+	sprintf (buffer, "sc4 = {%.1f, %.1f, %.1f, %.1f }, a=%x, b=%x, c=%x\n", (float) sc4.val [0], (float) sc4.val [1], (float) sc4.val [2], (float) sc4.val [3], a, b, c);
+	return buffer;
 }
 
 LIBTEST_API int STDCALL  
@@ -674,16 +700,6 @@ mono_test_marshal_delegate_struct (DelegateStruct ds)
 	return res;
 }
 
-LIBTEST_API int STDCALL  
-mono_test_marshal_struct (simplestruct ss)
-{
-	if (ss.a == 0 && ss.b == 1 && ss.c == 0 &&
-	    !strcmp (ss.d, "TEST"))
-		return 0;
-
-	return 1;
-}
-
 LIBTEST_API int STDCALL 
 mono_test_marshal_byref_struct (simplestruct *ss, int a, int b, int c, char *d)
 {
@@ -822,6 +838,8 @@ mono_test_marshal_byref_class (simplestruct2 **ssp)
 	return 0;
 }
 
+MONO_DISABLE_WARNING (4172) // returning address of local
+
 static void *
 get_sp (void)
 {
@@ -832,6 +850,8 @@ get_sp (void)
 	p = &i;
 	return p;
 }
+
+MONO_RESTORE_WARNING
 
 LIBTEST_API int STDCALL 
 reliable_delegate (int a)
@@ -889,12 +909,12 @@ mono_test_marshal_return_delegate (SimpleDelegate delegate)
 	return delegate;
 }
 
-typedef int DelegateByrefDelegate (void *);
+typedef int (STDCALL *DelegateByrefDelegate) (void *);
 
 LIBTEST_API int STDCALL
 mono_test_marshal_delegate_ref_delegate (DelegateByrefDelegate del)
 {
-	int (*ptr) (int i);
+	int (STDCALL *ptr) (int i);
 
 	del (&ptr);
 
@@ -926,6 +946,16 @@ is_utf16_equals (gunichar2 *s1, const char *s2)
 	g_free (s);
 
 	return res == 0;
+}
+
+LIBTEST_API int STDCALL
+mono_test_marshal_struct (simplestruct ss)
+{
+	if (ss.a == 0 && ss.b == 1 && ss.c == 0 &&
+	    !strcmp (ss.d, "TEST") && is_utf16_equals (ss.d2, "OK"))
+		return 0;
+
+	return 1;
 }
 
 LIBTEST_API int STDCALL 
@@ -1125,6 +1155,13 @@ mono_test_marshal_icall_delegate (IcallDelegate del)
 	return strcmp (res, "ABC") == 0 ? 0 : 1;
 }
 
+typedef char* (STDCALL *NullableReturnDelegate) (void);
+LIBTEST_API void STDCALL
+mono_test_marshal_nullable_ret_delegate (NullableReturnDelegate del)
+{
+	del ();
+}
+
 LIBTEST_API int STDCALL  
 mono_test_marshal_stringbuilder (char *s, int n)
 {
@@ -1132,7 +1169,7 @@ mono_test_marshal_stringbuilder (char *s, int n)
 
 	if (strcmp (s, "ABCD") != 0)
 		return 1;
-	strncpy(s, m, n);
+	memcpy(s, m, n);
 	s [n] = '\0';
 	return 0;
 }
@@ -1158,7 +1195,7 @@ mono_test_marshal_stringbuilder_default (char *s, int n)
 {
 	const char m[] = "This is my message.  Isn't it nice?";
 
-	strncpy(s, m, n);
+	memcpy(s, m, n);
 	s [n] = '\0';
 	return 0;
 }
@@ -1228,14 +1265,37 @@ mono_test_marshal_stringbuilder_ref (char **s)
 	return 0;
 }
 
+LIBTEST_API void STDCALL  
+mono_test_marshal_stringbuilder_utf16_tolower (short *s, int n)
+{
+	for (int i = 0; i < n; i++)
+		s[i] = tolower(s[i]);
+}
+
+
+#ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wc++-compat"
+#endif
+
+/*
+* Standard C and C++ doesn't allow empty structs, empty structs will always have a size of 1 byte.
+* GCC have an extension to allow empty structs, https://gcc.gnu.org/onlinedocs/gcc/Empty-Structures.html.
+* This cause a little dilemma since runtime build using none GCC compiler will not be compatible with
+* GCC build C libraries and the other way around. On platforms where empty structs has size of 1 byte
+* it must be represented in call and cannot be dropped. On Windows x64 structs will always be represented in the call
+* meaning that an empty struct must have a representation in the callee in order to correctly follow the ABI used by the
+* C/C++ standard and the runtime.
+*/
 typedef struct {
-#ifndef __GNUC__
+#if !defined(__GNUC__) || defined(TARGET_WIN32)
     char a;
 #endif
 } EmptyStruct;
+
+#ifdef __GNUC__
 #pragma GCC diagnostic pop
+#endif
 
 LIBTEST_API int STDCALL 
 mono_test_marshal_empty_string_array (char **array)
@@ -1290,10 +1350,10 @@ mono_test_marshal_stringbuilder_array (char **array)
 LIBTEST_API int STDCALL 
 mono_test_marshal_unicode_string_array (gunichar2 **array, char **array2)
 {
-	GError *error = NULL;
+	GError *gerror = NULL;
 	char *s;
 	
-	s = g_utf16_to_utf8 (array [0], -1, NULL, NULL, &error);
+	s = g_utf16_to_utf8 (array [0], -1, NULL, NULL, &gerror);
 	if (strcmp (s, "ABC")) {
 		g_free (s);
 		return 1;
@@ -1301,7 +1361,7 @@ mono_test_marshal_unicode_string_array (gunichar2 **array, char **array2)
 	else
 		g_free (s);
 
-	s = g_utf16_to_utf8 (array [1], -1, NULL, NULL, &error);
+	s = g_utf16_to_utf8 (array [1], -1, NULL, NULL, &gerror);
 	if (strcmp (s, "DEF")) {
 		g_free (s);
 		return 2;
@@ -1339,7 +1399,12 @@ mono_test_return_empty_struct (int a)
 {
 	EmptyStruct s;
 
+	memset (&s, 0, sizeof (s));
+
+#if !(defined(__i386__) && defined(__clang__))
+	/* https://bugzilla.xamarin.com/show_bug.cgi?id=58901 */
 	g_assert (a == 42);
+#endif
 
 	return s;
 }
@@ -1725,8 +1790,23 @@ mono_test_last_error (int err)
 {
 #ifdef WIN32
 	SetLastError (err);
+
+	/*
+	* Make sure argument register used calling SetLastError
+	* get's cleaned before returning back to caller. This is done to ensure
+	* we don't get a undetected failure if error is preserved in register
+	* on return since we read back value directly when doing p/invoke with SetLastError = true
+	* into first argument register and then pass it to Mono function setting value in TLS.
+	* If there is a codegen bug reading last error or the code has been incorrectly eliminated
+	* this test could still succeed since expected error code could be left in argument register.
+	* Below code just do something that shouldn't touch last error and won't be optimized away
+	* but will change the argument registers to something different than err.
+	*/
+	char buffer[256] = { 0 };
+	char value[] = "Dummy";
+	strncpy (buffer, value, G_N_ELEMENTS (value) - 1);
 #else
-	errno = err;
+	mono_set_errno (err);
 #endif
 }
 
@@ -1737,7 +1817,7 @@ mono_test_asany (void *ptr, int what)
 	case 1:
 		return (*(int*)ptr == 5) ? 0 : 1;
 	case 2:
-		return strcmp (ptr, "ABC") == 0 ? 0 : 1;
+		return strcmp ((const char*)ptr, "ABC") == 0 ? 0 : 1;
 	case 3: {
 		simplestruct2 ss = *(simplestruct2*)ptr;
 
@@ -1749,10 +1829,10 @@ mono_test_asany (void *ptr, int what)
 			return 1;
 	}
 	case 4: {
-		GError *error = NULL;
+		GError *gerror = NULL;
 		char *s;
 
-		s = g_utf16_to_utf8 ((const gunichar2 *)ptr, -1, NULL, NULL, &error);
+		s = g_utf16_to_utf8 ((const gunichar2 *)ptr, -1, NULL, NULL, &gerror);
 
 		if (!s)
 			return 1;
@@ -1765,6 +1845,9 @@ mono_test_asany (void *ptr, int what)
 			g_free (s);
 			return 1;
 		}
+	}
+	case 5: {
+		return (*(intptr_t*)ptr == 5) ? 0 : 1;
 	}
 	default:
 		g_assert_not_reached ();
@@ -2021,7 +2104,7 @@ typedef void (STDCALL *CustomOutParamDelegate) (void **pptr);
 LIBTEST_API int STDCALL 
 mono_test_marshal_custom_out_param_delegate (CustomOutParamDelegate del)
 {
-	void* pptr = del;
+	void* pptr = (void*)del;
 
 	del (&pptr);
 
@@ -2435,7 +2518,7 @@ add_delegate (int i, int j)
 LIBTEST_API gpointer STDCALL 
 mono_test_marshal_return_fnptr (void)
 {
-	return &add_delegate;
+	return (gpointer)&add_delegate;
 }
 
 LIBTEST_API int STDCALL 
@@ -2525,11 +2608,17 @@ LIBTEST_API void STDCALL
 mono_safe_handle_ref (void **handle)
 {
 	if (*handle != 0){
-		*handle = (void *) 0xbad;
+		*handle = (void *) 0x800d;
 		return;
 	}
 
-	*handle = (void *) 0x800d;
+	*handle = (void *) 0xbad;
+}
+
+LIBTEST_API void* STDCALL
+mono_safe_handle_ref_nomod (void **handle)
+{
+	return *handle;
 }
 
 LIBTEST_API double STDCALL
@@ -2544,6 +2633,34 @@ mono_test_marshal_date_time (double d, double *d2)
  */
 
 #ifndef WIN32
+
+typedef struct
+{
+	guint32 a;
+	guint16 b;
+	guint16 c;
+	guint8 d[8];
+} GUID;
+
+typedef const GUID *REFIID;
+
+typedef struct IDispatch IDispatch;
+
+typedef struct
+{
+	int (STDCALL *QueryInterface)(IDispatch *iface, REFIID iid, gpointer *out);
+	int (STDCALL *AddRef)(IDispatch *iface);
+	int (STDCALL *Release)(IDispatch *iface);
+	int (STDCALL *GetTypeInfoCount)(IDispatch *iface, unsigned int *count);
+	int (STDCALL *GetTypeInfo)(IDispatch *iface, unsigned int index, unsigned int lcid, gpointer *out);
+	int (STDCALL *GetIDsOfNames)(IDispatch *iface, REFIID iid, gpointer names, unsigned int count, unsigned int lcid, gpointer ids);
+	int (STDCALL *Invoke)(IDispatch *iface, unsigned int dispid, REFIID iid, unsigned int lcid, unsigned short flags, gpointer params, gpointer result, gpointer excepinfo, gpointer err_arg);
+} IDispatchVtbl;
+
+struct IDispatch
+{
+	const IDispatchVtbl *lpVtbl;
+};
 
 typedef struct {
 	guint16 vt;
@@ -2627,14 +2744,6 @@ void VariantInit(VARIANT* vt)
 {
 	vt->vt = VT_EMPTY;
 }
-
-typedef struct
-{
-	guint32 a;
-	guint16 b;
-	guint16 c;
-	guint8 d[8];
-} GUID;
 
 #define S_OK 0
 
@@ -3300,7 +3409,64 @@ mono_test_marshal_variant_out_bool_false_unmanaged(VarRefFunc func)
 	return 1;
 }
 
+typedef struct _StructWithVariant {
+    VARIANT data;
+} StructWithVariant;
+typedef int (STDCALL *CheckStructWithVariantFunc) (StructWithVariant sv);
+
+LIBTEST_API int STDCALL 
+mono_test_marshal_struct_with_variant_in_unmanaged(CheckStructWithVariantFunc func)
+{
+    StructWithVariant sv;
+    sv.data.vt = VT_I4;
+    sv.data.lVal = -123;
+    return func(sv);
+}
+
+LIBTEST_API int STDCALL
+mono_test_marshal_struct_with_variant_out_unmanaged (StructWithVariant sv)
+{
+	if (sv.data.vt != VT_I4)
+		return 1;
+	if (sv.data.lVal != -123)
+		return 2;
+	return 0;
+}
+
+typedef struct _StructWithBstr {
+    gunichar2* data;
+} StructWithBstr;
+typedef int (STDCALL *CheckStructWithBstrFunc) (StructWithBstr sb);
+
+LIBTEST_API int STDCALL 
+mono_test_marshal_struct_with_bstr_in_unmanaged(CheckStructWithBstrFunc func)
+{
+    StructWithBstr sb;
+    sb.data = marshal_bstr_alloc("this is a test string");
+    return func(sb);
+}
+
+LIBTEST_API int STDCALL
+mono_test_marshal_struct_with_bstr_out_unmanaged (StructWithBstr sb)
+{
+	char *s = g_utf16_to_utf8 (sb.data, g_utf16_len (sb.data), NULL, NULL, NULL);
+	gboolean same = !strcmp (s, "this is a test string");
+	g_free (s);
+	if (!same)
+		return 1;
+	return 0;
+}
+
 typedef struct MonoComObject MonoComObject;
+typedef struct MonoDefItfObject MonoDefItfObject;
+
+typedef struct
+{
+	int (STDCALL *QueryInterface)(MonoDefItfObject* pUnk, gpointer riid, gpointer* ppv);
+	int (STDCALL *AddRef)(MonoDefItfObject* pUnk);
+	int (STDCALL *Release)(MonoDefItfObject* pUnk);
+	int (STDCALL *Method)(MonoDefItfObject* pUnk, int *value);
+} MonoDefItf;
 
 typedef struct
 {
@@ -3320,6 +3486,14 @@ typedef struct
 	int (STDCALL *DoubleIn)(MonoComObject* pUnk, double a);
 	int (STDCALL *ITestIn)(MonoComObject* pUnk, MonoComObject* pUnk2);
 	int (STDCALL *ITestOut)(MonoComObject* pUnk, MonoComObject* *ppUnk);
+	int (STDCALL *Return22NoICall)(MonoComObject* pUnk);
+	int (STDCALL *IntOut)(MonoComObject* pUnk, int *a);
+	int (STDCALL *ArrayIn)(MonoComObject* pUnk, void *array);
+	int (STDCALL *ArrayIn2)(MonoComObject* pUnk, void *array);
+	int (STDCALL *ArrayIn3)(MonoComObject* pUnk, void *array);
+	int (STDCALL *ArrayOut)(MonoComObject* pUnk, guint32 *array, guint32 *result);
+	int (STDCALL *GetDefInterface1)(MonoComObject* pUnk, MonoDefItfObject **iface);
+	int (STDCALL *GetDefInterface2)(MonoComObject* pUnk, MonoDefItfObject **iface);
 } MonoIUnknown;
 
 struct MonoComObject
@@ -3328,9 +3502,15 @@ struct MonoComObject
 	int m_ref;
 };
 
+struct MonoDefItfObject
+{
+	MonoDefItf* vtbl;
+};
+
 static GUID IID_ITest = {0, 0, 0, {0,0,0,0,0,0,0,1}};
 static GUID IID_IMonoUnknown = {0, 0, 0, {0xc0,0,0,0,0,0,0,0x46}};
 static GUID IID_IMonoDispatch = {0x00020400, 0, 0, {0xc0,0,0,0,0,0,0,0x46}};
+static GUID IID_INotImplemented = {0x12345678, 0, 0, {0x9a, 0xbc, 0xde, 0xf0, 0, 0, 0, 0}};
 
 LIBTEST_API int STDCALL
 MonoQueryInterface(MonoComObject* pUnk, gpointer riid, gpointer* ppv)
@@ -3436,6 +3616,54 @@ ITestOut(MonoComObject* pUnk, MonoComObject* *ppUnk)
 	return S_OK;
 }
 
+LIBTEST_API int STDCALL
+Return22NoICall(MonoComObject* pUnk)
+{
+	return 22;
+}
+
+LIBTEST_API int STDCALL
+IntOut(MonoComObject* pUnk, int *a)
+{
+	return S_OK;
+}
+
+LIBTEST_API int STDCALL
+ArrayIn(MonoComObject* pUnk, void *array)
+{
+	return S_OK;
+}
+
+LIBTEST_API int STDCALL
+ArrayIn2(MonoComObject* pUnk, void *array)
+{
+	return S_OK;
+}
+
+LIBTEST_API int STDCALL
+ArrayIn3(MonoComObject* pUnk, void *array)
+{
+	return S_OK;
+}
+
+LIBTEST_API int STDCALL
+ArrayOut(MonoComObject* pUnk, guint32 *array, guint32 *result)
+{
+	return S_OK;
+}
+
+LIBTEST_API int STDCALL
+GetDefInterface1(MonoComObject* pUnk, MonoDefItfObject **obj)
+{
+	return S_OK;
+}
+
+LIBTEST_API int STDCALL
+GetDefInterface2(MonoComObject* pUnk, MonoDefItfObject **obj)
+{
+	return S_OK;
+}
+
 static void create_com_object (MonoComObject** pOut);
 
 LIBTEST_API int STDCALL 
@@ -3467,6 +3695,14 @@ static void create_com_object (MonoComObject** pOut)
 	(*pOut)->vtbl->ITestIn = ITestIn;
 	(*pOut)->vtbl->ITestOut = ITestOut;
 	(*pOut)->vtbl->get_ITest = get_ITest;
+	(*pOut)->vtbl->Return22NoICall = Return22NoICall;
+	(*pOut)->vtbl->IntOut = IntOut;
+	(*pOut)->vtbl->ArrayIn = ArrayIn;
+	(*pOut)->vtbl->ArrayIn2 = ArrayIn2;
+	(*pOut)->vtbl->ArrayIn3 = ArrayIn3;
+	(*pOut)->vtbl->ArrayOut = ArrayOut;
+	(*pOut)->vtbl->GetDefInterface1 = GetDefInterface1;
+	(*pOut)->vtbl->GetDefInterface2 = GetDefInterface2;
 }
 
 static MonoComObject* same_object = NULL;
@@ -3555,12 +3791,88 @@ mono_test_marshal_ccw_itest (MonoComObject *pUnk)
 	return 0;
 }
 
+// Xamarin-47560
+LIBTEST_API int STDCALL
+mono_test_marshal_array_ccw_itest (int count, MonoComObject ** ppUnk)
+{
+	int hr = 0;
+
+	if (!ppUnk)
+		return 1;
+
+	if (count < 1)
+		return 2;
+
+	if (!ppUnk[0])
+		return 3;
+
+	hr = ppUnk[0]->vtbl->SByteIn (ppUnk[0], -100);
+	if (hr != 0)
+		return 4;
+
+	return 0;
+}
+
+LIBTEST_API int STDCALL
+mono_test_marshal_retval_ccw_itest (MonoComObject *pUnk, int test_null)
+{
+	int hr = 0, i = 0;
+
+	if (!pUnk)
+		return 1;
+
+	hr = pUnk->vtbl->IntOut (pUnk, &i);
+	if (hr != 0)
+		return 2;
+	if (i != 33)
+		return 3;
+	if (test_null)
+	{
+		hr = pUnk->vtbl->IntOut (pUnk, NULL);
+		if (hr != 0)
+			return 4;
+	}
+
+	return 0;
+}
+
+LIBTEST_API int STDCALL
+mono_test_default_interface_ccw (MonoComObject *pUnk)
+{
+	MonoDefItfObject *obj;
+	int ret, value;
+
+	ret = pUnk->vtbl->GetDefInterface1(pUnk, &obj);
+	if (ret)
+		return 1;
+	value = 0;
+
+	ret = obj->vtbl->Method(obj, &value);
+	obj->vtbl->Release(obj);
+	if (ret)
+		return 2;
+	if (value != 1)
+		return 3;
+
+	ret = pUnk->vtbl->GetDefInterface2(pUnk, &obj);
+	if (ret)
+		return 4;
+	ret = obj->vtbl->Method(obj, &value);
+	obj->vtbl->Release(obj);
+	if (ret)
+		return 5;
+	if (value != 2)
+		return 6;
+
+	return 0;
+}
+
 /*
  * mono_method_get_unmanaged_thunk tests
  */
 
 #if defined(__GNUC__) && ((defined(__i386__) && (defined(__linux__) || defined (__APPLE__)) || defined (__FreeBSD__) || defined(__OpenBSD__)) || (defined(__ppc__) && defined(__APPLE__)))
-#define ALIGN(size) __attribute__ ((aligned(size)))
+#define ALIGN(size) __attribute__ ((__aligned__(size)))
 #else
 #define ALIGN(size)
 #endif
@@ -3576,19 +3888,27 @@ typedef struct _TestStruct {
 static gpointer
 lookup_mono_symbol (const char *symbol_name)
 {
-	gpointer symbol;
-	if (g_module_symbol (g_module_open (NULL, G_MODULE_BIND_LAZY), symbol_name, &symbol))
-		return symbol;
-	else
-		return NULL;
+	gpointer symbol = NULL;
+	GModule *mod = g_module_open (NULL, G_MODULE_BIND_LAZY);
+	g_assert (mod != NULL);
+	const gboolean success = g_module_symbol (mod, symbol_name, &symbol);
+	g_assertf (success, "%s", symbol_name);
+	return success ? symbol : NULL;
 }
 
 LIBTEST_API gpointer STDCALL
 mono_test_marshal_lookup_symbol (const char *symbol_name)
 {
+#ifndef HOST_WIN32
+	return dlsym (RTLD_DEFAULT, symbol_name);
+#else
+	// This isn't really proper, but it should work
 	return lookup_mono_symbol (symbol_name);
+#endif
 }
 
+
+// FIXME use runtime headers
 #define MONO_BEGIN_EFRAME { void *__dummy; void *__region_cookie = mono_threads_enter_gc_unsafe_region ? mono_threads_enter_gc_unsafe_region (&__dummy) : NULL;
 #define MONO_END_EFRAME if (mono_threads_exit_gc_unsafe_region) mono_threads_exit_gc_unsafe_region (__region_cookie, &__dummy); }
 
@@ -3604,21 +3924,27 @@ test_method_thunk (int test_id, gpointer test_method_handle, gpointer create_obj
 {
 	int ret = 0;
 
+	// FIXME use runtime headers
 	gpointer (*mono_method_get_unmanaged_thunk)(gpointer)
 		= (gpointer (*)(gpointer))lookup_mono_symbol ("mono_method_get_unmanaged_thunk");
 
+	// FIXME use runtime headers
 	gpointer (*mono_string_new_wrapper)(const char *)
 		= (gpointer (*)(const char *))lookup_mono_symbol ("mono_string_new_wrapper");
 
+	// FIXME use runtime headers
 	char *(*mono_string_to_utf8)(gpointer)
 		= (char *(*)(gpointer))lookup_mono_symbol ("mono_string_to_utf8");
 
+	// FIXME use runtime headers
 	gpointer (*mono_object_unbox)(gpointer)
 		= (gpointer (*)(gpointer))lookup_mono_symbol ("mono_object_unbox");
 
+	// FIXME use runtime headers
 	gpointer (*mono_threads_enter_gc_unsafe_region) (gpointer)
 		= (gpointer (*)(gpointer))lookup_mono_symbol ("mono_threads_enter_gc_unsafe_region");
 
+	// FIXME use runtime headers
 	void (*mono_threads_exit_gc_unsafe_region) (gpointer, gpointer)
 		= (void (*)(gpointer, gpointer))lookup_mono_symbol ("mono_threads_exit_gc_unsafe_region");
 
@@ -4363,7 +4689,7 @@ mono_test_managed_Winx64_struct5_in(managed_struct5_delegate func)
 	winx64_struct5 val;
 	val.a = 5;
 	val.b = 0x10;
-	val.c = 0x99;
+	val.c = (char)0x99;
 	return func (val);
 }
 
@@ -4718,7 +5044,7 @@ mono_test_marshal_safearray_out_1dim_vt_bstr_empty (SAFEARRAY** safearray)
 	dimensions [0].lLbound = 0;
 	dimensions [0].cElements = 0;
 
-	pSA= SafeArrayCreate (VT_VARIANT, 1, dimensions);
+	pSA = SafeArrayCreate (VT_VARIANT, 1, dimensions);
 	*safearray = pSA;
 	return S_OK;
 }
@@ -5420,6 +5746,60 @@ mono_test_marshal_safearray_mixed(
 	return hr;
 }
 
+LIBTEST_API int STDCALL
+mono_test_marshal_safearray_in_ccw(MonoComObject *pUnk)
+{
+	SAFEARRAY *array;
+	VARIANT var;
+	long index;
+	int ret;
+
+	array = SafeArrayCreateVector(VT_VARIANT, 0, 2);
+
+	var.vt = VT_BSTR;
+	var.bstrVal = marshal_bstr_alloc("Test");
+	index = 0;
+	SafeArrayPutElement(array, &index, &var);
+
+	var.vt = VT_I4;
+	var.intVal = 2345;
+	index = 1;
+	SafeArrayPutElement(array, &index, &var);
+
+	ret = pUnk->vtbl->ArrayIn (pUnk, (void *)array);
+	if (!ret)
+		ret = pUnk->vtbl->ArrayIn2 (pUnk, (void *)array);
+	if (!ret)
+		ret = pUnk->vtbl->ArrayIn3 (pUnk, (void *)array);
+
+	SafeArrayDestroy(array);
+
+	return ret;
+}
+
+LIBTEST_API int STDCALL
+mono_test_marshal_lparray_out_ccw(MonoComObject *pUnk)
+{
+	guint32 array, result;
+	int ret;
+
+	ret = pUnk->vtbl->ArrayOut (pUnk, &array, &result);
+	if (ret)
+		return ret;
+	if (array != 55)
+		return 1;
+	if (result != 1)
+		return 2;
+
+	ret = pUnk->vtbl->ArrayOut (pUnk, NULL, &result);
+	if (ret)
+		return ret;
+	if (result != 0)
+		return 3;
+
+	return 0;
+}
+
 #endif
 
 static int call_managed_res;
@@ -5441,7 +5821,39 @@ mono_test_marshal_thread_attach (SimpleDelegate del)
 	int res;
 	pthread_t t;
 
-	res = pthread_create (&t, NULL, (gpointer (*)(gpointer))call_managed, del);
+	res = pthread_create (&t, NULL, (gpointer (*)(gpointer))call_managed, (gpointer)del);
+	g_assert (res == 0);
+	pthread_join (t, NULL);
+
+	return call_managed_res;
+#endif
+}
+
+typedef struct {
+	char arr [4 * 1024];
+} LargeStruct;
+
+typedef int (STDCALL *LargeStructDelegate) (LargeStruct *s);
+
+static void
+call_managed_large_vt (gpointer arg)
+{
+	LargeStructDelegate del = (LargeStructDelegate)arg;
+	LargeStruct s;
+
+	call_managed_res = del (&s);
+}
+
+LIBTEST_API int STDCALL
+mono_test_marshal_thread_attach_large_vt (SimpleDelegate del)
+{
+#ifdef WIN32
+	return 43;
+#else
+	int res;
+	pthread_t t;
+
+	res = pthread_create (&t, NULL, (gpointer (*)(gpointer))call_managed_large_vt, (gpointer)del);
 	g_assert (res == 0);
 	pthread_join (t, NULL);
 
@@ -5492,7 +5904,6 @@ mono_test_marshal_return_lpstr (void)
 	return res;
 }
 
-
 LIBTEST_API gunichar2* STDCALL
 mono_test_marshal_return_lpwstr (void)
 {
@@ -5505,97 +5916,103 @@ mono_test_marshal_return_lpwstr (void)
 	return res;
 }
 
-typedef struct {
+typedef
+#if defined (HOST_WIN32) && defined (HOST_X86) && defined (__GNUC__)
+// Workaround gcc ABI bug. It returns the struct in ST0 instead of edx:eax.
+// Mono and Visual C++ agree.
+union
+#else
+struct
+#endif
+{
 	double d;
 } SingleDoubleStruct;
 
 LIBTEST_API SingleDoubleStruct STDCALL
 mono_test_marshal_return_single_double_struct (void)
 {
-	SingleDoubleStruct res;
-
-	res.d = 3.0;
-
+	SingleDoubleStruct res = {3.0};
 	return res;
 }
 
-
-#ifndef TARGET_X86
+LIBTEST_API int STDCALL
+mono_test_has_thiscall_globals (void)
+{
+// Visual C++ does not accept __thiscall on global functions, only
+// member function and function pointers. Gcc accepts it also on global functions.
+#if defined (HOST_X86) && defined (HOST_WIN32) && !defined (_MSC_VER)
+	return 1;
+#else
+	return 0;
+#endif
+}
 
 LIBTEST_API int STDCALL
-mono_test_has_thiscall (void)
+mono_test_has_thiscall_pointers (void)
 {
+#if defined (HOST_X86) && defined (HOST_WIN32)
 	return 1;
+#else
+	return 0;
+#endif
 }
 
 LIBTEST_API int
+#ifndef _MSC_VER
+__thiscall
+#endif
 _mono_test_native_thiscall1 (int arg)
 {
 	return arg;
 }
 
 LIBTEST_API int
+#ifndef _MSC_VER
+__thiscall
+#endif
 _mono_test_native_thiscall2 (int arg, int arg2)
 {
 	return arg + (arg2^1);
 }
 
 LIBTEST_API int
+#ifndef _MSC_VER
+__thiscall
+#endif
 _mono_test_native_thiscall3 (int arg, int arg2, int arg3)
 {
 	return arg + (arg2^1) + (arg3^2);
 }
 
-#elif defined(__GNUC__)
-
-LIBTEST_API int STDCALL
-mono_test_has_thiscall (void)
-{
-	return 1;
-}
-
-#define def_asm_fn(name) \
-	"\t.align 4\n" \
-	"\t.globl _" #name "\n" \
-	"_" #name ":\n" \
-	"\t.globl __" #name "\n" \
-	"__" #name ":\n"
-
-asm(".text\n"
-
-def_asm_fn(mono_test_native_thiscall1)
-"\tmovl %ecx,%eax\n"
-"\tret\n"
-
-def_asm_fn(mono_test_native_thiscall2)
-"\tmovl %ecx,%eax\n"
-"\tmovl 4(%esp),%ecx\n"
-"\txorl $1,%ecx\n"
-"\taddl %ecx,%eax\n"
-"\tret $4\n"
-
-def_asm_fn(mono_test_native_thiscall3)
-"\tmovl %ecx,%eax\n"
-"\tmovl 4(%esp),%ecx\n"
-"\txorl $1,%ecx\n"
-"\taddl %ecx,%eax\n"
-"\tmovl 8(%esp),%ecx\n"
-"\txorl $2,%ecx\n"
-"\taddl %ecx,%eax\n"
-"\tret $8\n"
-
-);
-
-#else
-
-LIBTEST_API int STDCALL
-mono_test_has_thiscall (void)
-{
-	return 0;
-}
-
+typedef int (
+#ifndef _MSC_VER
+__thiscall
 #endif
+*ThiscallFunction)(int arg, int arg2);
 
+LIBTEST_API ThiscallFunction STDCALL
+mono_test_get_native_thiscall2 (void)
+{
+	return _mono_test_native_thiscall2;
+}
+
+LIBTEST_API int STDCALL
+_mono_test_managed_thiscall1 (int (__thiscall*fn)(int), int arg)
+{
+	return fn(arg);
+}
+
+LIBTEST_API int STDCALL
+_mono_test_managed_thiscall2 (int (__thiscall*fn)(int,int), int arg, int arg2)
+{
+	return fn(arg, arg2);
+}
+
+LIBTEST_API int STDCALL
+_mono_test_managed_thiscall3 (int (__thiscall*fn)(int,int,int), int arg, int arg2, int arg3)
+{
+	return fn(arg, arg2, arg3);
+}
 
 typedef struct {
 	char f1;
@@ -7203,3 +7620,1022 @@ mono_return_double_array4 (double_array4 sa4, int addend) {
 	return sa4;
 }
 
+typedef struct {
+	int array [3];
+} FixedArrayStruct;
+
+LIBTEST_API int STDCALL
+mono_test_marshal_fixed_array (FixedArrayStruct s)
+{
+	return s.array [0] + s.array [1] + s.array [2];
+}
+
+typedef struct {
+	char array [16];
+	char c;
+} FixedBufferChar;
+
+LIBTEST_API int STDCALL
+mono_test_marshal_fixed_buffer_char (FixedBufferChar *s)
+{
+	if (!(s->array [0] == 'A' && s->array [1] == 'B' && s->array [2] == 'C' && s->c == 'D'))
+		return 1;
+	s->array [0] = 'E';
+	s->array [1] = 'F';
+	s->c = 'G';
+	return 0;
+}
+
+typedef struct {
+	short array [16];
+	short c;
+} FixedBufferUnicode;
+
+LIBTEST_API int STDCALL
+mono_test_marshal_fixed_buffer_unicode (FixedBufferUnicode *s)
+{
+	if (!(s->array [0] == 'A' && s->array [1] == 'B' && s->array [2] == 'C' && s->c == 'D'))
+		return 1;
+	s->array [0] = 'E';
+	s->array [1] = 'F';
+	s->c = 'G';
+	return 0;
+}
+
+const int NSTRINGS = 6;
+//test strings
+const char  *utf8Strings[] = {  
+                                "Managed",
+                                 "Sîne klâwen durh die wolken sint geslagen" ,
+                                 "काचं शक्नोम्यत्तुम् । नोपहिनस्ति माम्",
+                                 "我能吞下玻璃而不伤身体",
+                                 "ღმერთსი შემვედრე,შემვედრე, ნუთუ კვლა დამხსნას შემვედრე,სოფლისა შემვედრე, შემვედრე,შემვედრე,შემვედრე,შრომასა, ცეცხლს, წყალსა და მიწასა, ჰაერთა თანა მრომასა; მომცნეს ფრთენი და აღვფრინდე, მივჰხვდე მას ჩემსა ნდომასა, დღისით და ღამით ვჰხედვიდე მზისა ელვათა კრთომაასაშემვედრე,შემვედრე,",
+                                 "Τη γλώσσα μου έδωσαν ελληνική",
+"\0"
+};
+
+LIBTEST_API char *
+build_return_string(const char* pReturn)
+{
+	char *ret = 0;
+	if (pReturn == 0 || *pReturn == 0)
+		return ret;
+
+	size_t strLength = strlen(pReturn);
+	ret = (char *)(marshal_alloc (sizeof(char)* (strLength + 1)));
+	memcpy(ret, pReturn, strLength);
+	ret [strLength] = '\0';
+	return ret;
+}
+
+LIBTEST_API char *
+StringParameterInOut(/*[In,Out]*/ char *s, int index)
+{
+	// return a copy
+	return build_return_string(s);
+}
+
+LIBTEST_API void
+StringParameterRefOut(/*out*/ char **s, int index)
+{
+	char *pszTextutf8 = (char*)utf8Strings[index];
+	size_t strLength = strlen(pszTextutf8);
+	*s = (char *)(marshal_alloc (sizeof(char)* (strLength + 1)));
+	memcpy(*s, pszTextutf8, strLength);
+	(*s)[strLength] = '\0';
+}
+
+LIBTEST_API void
+StringParameterRef(/*ref*/ char **s, int index)
+{
+    char *pszTextutf8 = (char*)utf8Strings[index];
+    size_t strLength = strlen(pszTextutf8);
+    // do byte by byte validation of in string
+    size_t szLen = strlen(*s);
+    for (size_t i = 0; i < szLen; i++)
+    {
+        if ((*s)[i] != pszTextutf8[i])
+        {
+            printf("[in] managed string do not match native string\n");
+	    abort ();
+        }
+    }
+
+    if (*s)
+    {
+       marshal_free (*s);
+    }
+    // overwrite the orginal 
+    *s = (char *)(marshal_alloc (sizeof(char)* (strLength + 1)));
+    memcpy(*s, pszTextutf8, strLength);
+    (*s)[strLength] = '\0';
+}
+
+LIBTEST_API void
+StringBuilderParameterInOut(/*[In,Out] StringBuilder*/ char *s, int index)
+{
+    // if string.empty 
+    if (s == 0 || *s == 0)
+        return;
+
+    char *pszTextutf8 = (char*)utf8Strings[index];
+
+    // do byte by byte validation of in string
+    size_t szLen = strlen(s);
+    for (size_t i = 0; i < szLen; i++) 
+    {
+        if (s[i] != pszTextutf8[i])
+        {
+            printf("[in] managed string do not match native string\n");
+	    abort ();
+        }
+    }  
+
+    // modify the string inplace 
+    size_t outLen = strlen(pszTextutf8);
+    for (size_t i = 0; i < outLen; i++) {
+        s[i] = pszTextutf8[i];
+    }
+    s[outLen] = '\0';
+}
+
+//out string builder
+LIBTEST_API void
+StringBuilderParameterOut(/*[Out] StringBuilder*/ char *s, int index)
+{
+    char *pszTextutf8 = (char*)utf8Strings[index];
+
+    printf ("SBPO: Receiving %s\n", s);
+    // modify the string inplace 
+    size_t outLen = strlen(pszTextutf8);
+    for (size_t i = 0; i < outLen; i++) {
+        s[i] = pszTextutf8[i];
+    }
+    s[outLen] = '\0';
+}
+
+LIBTEST_API char *
+StringParameterOut(/*[Out]*/ char *s, int index)
+{
+    // return a copy
+    return build_return_string(s);
+}
+
+// Utf8 field
+typedef struct FieldWithUtf8
+{
+    char *pFirst;
+    int index;
+}FieldWithUtf8;
+
+//utf8 struct field
+LIBTEST_API void
+TestStructWithUtf8Field(struct FieldWithUtf8 fieldStruct)
+{
+    char *pszManagedutf8 = fieldStruct.pFirst;
+    int stringIndex = fieldStruct.index;
+    char *pszNative = 0;
+    size_t outLen = 0;
+
+    if (pszManagedutf8 == 0 || *pszManagedutf8 == 0)
+        return;
+
+    pszNative = (char*)utf8Strings[stringIndex];
+
+    outLen = strlen(pszNative);
+    // do byte by byte comparision
+    for (size_t i = 0; i < outLen; i++) 
+    {
+        if (pszNative[i] != pszManagedutf8[i]) 
+        {
+            printf("Native and managed string do not match.\n");
+	    abort ();
+        }
+    }
+}
+
+typedef void (* Callback2)(char *text, int index);
+
+LIBTEST_API void
+Utf8DelegateAsParameter(Callback2 managedCallback)
+{
+    for (int i = 0; i < NSTRINGS; ++i) 
+    {
+        char *pszNative = 0;
+        pszNative = (char*)utf8Strings[i];
+        managedCallback(pszNative, i);
+    }
+}
+
+
+LIBTEST_API char*
+StringBuilderParameterReturn(int index)
+{
+    char *pszTextutf8 = (char*)utf8Strings[index];
+    size_t strLength = strlen(pszTextutf8);
+    char * ret = (char *)(marshal_alloc (sizeof(char)* (strLength + 1)));
+    memcpy(ret, pszTextutf8, strLength);
+    ret[strLength] = '\0';
+
+    return  ret;
+}
+
+LIBTEST_API int STDCALL
+mono_test_marshal_pointer_array (int *arr[])
+{
+	int i;
+
+	for (i = 0; i < 10; ++i) {
+		if (*arr [i] != -1)
+			return 1;
+	}
+	return 0;
+}
+
+#ifndef WIN32
+
+typedef void (*NativeToManagedExceptionRethrowFunc) (void);
+
+void *mono_test_native_to_managed_exception_rethrow_thread (void *arg)
+{
+	NativeToManagedExceptionRethrowFunc func = (NativeToManagedExceptionRethrowFunc) arg;
+	func ();
+	return NULL;
+}
+
+LIBTEST_API void STDCALL
+mono_test_native_to_managed_exception_rethrow (NativeToManagedExceptionRethrowFunc func)
+{
+	pthread_t t;
+	pthread_create (&t, NULL, mono_test_native_to_managed_exception_rethrow_thread, (gpointer)func);
+	pthread_join (t, NULL);
+}
+#endif
+
+typedef void (*VoidVoidCallback) (void);
+typedef void (*MonoFtnPtrEHCallback) (guint32 gchandle);
+
+typedef void *MonoDomain;
+typedef void *MonoAssembly;
+typedef void *MonoImage;
+typedef void *MonoClass;
+typedef void *MonoMethod;
+typedef void *MonoThread;
+
+typedef long long MonoObject;
+typedef MonoObject MonoException;
+typedef int32_t mono_bool;
+
+static int sym_inited = 0;
+static void (*sym_mono_install_ftnptr_eh_callback) (MonoFtnPtrEHCallback);
+static MonoObject* (*sym_mono_gchandle_get_target) (guint32 gchandle);
+static guint32 (*sym_mono_gchandle_new) (MonoObject *, mono_bool pinned);
+static void (*sym_mono_gchandle_free) (guint32 gchandle);
+static void (*sym_mono_raise_exception) (MonoException *ex);
+static void (*sym_mono_domain_unload) (gpointer);
+static void (*sym_mono_threads_exit_gc_safe_region_unbalanced) (gpointer, gpointer *);
+static void (*null_function_ptr) (void);
+
+static MonoDomain *(*sym_mono_get_root_domain) (void);
+
+static MonoDomain *(*sym_mono_domain_get)(void);
+
+static mono_bool (*sym_mono_domain_set)(MonoDomain *, mono_bool /*force */);
+
+static MonoAssembly *(*sym_mono_domain_assembly_open) (MonoDomain *, const char*);
+
+static MonoImage *(*sym_mono_assembly_get_image) (MonoAssembly *);
+
+static MonoClass *(*sym_mono_class_from_name)(MonoImage *, const char *, const char *);
+
+static MonoMethod *(*sym_mono_class_get_method_from_name)(MonoClass *, const char *, int /* arg_count */);
+
+static MonoThread *(*sym_mono_thread_attach)(MonoDomain *);
+
+static void (*sym_mono_thread_detach)(MonoThread *);
+
+static MonoObject *(*sym_mono_runtime_invoke) (MonoMethod *, void*, void**, MonoObject**);
+
+
+// SYM_LOOKUP(mono_runtime_invoke)
+// expands to
+//  sym_mono_runtime_invoke = g_cast (lookup_mono_symbol ("mono_runtime_invoke"));
+//
+// (the g_cast is necessary for C++ builds)
+#define SYM_LOOKUP(name) do {			\
+	sym_##name = g_cast (lookup_mono_symbol (#name));	\
+	} while (0)
+
+static void
+mono_test_init_symbols (void)
+{
+	if (sym_inited)
+		return;
+
+	SYM_LOOKUP (mono_install_ftnptr_eh_callback);
+	SYM_LOOKUP (mono_gchandle_get_target);
+	SYM_LOOKUP (mono_gchandle_new);
+	SYM_LOOKUP (mono_gchandle_free);
+	SYM_LOOKUP (mono_raise_exception);
+	SYM_LOOKUP (mono_domain_unload);
+	SYM_LOOKUP (mono_threads_exit_gc_safe_region_unbalanced);
+
+	SYM_LOOKUP (mono_get_root_domain);
+	SYM_LOOKUP (mono_domain_get);
+	SYM_LOOKUP (mono_domain_set);
+	SYM_LOOKUP (mono_domain_assembly_open);
+	SYM_LOOKUP (mono_assembly_get_image);
+	SYM_LOOKUP (mono_class_from_name);
+	SYM_LOOKUP (mono_class_get_method_from_name);
+	SYM_LOOKUP (mono_thread_attach);
+	SYM_LOOKUP (mono_thread_detach);
+	SYM_LOOKUP (mono_runtime_invoke);
+
+	sym_inited = 1;
+}
+
+#ifndef TARGET_WASM
+
+static jmp_buf test_jmp_buf;
+static guint32 test_gchandle;
+
+static void
+mono_test_longjmp_callback (guint32 gchandle)
+{
+	test_gchandle = gchandle;
+	longjmp (test_jmp_buf, 1);
+}
+
+LIBTEST_API void STDCALL
+mono_test_setjmp_and_call (VoidVoidCallback managedCallback, intptr_t *out_handle)
+{
+	mono_test_init_symbols ();
+	if (setjmp (test_jmp_buf) == 0) {
+		*out_handle = 0;
+		sym_mono_install_ftnptr_eh_callback (mono_test_longjmp_callback);
+		managedCallback ();
+		*out_handle = 0; /* Do not expect to return here */
+	} else {
+		sym_mono_install_ftnptr_eh_callback (NULL);
+		*out_handle = test_gchandle;
+	}
+}
+
+#endif
+
+LIBTEST_API void STDCALL
+mono_test_marshal_bstr (void *ptr)
+{
+}
+
+static void (*mono_test_capture_throw_callback) (guint32 gchandle, guint32 *exception_out);
+
+static void
+mono_test_ftnptr_eh_callback (guint32 gchandle)
+{
+	guint32 exception_handle = 0;
+
+	g_assert (gchandle != 0);
+	MonoObject *exc = sym_mono_gchandle_get_target (gchandle);
+	sym_mono_gchandle_free (gchandle);
+
+	guint32 handle = sym_mono_gchandle_new (exc, FALSE);
+	mono_test_capture_throw_callback (handle, &exception_handle);
+	sym_mono_gchandle_free (handle);
+
+	g_assert (exception_handle != 0);
+	exc = sym_mono_gchandle_get_target (exception_handle);
+	sym_mono_gchandle_free (exception_handle);
+
+	sym_mono_raise_exception (exc);
+	g_error ("mono_raise_exception should not return");
+}
+
+LIBTEST_API void STDCALL
+mono_test_setup_ftnptr_eh_callback (VoidVoidCallback managed_entry, void (*capture_throw_callback) (guint32, guint32 *))
+{
+	mono_test_init_symbols ();
+	mono_test_capture_throw_callback = capture_throw_callback;
+	sym_mono_install_ftnptr_eh_callback (mono_test_ftnptr_eh_callback);
+	managed_entry ();
+}
+
+LIBTEST_API void STDCALL
+mono_test_cleanup_ftptr_eh_callback (void)
+{
+	mono_test_init_symbols ();
+	sym_mono_install_ftnptr_eh_callback (NULL);
+}
+
+LIBTEST_API int STDCALL
+mono_test_cominterop_ccw_queryinterface (MonoComObject *pUnk)
+{
+	void *pp;
+	int hr = pUnk->vtbl->QueryInterface (pUnk, &IID_INotImplemented, &pp);
+
+	// Return true if we can't get INotImplemented
+	return pUnk == NULL && hr == S_OK;
+}
+
+typedef struct ccw_qi_shared_data {
+	MonoComObject *pUnk;
+	int i;
+} ccw_qi_shared_data;
+
+static void*
+ccw_qi_foreign_thread (void *arg)
+{
+	ccw_qi_shared_data *shared = (ccw_qi_shared_data *)arg;
+	void *pp;
+	MonoComObject *pUnk = shared->pUnk;
+	int hr = pUnk->vtbl->QueryInterface (pUnk, &IID_ITest, &pp);
+
+	shared->i = (hr == S_OK) ? 0 : 43;
+	return NULL;
+}
+
+LIBTEST_API int STDCALL
+mono_test_cominterop_ccw_queryinterface_foreign_thread (MonoComObject *pUnk)
+{
+#ifdef WIN32
+	return 0;
+#else
+	pthread_t t;
+	ccw_qi_shared_data *shared = (ccw_qi_shared_data *)malloc (sizeof (ccw_qi_shared_data));
+	if (!shared)
+		abort ();
+	shared->pUnk = pUnk;
+	shared->i = 1;
+	int res = pthread_create (&t, NULL, ccw_qi_foreign_thread, (void*)shared);
+	g_assert (res == 0);
+	pthread_join (t, NULL);
+	int result = shared->i;
+	free (shared);
+	return result;
+#endif
+}
+
+static void*
+ccw_itest_foreign_thread (void *arg)
+{
+	ccw_qi_shared_data *shared = (ccw_qi_shared_data *)arg;
+	MonoComObject *pUnk = shared->pUnk;
+	int hr = pUnk->vtbl->SByteIn (pUnk, -100);
+	shared->i = (hr == S_OK) ? 0 : 12;
+	return NULL;
+}
+
+LIBTEST_API int STDCALL
+mono_test_cominterop_ccw_itest_foreign_thread (MonoComObject *pUnk)
+{
+#ifdef WIN32
+	return 0;
+#else
+	pthread_t t;
+	ccw_qi_shared_data *shared = (ccw_qi_shared_data *)malloc (sizeof (ccw_qi_shared_data));
+	if (!shared)
+		abort ();
+	shared->pUnk = pUnk;
+	shared->i = 1;
+	int res = pthread_create (&t, NULL, ccw_itest_foreign_thread, (void*)shared);
+	g_assert (res == 0);
+	pthread_join (t, NULL);
+	int result = shared->i;
+	free (shared);
+	return result;
+#endif
+}
+
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashSnprintf (void)
+{
+	fprintf (stderr, "Before overwrite\n");
+
+	char buff [1] = { '\0' };
+	char overflow [1] = { 'a' }; // Not null-terminated
+	g_snprintf (buff, sizeof(buff) * 10, "THISSHOULDOVERRUNTERRIBLY%s", overflow);
+	g_snprintf ((char *) GINT_TO_POINTER(-1), sizeof(buff) * 10, "THISSHOULDOVERRUNTERRIBLY%s", overflow);
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashDladdr (void)
+{
+#ifndef HOST_WIN32
+	dlopen (GINT_TO_POINTER(-1), -1);
+#endif
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashMalloc (void)
+{
+	gpointer x = g_malloc (sizeof(gpointer));
+	g_free (x);
+
+	// Double free
+	g_free (x);
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashNullFp (void)
+{
+	null_function_ptr ();
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashDomainUnload (void)
+{
+	mono_test_init_symbols ();
+	sym_mono_domain_unload (GINT_TO_POINTER (-1));
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashUnbalancedGCSafe (void)
+{
+	mono_test_init_symbols ();
+	gpointer foo = GINT_TO_POINTER (-1);
+	gpointer bar = GINT_TO_POINTER (-2);
+	sym_mono_threads_exit_gc_safe_region_unbalanced (foo, &bar);
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashUnhandledExceptionHook (void)
+{
+	g_assert_not_reached ();
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashSignalTerm (void)
+{
+	raise (SIGTERM);
+}
+
+// for the rest of the signal tests, we use SIGTERM as a fallback
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashSignalAbrt (void)
+{
+#if defined (SIGABRT)
+	raise (SIGABRT);
+#else
+	raise (SIGTERM);
+#endif
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashSignalFpe (void)
+{
+#if defined (SIGFPE)
+	raise (SIGFPE);
+#else
+	raise (SIGTERM);
+#endif
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashSignalBus (void)
+{
+#if defined (SIGBUS)
+	raise (SIGBUS);
+#else
+	raise (SIGTERM);
+#endif
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashSignalSegv (void)
+{
+#if defined (SIGSEGV)
+	raise (SIGSEGV);
+#else
+	raise (SIGTERM);
+#endif
+}
+
+LIBTEST_API void STDCALL
+mono_test_MerpCrashSignalIll (void)
+{
+#if defined (SIGILL)
+	raise (SIGILL);
+#else
+	raise (SIGTERM);
+#endif
+}
+
+#ifndef HOST_WIN32
+void*
+foreign_thread_crash_body (void* ud)
+{
+	while (1) {
+		fprintf (stderr, "alive\n");
+		sleep (2);
+	}
+	return NULL;
+}
+#endif
+
+LIBTEST_API void mono_test_MerpCrashOnForeignThread (void)
+{
+
+#ifndef HOST_WIN32
+	pthread_t t;
+	int res;
+
+	res = pthread_create (&t, NULL, foreign_thread_crash_body, NULL);
+
+	sleep (1);
+	pthread_kill (t, SIGILL);
+
+	pthread_join (t, NULL);
+#endif
+}
+
+
+typedef struct _TestAutoDual _TestAutoDual;
+
+typedef struct
+{
+	int (STDCALL *QueryInterface)(_TestAutoDual *iface, REFIID iid, gpointer *out);
+	int (STDCALL *AddRef)(_TestAutoDual *iface);
+	int (STDCALL *Release)(_TestAutoDual *iface);
+	int (STDCALL *GetTypeInfoCount)(_TestAutoDual *iface, unsigned int *count);
+	int (STDCALL *GetTypeInfo)(_TestAutoDual *iface, unsigned int index, unsigned int lcid, gpointer *out);
+	int (STDCALL *GetIDsOfNames)(_TestAutoDual *iface, REFIID iid, gpointer names, unsigned int count, unsigned int lcid, gpointer ids);
+	int (STDCALL *Invoke)(_TestAutoDual *iface, unsigned int dispid, REFIID iid, unsigned int lcid, unsigned short flags, gpointer params, gpointer result, gpointer excepinfo, gpointer err_arg);
+	int (STDCALL *ToString)(_TestAutoDual *iface, gpointer string);
+	int (STDCALL *Equals)(_TestAutoDual *iface, VARIANT other, short *retval);
+	int (STDCALL *GetHashCode)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *GetType)(_TestAutoDual *iface, gpointer retval);
+	int (STDCALL *parent_method_virtual)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *get_parent_property)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *parent_method_override)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *parent_iface_method)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *parent_method)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *child_method_virtual)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *iface1_method)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *iface1_parent_method)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *iface2_method)(_TestAutoDual *iface, int *retval);
+	int (STDCALL *child_method)(_TestAutoDual *iface, int *retval);
+} _TestAutoDualVtbl;
+
+struct _TestAutoDual
+{
+	const _TestAutoDualVtbl *lpVtbl;
+};
+
+LIBTEST_API int STDCALL
+mono_test_ccw_class_type_auto_dual (_TestAutoDual *iface)
+{
+	int hr, retval;
+
+	hr = iface->lpVtbl->parent_method_virtual(iface, &retval);
+	if (hr != 0)
+		return 1;
+	if (retval != 101)
+		return 2;
+
+	hr = iface->lpVtbl->get_parent_property(iface, &retval);
+	if (hr != 0)
+		return 3;
+	if (retval != 102)
+		return 4;
+
+	hr = iface->lpVtbl->parent_method_override(iface, &retval);
+	if (hr != 0)
+		return 5;
+	if (retval != 203)
+		return 6;
+
+	hr = iface->lpVtbl->parent_method(iface, &retval);
+	if (hr != 0)
+		return 7;
+	if (retval != 104)
+		return 8;
+
+	hr = iface->lpVtbl->child_method_virtual(iface, &retval);
+	if (hr != 0)
+		return 11;
+	if (retval != 106)
+		return 12;
+
+	hr = iface->lpVtbl->iface1_method(iface, &retval);
+	if (hr != 0)
+		return 13;
+	if (retval != 107)
+		return 14;
+
+	hr = iface->lpVtbl->iface1_parent_method(iface, &retval);
+	if (hr != 0)
+		return 15;
+	if (retval != 108)
+		return 16;
+
+	hr = iface->lpVtbl->iface2_method(iface, &retval);
+	if (hr != 0)
+		return 17;
+	if (retval != 109)
+		return 18;
+
+	hr = iface->lpVtbl->child_method(iface, &retval);
+	if (hr != 0)
+		return 19;
+	if (retval != 110)
+		return 20;
+
+	hr = iface->lpVtbl->parent_iface_method(iface, &retval);
+	if (hr != 0)
+		return 23;
+	if (retval != 112)
+		return 24;
+
+	return 0;
+}
+
+static const GUID IID_IBanana = {0x12345678, 0, 0, {0, 0, 0, 0, 0, 0, 0, 2}};
+
+typedef struct IBanana IBanana;
+
+typedef struct
+{
+	int (STDCALL *QueryInterface)(IBanana *iface, REFIID iid, gpointer *out);
+	int (STDCALL *AddRef)(IBanana *iface);
+	int (STDCALL *Release)(IBanana *iface);
+	int (STDCALL *GetTypeInfoCount)(IBanana *iface, unsigned int *count);
+	int (STDCALL *GetTypeInfo)(IBanana *iface, unsigned int index, unsigned int lcid, gpointer *out);
+	int (STDCALL *GetIDsOfNames)(IBanana *iface, REFIID iid, gpointer names, unsigned int count, unsigned int lcid, gpointer ids);
+	int (STDCALL *Invoke)(IBanana *iface, unsigned int dispid, REFIID iid, unsigned int lcid, unsigned short flags, gpointer params, gpointer result, gpointer excepinfo, gpointer err_arg);
+	int (STDCALL *iface1_method)(IBanana *iface, int *retval);
+} IBananaVtbl;
+
+struct IBanana
+{
+	const IBananaVtbl *lpVtbl;
+};
+
+LIBTEST_API int STDCALL
+mono_test_ccw_class_type_none (IBanana *iface)
+{
+	int hr, retval;
+
+	hr = iface->lpVtbl->iface1_method(iface, &retval);
+	if (hr != 0)
+		return 1;
+	if (retval != 3)
+		return 2;
+	return 0;
+}
+
+LIBTEST_API int STDCALL
+mono_test_ccw_class_type_auto_dispatch (IDispatch *disp)
+{
+	IBanana *banana;
+	int hr, retval;
+
+#ifdef __cplusplus
+	hr = disp->QueryInterface (IID_IBanana, (void **)&banana);
+#else
+	hr = disp->lpVtbl->QueryInterface (disp, &IID_IBanana, (void **)&banana);
+#endif
+	if (hr != 0)
+		return 1;
+	hr = banana->lpVtbl->iface1_method(banana, &retval);
+	if (hr != 0)
+		return 2;
+	if (retval != 3)
+		return 3;
+	banana->lpVtbl->Release(banana);
+
+	return 0;
+}
+
+static guint8 static_arr[] = { 1, 2, 3, 4 };
+
+LIBTEST_API guint8*
+mono_test_marshal_return_array (void)
+{
+	return static_arr;
+}
+
+struct invoke_names {
+	char *assm_name;
+	char *name_space;
+	char *name;
+	char *meth_name;
+};
+
+static struct invoke_names *
+make_invoke_names (const char *assm_name, const char *name_space, const char *name, const char *meth_name)
+{
+	struct invoke_names *names = (struct invoke_names*) malloc (sizeof (struct invoke_names));
+	names->assm_name = strdup (assm_name);
+	names->name_space = strdup (name_space);
+	names->name = strdup (name);
+	names->meth_name = strdup (meth_name);
+	return names;
+}
+
+static void
+destroy_invoke_names (struct invoke_names *n)
+{
+	free (n->assm_name);
+	free (n->name_space);
+	free (n->name);
+	free (n->meth_name);
+	free (n);
+}
+
+static void
+test_invoke_by_name (struct invoke_names *names)
+{
+	mono_test_init_symbols ();
+
+	MonoDomain *domain = sym_mono_domain_get ();
+	MonoThread *thread = NULL;
+	if (!domain) {
+		thread = sym_mono_thread_attach (sym_mono_get_root_domain ());
+	}
+	domain = sym_mono_domain_get ();
+	g_assert (domain);
+	MonoAssembly *assm = sym_mono_domain_assembly_open (domain, names->assm_name);
+	g_assert (assm);
+	MonoImage *image = sym_mono_assembly_get_image (assm);
+	MonoClass *klass = sym_mono_class_from_name (image, names->name_space, names->name);
+	g_assert (klass);
+	/* meth_name should be a static method that takes no arguments */
+	MonoMethod *method = sym_mono_class_get_method_from_name (klass, names->meth_name, -1);
+	g_assert (method);
+
+	MonoObject *args[] = {NULL, };
+
+	sym_mono_runtime_invoke (method, NULL, (void**)args, NULL);
+
+	if (thread)
+		sym_mono_thread_detach (thread);
+}
+
+#ifndef HOST_WIN32
+static void*
+invoke_foreign_thread (void* user_data)
+{
+	struct invoke_names *names = (struct invoke_names*)user_data;
+        /*
+         * Run a couple of times to check that attach/detach multiple
+         * times from the same thread leaves it in a reasonable coop
+         * thread state.
+         */
+        for (int i = 0; i < 5; ++i) {
+                test_invoke_by_name (names);
+                sleep (2);
+        }
+	destroy_invoke_names (names);
+	return NULL;
+}
+
+static void*
+invoke_foreign_delegate (void *user_data)
+{
+	VoidVoidCallback del = (VoidVoidCallback)user_data;
+	for (int i = 0; i < 5; ++i) {
+		del ();
+		sleep (2);
+	}
+	return NULL;
+}
+
+#endif
+
+
+LIBTEST_API mono_bool STDCALL
+mono_test_attach_invoke_foreign_thread (const char *assm_name, const char *name_space, const char *name, const char *meth_name, VoidVoidCallback del)
+{
+#ifndef HOST_WIN32
+	if (!del) {
+		struct invoke_names *names = make_invoke_names (assm_name, name_space, name, meth_name);
+		pthread_t t;
+		int res = pthread_create (&t, NULL, invoke_foreign_thread, (void*)names);
+		g_assert (res == 0);
+		pthread_join (t, NULL);
+		return 0;
+	} else {
+		pthread_t t;
+		int res = pthread_create (&t, NULL, invoke_foreign_delegate, del);
+		g_assert (res == 0);
+		pthread_join (t, NULL);
+		return 0;
+	}
+#else
+	// TODO: Win32 version of this test
+	return 1;
+#endif
+}
+
+#ifndef HOST_WIN32
+struct names_and_mutex {
+	/* if del is NULL, use names, otherwise just call del */
+	VoidVoidCallback del;
+	struct invoke_names *names;
+        /* mutex to coordinate test and foreign thread */
+        pthread_mutex_t coord_mutex;
+        pthread_cond_t coord_cond;
+        /* mutex to block the foreign thread */
+	pthread_mutex_t deadlock_mutex;
+};
+
+static void*
+invoke_block_foreign_thread (void *user_data)
+{
+	// This thread calls into the runtime and then blocks. It should not
+	// prevent the runtime from shutting down.
+	struct names_and_mutex *nm = (struct names_and_mutex *)user_data;
+	if (!nm->del) {
+		test_invoke_by_name (nm->names);
+	} else {
+		nm->del ();
+	}
+        pthread_mutex_lock (&nm->coord_mutex);
+        /* signal the test thread that we called the runtime */
+        pthread_cond_signal (&nm->coord_cond);
+        pthread_mutex_unlock (&nm->coord_mutex);
+
+	pthread_mutex_lock (&nm->deadlock_mutex); // blocks forever
+	g_assert_not_reached ();
+}
+#endif
+
+LIBTEST_API mono_bool STDCALL
+mono_test_attach_invoke_block_foreign_thread (const char *assm_name, const char *name_space, const char *name, const char *meth_name, VoidVoidCallback del)
+{
+#ifndef HOST_WIN32
+	struct names_and_mutex *nm = malloc (sizeof (struct names_and_mutex));
+	nm->del = del;
+	if (!del) {
+		struct invoke_names *names = make_invoke_names (assm_name, name_space, name, meth_name);
+		nm->names = names;
+	} else {
+		nm->names = NULL;
+	}
+	pthread_mutex_init (&nm->coord_mutex, NULL);
+	pthread_cond_init (&nm->coord_cond, NULL);
+	pthread_mutex_init (&nm->deadlock_mutex, NULL);
+
+	pthread_mutex_lock (&nm->deadlock_mutex); // lock the mutex and never unlock it.
+	pthread_t t;
+	int res = pthread_create (&t, NULL, invoke_block_foreign_thread, (void*)nm);
+	g_assert (res == 0);
+	/* wait for the foreign thread to finish calling the runtime before
+	 * detaching it and returning
+	 */
+	pthread_mutex_lock (&nm->coord_mutex);
+	pthread_cond_wait (&nm->coord_cond, &nm->coord_mutex);
+	pthread_mutex_unlock (&nm->coord_mutex);
+	pthread_detach (t);
+	return 0;
+#else
+	// TODO: Win32 version of this test
+	return 1;
+#endif
+}
+
+static const GUID IID_IDrupe = {0x9f001e6b, 0xa244, 0x3911, {0x88,0xdb, 0xbb,0x2b,0x6d,0x58,0x43,0xaa}};
+
+#ifndef HOST_WIN32
+typedef struct IUnknown IUnknown;
+
+typedef struct
+{
+	int (STDCALL *QueryInterface)(IUnknown *iface, REFIID iid, gpointer *out);
+	int (STDCALL *AddRef)(IUnknown *iface);
+	int (STDCALL *Release)(IUnknown *iface);
+} IUnknownVtbl;
+
+struct IUnknown
+{
+	const IUnknownVtbl *lpVtbl;
+};
+#endif
+
+LIBTEST_API int STDCALL
+mono_test_ccw_query_interface (IUnknown *iface)
+{
+	IUnknown *drupe;
+	int hr;
+
+#ifdef __cplusplus
+	hr = iface->QueryInterface (IID_IDrupe, (void **)&drupe);
+#else
+	hr = iface->lpVtbl->QueryInterface (iface, &IID_IDrupe, (void **)&drupe);
+#endif
+	if (hr != 0)
+		return 1;
+#ifdef __cplusplus
+	drupe->Release();
+#else
+	drupe->lpVtbl->Release(drupe);
+#endif
+
+	return 0;
+}
+
+#ifdef __cplusplus
+} // extern C
+#endif

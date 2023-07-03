@@ -12,7 +12,7 @@
 
 using System;
 using System.Reflection;
-#if !MONOTOUCH && !MOBILE_STATIC
+#if !MONOTOUCH && !FULL_AOT_RUNTIME
 using System.Reflection.Emit;
 #endif
 using System.Runtime.InteropServices;
@@ -846,7 +846,7 @@ namespace MonoTests.System
 			Assert.IsTrue (custom [2].GetType () == typeof (SerializableAttribute));
 		}
 
-#if !MONOTOUCH && !MOBILE_STATIC
+#if !MONOTOUCH && !FULL_AOT_RUNTIME
 		[Test]
 		public void GetCustomAttributeOnNewSreTypes ()
 		{
@@ -903,7 +903,13 @@ namespace MonoTests.System
 			Assert.AreEqual (1, res.Length, "#1");
 		}
 
-		abstract class Abs
+		abstract class Root
+		{
+			[MyAttribute]
+			public abstract void Foo ();
+		}
+
+		abstract class Abs : Root
 		{
 			public abstract string Name { get; set; }
 		}
@@ -915,6 +921,8 @@ namespace MonoTests.System
 				get { return ""; }
 				set {}
 			}
+
+			public override void Foo () { }
 		}
 		
 		class Sub: Base
@@ -1030,6 +1038,27 @@ namespace MonoTests.System
 			//check for not throwing stack overflow exception
 			AttributeWithTypeId a = new AttributeWithTypeId ();
 			a.GetHashCode ();
+		}
+
+
+		[Test]
+		public void DerivedClassOverrideHasInhertedAttributeFromAbstractRoot ()
+		{
+			// regression test for #44010
+			// we have
+			// abstract class Root {
+			//   [MyAttribute]
+			//   public abstract void Foo ();
+			// }
+			// abstract class Abs : Root { }
+			// class Base : Abs {
+			//   public override void  Foo () { }
+			// }
+			// note that Abs does not itself override Foo.
+			var bt = typeof(Base);
+			var m = bt.GetMethod ("Foo");
+			var attribute = Attribute.GetCustomAttribute (m, typeof (MyAttribute), true);
+			Assert.IsNotNull (attribute);
 		}
 
 		class ArrayAttribute : Attribute
@@ -1223,6 +1252,27 @@ namespace MonoTests.System
 			Assert.AreEqual (1, attrs.Length);	
 		}
 
+		[Test]
+		public void GetCustomAttributesOnOpenGenericMethodOverride ()
+		{
+			// Regression test for https://github.com/mono/mono/issues/17278
+			/* The issue is in how we pass along the generic
+			 * instantiation.  So there are two parts here: we
+			 * start with a method on a GTD which has to decompose
+			 * into the GTD and it's instantiation with its own
+			 * generic parameters, and then we go up to its parent
+			 * and grandparent inflating and decomposing the
+			 * resulting instantiation. The instantiations keep
+			 * passing the last parameter as the number of
+			 * parameters shrinks so that the gparam index from the
+			 * original type is now out of bounds for the parent
+			 * and grandparent.  If we mess up, we'll get a
+			 * BadImageFormatException from the runtime. */
+			var m = typeof (Three<,,>).GetMethod ("Foo");
+			var attrs = Attribute.GetCustomAttributes(m, typeof(MyCAttr), true);
+			Assert.AreEqual (1, attrs.Length);
+		}
+
 		class EvtBase
 		{
 			public virtual event EventHandler Event {add {} remove {}}
@@ -1237,6 +1287,20 @@ namespace MonoTests.System
 		class EvtChild : EvtOverride
 		{
 			public override event EventHandler Event {add {} remove {}}
+		}
+
+		abstract class One<A> {
+			[MyCAttr]
+			public abstract A Foo ();
+		}
+
+		abstract class Two<X,Y> : One<Y> {
+		}
+
+		class Three<P,Q,R> : Two<Q,R> {
+			public override R Foo () {
+				throw new Exception ("Doesn't matter");
+			}
 		}
 
 		[Test] //Regression test for #662867

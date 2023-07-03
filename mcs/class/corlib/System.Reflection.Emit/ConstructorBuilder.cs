@@ -30,7 +30,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -43,11 +43,36 @@ using System.Diagnostics.SymbolStore;
 
 namespace System.Reflection.Emit {
 
+#if !MOBILE
 	[ComVisible (true)]
 	[ComDefaultInterface (typeof (_ConstructorBuilder))]
 	[ClassInterface (ClassInterfaceType.None)]
+	partial class ConstructorBuilder : _ConstructorBuilder
+	{
+		void _ConstructorBuilder.GetIDsOfNames ([In] ref Guid riid, IntPtr rgszNames, uint cNames, uint lcid, IntPtr rgDispId)
+		{
+			throw new NotImplementedException ();
+		}
+
+		void _ConstructorBuilder.GetTypeInfo (uint iTInfo, uint lcid, IntPtr ppTInfo)
+		{
+			throw new NotImplementedException ();
+		}
+
+		void _ConstructorBuilder.GetTypeInfoCount (out uint pcTInfo)
+		{
+			throw new NotImplementedException ();
+		}
+
+		void _ConstructorBuilder.Invoke (uint dispIdMember, [In] ref Guid riid, uint lcid, short wFlags, IntPtr pDispParams, IntPtr pVarResult, IntPtr pExcepInfo, IntPtr puArgErr)
+		{
+			throw new NotImplementedException ();
+		}
+	}
+#endif
+
 	[StructLayout (LayoutKind.Sequential)]
-	public sealed class ConstructorBuilder : ConstructorInfo, _ConstructorBuilder {
+	public sealed partial class ConstructorBuilder : ConstructorInfo {
 	
 #pragma warning disable 169, 414
 		private RuntimeMethodHandle mhandle;
@@ -81,7 +106,7 @@ namespace System.Reflection.Emit {
 			type = tb;
 			this.paramModReq = paramModReq;
 			this.paramModOpt = paramModOpt;
-			table_idx = get_next_table_index (this, 0x06, true);
+			table_idx = get_next_table_index (this, 0x06, 1);
 
 			((ModuleBuilder) tb.Module).RegisterToken (this, GetToken ().Token);
 		}
@@ -128,8 +153,7 @@ namespace System.Reflection.Emit {
 
 			ParameterInfo [] retval = new ParameterInfo [parameters.Length];
 			for (int i = 0; i < parameters.Length; i++)
-				retval [i] = ParameterInfo.New (pinfo == null ? null
-					: pinfo [i + 1], parameters [i], this, i + 1);
+				retval [i] = RuntimeParameterInfo.New (pinfo?[i + 1], parameters [i], this, i + 1);
 
 			return retval;
 		}
@@ -145,7 +169,11 @@ namespace System.Reflection.Emit {
 		internal override Type GetParameterType (int pos) {
 			return parameters [pos];
 		}
-		
+
+		internal MethodBase RuntimeResolve () {
+			return type.RuntimeResolve ().GetConstructor (this);
+		}
+
 		public override Object Invoke (Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
 		{
 			throw not_supported ();
@@ -201,7 +229,7 @@ namespace System.Reflection.Emit {
 
 		public void AddDeclarativeSecurity (SecurityAction action, PermissionSet pset)
 		{
-#if !NET_2_1
+#if !MOBILE
 			if (pset == null)
 				throw new ArgumentNullException ("pset");
 			if ((action == SecurityAction.RequestMinimum) ||
@@ -231,7 +259,10 @@ namespace System.Reflection.Emit {
 
 		public ParameterBuilder DefineParameter (int iSequence, ParameterAttributes attributes, string strParamName)
 		{
-			if (iSequence < 1 || iSequence > GetParametersCount ())
+			// The 0th ParameterBuilder does not correspond to an
+			// actual parameter, but .NETFramework lets you define
+			// it anyway. It is not useful.
+			if (iSequence < 0 || iSequence > GetParametersCount ())
 				throw new ArgumentOutOfRangeException ("iSequence");
 			if (type.is_created)
 				throw not_after_created ();
@@ -360,6 +391,23 @@ namespace System.Reflection.Emit {
 			if (ilgen != null)
 				ilgen.label_fixup (this);
 		}
+
+		internal void ResolveUserTypes () {
+			TypeBuilder.ResolveUserTypes (parameters);
+			if (paramModReq != null) {
+				foreach (var types in paramModReq)
+					TypeBuilder.ResolveUserTypes (types);
+			}
+			if (paramModOpt != null) {
+				foreach (var types in paramModOpt)
+					TypeBuilder.ResolveUserTypes (types);
+			}
+		}
+
+		internal void FixupTokens (Dictionary<int, int> token_map, Dictionary<int, MemberInfo> member_map) {
+			if (ilgen != null)
+				ilgen.FixupTokens (token_map, member_map);
+		}
 		
 		internal void GenerateDebugInfo (ISymbolWriter symbolWriter)
 		{
@@ -372,9 +420,9 @@ namespace System.Reflection.Emit {
 			}
 		}
 
-		internal override int get_next_table_index (object obj, int table, bool inc)
+		internal override int get_next_table_index (object obj, int table, int count)
 		{
-			return type.get_next_table_index (obj, table, inc);
+			return type.get_next_table_index (obj, table, count);
 		}
 
 		private void RejectIfCreated ()
@@ -396,26 +444,6 @@ namespace System.Reflection.Emit {
 		private Exception not_created ()
 		{
 			return new NotSupportedException ("The type is not yet created.");
-		}
-
-		void _ConstructorBuilder.GetIDsOfNames ([In] ref Guid riid, IntPtr rgszNames, uint cNames, uint lcid, IntPtr rgDispId)
-		{
-			throw new NotImplementedException ();
-		}
-
-		void _ConstructorBuilder.GetTypeInfo (uint iTInfo, uint lcid, IntPtr ppTInfo)
-		{
-			throw new NotImplementedException ();
-		}
-
-		void _ConstructorBuilder.GetTypeInfoCount (out uint pcTInfo)
-		{
-			throw new NotImplementedException ();
-		}
-
-		void _ConstructorBuilder.Invoke (uint dispIdMember, [In] ref Guid riid, uint lcid, short wFlags, IntPtr pDispParams, IntPtr pVarResult, IntPtr pExcepInfo, IntPtr puArgErr)
-		{
-			throw new NotImplementedException ();
 		}
 	}
 }

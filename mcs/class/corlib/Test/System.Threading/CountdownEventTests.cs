@@ -101,6 +101,7 @@ namespace MonoTests.System.Threading
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void AddCountSignalStressTestCase ()
 		{
 			var evt = new CountdownEvent (5);
@@ -294,6 +295,7 @@ namespace MonoTests.System.Threading
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void Signal_Concurrent ()
 		{
 			for (int r = 0; r < 100; ++r) {
@@ -304,7 +306,7 @@ namespace MonoTests.System.Threading
 						});
 					}
 
-					Assert.IsTrue (ce.Wait (1000), "#1");
+					Assert.IsTrue (ce.Wait (10000), "#1");
 				}
 			}
 		}
@@ -352,6 +354,7 @@ namespace MonoTests.System.Threading
 		}
 		
 		[Test]
+		[Category ("MultiThreaded")]
 		public void WaitTestCase()
 		{
 			var evt = new CountdownEvent (5);

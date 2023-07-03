@@ -24,7 +24,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#if NET_4_5
 
 using System;
 using System.Threading;
@@ -41,6 +40,7 @@ namespace MonoTests.System.Threading.Tasks
 		TaskFactory factory;
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void BasicExclusiveUsageTest ()
 		{
 			schedPair = new ConcurrentExclusiveSchedulerPair (TaskScheduler.Default, 4);
@@ -54,6 +54,7 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void BasicConcurrentUsageTest ()
 		{
 			schedPair = new ConcurrentExclusiveSchedulerPair (TaskScheduler.Default, 4);
@@ -67,6 +68,7 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void ExclusiveUsageTest ()
 		{
 			schedPair = new ConcurrentExclusiveSchedulerPair (TaskScheduler.Default, 4);
@@ -90,6 +92,7 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void ConcurrentUsageTest ()
 		{
 			schedPair = new ConcurrentExclusiveSchedulerPair (TaskScheduler.Default, 4);
@@ -116,6 +119,7 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void ConcurrentUsageWithExclusiveExecutingTest ()
 		{
 			schedPair = new ConcurrentExclusiveSchedulerPair (TaskScheduler.Default, 4);
@@ -146,6 +150,7 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void ExclusiveUsageWithConcurrentExecutingTest ()
 		{
 			schedPair = new ConcurrentExclusiveSchedulerPair (TaskScheduler.Default, 4);
@@ -176,4 +181,3 @@ namespace MonoTests.System.Threading.Tasks
 	}
 }
 
-#endif

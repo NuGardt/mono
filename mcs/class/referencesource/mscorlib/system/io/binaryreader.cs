@@ -23,6 +23,7 @@ namespace System.IO {
     using System.Globalization;
     using System.Diagnostics.Contracts;
     using System.Security;
+    using System.Buffers.Binary;
 
 [System.Runtime.InteropServices.ComVisible(true)]
     public class BinaryReader : IDisposable
@@ -241,7 +242,15 @@ namespace System.IO {
         public virtual decimal ReadDecimal() {
             FillBuffer(16);
             try {
-                return Decimal.ToDecimal(m_buffer);
+                int[] ints = new int[4];
+                Buffer.BlockCopy(m_buffer, 0, ints, 0, 16);
+                if (!BitConverter.IsLittleEndian) {
+                    // We need to reverse the ints on BE
+                    for (int i = 0; i < 4; i++) {
+                         ints[i] = BinaryPrimitives.ReverseEndianness(ints[i]);
+                    }
+                }
+                return new decimal(ints);
             }
             catch (ArgumentException e) {
                 // ReadDecimal cannot leak out ArgumentException
@@ -382,10 +391,23 @@ namespace System.IO {
                 }
 
                 Contract.Assert(byteBuffer != null, "expected byteBuffer to be non-null");
-                unsafe {
-                    fixed (byte* pBytes = byteBuffer)
-                    fixed (char* pChars = buffer) {
-                        charsRead = m_decoder.GetChars(pBytes + position, numBytes, pChars + index, charsRemaining, false);
+
+                checked { 
+
+                    if (position < 0 || numBytes < 0 || position + numBytes > byteBuffer.Length) {
+                        throw new ArgumentOutOfRangeException("byteCount");
+                    }
+
+                    if (index < 0 || charsRemaining < 0 || index + charsRemaining > buffer.Length) {
+                       throw new ArgumentOutOfRangeException("charsRemaining");
+                    }
+
+                    unsafe {
+                        fixed (byte* pBytes = byteBuffer) {
+                            fixed (char* pChars = buffer) {
+                                charsRead = m_decoder.GetChars(pBytes + position, numBytes, pChars + index, charsRemaining, false);
+                            }
+                        }
                     }
                 }
 
@@ -408,7 +430,7 @@ namespace System.IO {
             // put in InternalReadChars.   
             int charsRead = 0;
             int numBytes = 0;
-            long posSav = posSav = 0;
+            long posSav = 0;
             
             if (m_stream.CanSeek)
                 posSav = m_stream.Position;
@@ -495,6 +517,33 @@ namespace System.IO {
 
             return chars;
         }
+
+#if MONO
+        public virtual int Read(Span<char> buffer)
+        {
+            char[] bufferBytes = System.Buffers.ArrayPool<char>.Shared.Rent(buffer.Length);
+            try
+            {
+                int num = InternalReadChars(bufferBytes, 0, buffer.Length);
+                if ((uint)num > (uint)buffer.Length)
+                {
+		    throw new IOException(SR.IO_StreamTooLong);
+                }
+                new ReadOnlySpan<char>(bufferBytes, 0, num).CopyTo(buffer);
+                return num;
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<char>.Shared.Return(bufferBytes);
+            }
+        }
+
+        public virtual int Read(Span<byte> buffer)
+        {
+            if (m_stream==null) __Error.FileNotOpen();
+            return m_stream.Read(buffer);
+        }
+#endif
 
         public virtual int Read(byte[] buffer, int index, int count) {
             if (buffer==null)

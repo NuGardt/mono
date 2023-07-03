@@ -1,5 +1,6 @@
-/*
- * mono-membar.h: Memory barrier inline functions
+/**
+ * \file
+ * Memory barrier inline functions
  *
  * Author:
  *	Mark Probst (mark.probst@gmail.com)
@@ -14,7 +15,29 @@
 
 #include <glib.h>
 
-#ifdef _MSC_VER
+/*
+ * Memory barrier which only affects the compiler.
+ * mono_memory_barrier_process_wide () should be uses to synchronize with code which uses this.
+ */
+//#define mono_compiler_barrier() asm volatile("": : :"memory")
+
+#ifdef TARGET_WASM
+
+static inline void mono_memory_barrier (void)
+{
+}
+
+static inline void mono_memory_read_barrier (void)
+{
+}
+
+static inline void mono_memory_write_barrier (void)
+{
+}
+
+#define mono_compiler_barrier() asm volatile("": : :"memory")
+
+#elif _MSC_VER
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -45,7 +68,11 @@ static inline void mono_memory_write_barrier (void)
 	_WriteBarrier ();
 	MemoryBarrier ();
 }
+
+#define mono_compiler_barrier() _ReadWriteBarrier ()
+
 #elif defined(USE_GCC_ATOMIC_OPS)
+
 static inline void mono_memory_barrier (void)
 {
 	__sync_synchronize ();
@@ -60,23 +87,13 @@ static inline void mono_memory_write_barrier (void)
 {
 	mono_memory_barrier ();
 }
-#elif defined(__ia64__)
-static inline void mono_memory_barrier (void)
-{
-	__asm__ __volatile__ ("mf" : : : "memory");
-}
 
-static inline void mono_memory_read_barrier (void)
-{
-	mono_memory_barrier ();
-}
+#define mono_compiler_barrier() asm volatile("": : :"memory")
 
-static inline void mono_memory_write_barrier (void)
-{
-	mono_memory_barrier ();
-}
 #else
 #error "Don't know how to do memory barriers!"
 #endif
+
+void mono_memory_barrier_process_wide (void);
 
 #endif	/* _MONO_UTILS_MONO_MEMBAR_H_ */

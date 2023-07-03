@@ -28,6 +28,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions
 {
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_Quote
 	{
 		[Test]
@@ -58,7 +59,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void ParameterInQuotedExpression () // #550722
 		{
 			// Expression<Func<string, Expression<Func<string>>>> e = (string s) => () => s;

@@ -29,6 +29,8 @@ using System;
 using System.IO;
 using System.Xml;
 using System.Linq;
+using System.Collections.Generic;
+using System.Runtime.Versioning;
 
 namespace Microsoft.Build.Utilities
 {
@@ -74,6 +76,7 @@ namespace Microsoft.Build.Utilities
 					Path.Combine (lib_mono_dir, "net_4_x"),  // Version451
 					Path.Combine (lib_mono_dir, "net_4_x"),  // Version46
 					Path.Combine (lib_mono_dir, "net_4_x"),  // Version461
+					Path.Combine (lib_mono_dir, "net_4_x"),  // Version462
 				};	
 			} else if (runningOnDotNet) {
 				mono_dir = new string [] {
@@ -86,6 +89,7 @@ namespace Microsoft.Build.Utilities
 					Path.Combine (lib_mono_dir, "v4.0.30319"),  // Version451
 					Path.Combine (lib_mono_dir, "v4.0.30319"),  // Version46
 					Path.Combine (lib_mono_dir, "v4.0.30319"),  // Version461
+					Path.Combine (lib_mono_dir, "v4.0.30319"),  // Version462
 				};
 			} else {
 				mono_dir = new string [] {
@@ -99,6 +103,7 @@ namespace Microsoft.Build.Utilities
 					Path.Combine (lib_mono_dir, "4.5"),  // Version451
 					Path.Combine (lib_mono_dir, "4.5"),  // Version46
 					Path.Combine (lib_mono_dir, "4.5"),  // Version461
+					Path.Combine (lib_mono_dir, "4.5"),  // Version462
 				};
 			}
 
@@ -267,5 +272,26 @@ namespace Microsoft.Build.Utilities
 			return Path.Combine (lib_mono_dir, "xbuild", toolsVersion, "bin");
 		}
 #endif
+
+		// These have no meaning in mono except to exist, so return empty lists for each.
+		public static IList<string> GetPathToReferenceAssemblies(string targetFrameworkIdentifier, string targetFrameworkVersion, string targetFrameworkProfile)
+		{
+			return new List<string>();
+		}
+
+		public static IList<string> GetPathToReferenceAssemblies(FrameworkName frameworkName)
+		{
+			return new List<string>();
+		}
+
+		public static IList<string> GetPathToReferenceAssemblies(string targetFrameworkRootPath, FrameworkName frameworkName)
+		{
+			return new List<string>();
+		}
+
+		public static IList<string> GetSupportedTargetFrameworks()
+		{
+			throw new NotImplementedException();
+		}
 	}
 }

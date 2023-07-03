@@ -21,6 +21,7 @@
 //
 // Authors:
 //	Peter Bartok	pbartok@novell.com
+//	Karl Scowen	<contact@scowencomputers.co.nz>
 //
 //
 
@@ -73,6 +74,9 @@ namespace System.Windows.Forms
 		
 		internal bool has_been_focused;
 
+		private bool			delayed_font_or_color_change;
+		private int				requested_height;
+
 		internal int			selection_length = -1;	// set to the user-specified selection length, or -1 if none
 		internal bool show_caret_w_selection;  // TextBox shows the caret when the selection is visible
 		internal int			canvas_width;
@@ -83,7 +87,7 @@ namespace System.Windows.Forms
 		internal int			click_point_x;
 		internal int 			click_point_y;
 		internal CaretSelection		click_mode;
-		internal BorderStyle actual_border_style;
+		internal BorderStyle actual_border_style = BorderStyle.Fixed3D;
 		internal bool shortcuts_enabled = true;
 		#if Debug
 		internal static bool	draw_lines = false;
@@ -100,7 +104,6 @@ namespace System.Windows.Forms
 			accepts_tab = false;
 			auto_size = true;
 			InternalBorderStyle = BorderStyle.Fixed3D;
-			actual_border_style = BorderStyle.Fixed3D;
 			character_casing = CharacterCasing.Normal;
 			hide_selection = true;
 			max_length = short.MaxValue;
@@ -114,8 +117,7 @@ namespace System.Windows.Forms
 			current_link = null;
 			show_caret_w_selection = (this is TextBox);
 			document = new Document(this);
-			document.WidthChanged += new EventHandler(document_WidthChanged);
-			document.HeightChanged += new EventHandler(document_HeightChanged);
+			document.SizeChanged += new EventHandler<Document.SizeChangedEventArgs> (document_SizeChanged);
 			//document.CaretMoved += new EventHandler(CaretMoved);
 			document.Wrap = false;
 			click_last = DateTime.Now;
@@ -151,10 +153,11 @@ namespace System.Windows.Forms
 			this.Controls.AddImplicit (vscroll);
 			ResumeLayout ();
 			
-			SetStyle(ControlStyles.UserPaint | ControlStyles.StandardClick, false);
-			SetStyle(ControlStyles.UseTextForAccessibility, false);
+			SetStyle (ControlStyles.UserPaint | ControlStyles.StandardClick, false);
+			SetStyle (ControlStyles.UseTextForAccessibility, false);
+			SetStyle (ControlStyles.FixedHeight, true);
 			
-			base.SetAutoSizeMode (AutoSizeMode.GrowAndShrink);
+			//base.SetAutoSizeMode (AutoSizeMode.GrowAndShrink);
 
 			canvas_width = ClientSize.Width;
 			canvas_height = ClientSize.Height;
@@ -162,6 +165,10 @@ namespace System.Windows.Forms
 			document.ViewPortHeight = canvas_height;
 
 			Cursor = Cursors.IBeam;
+
+			requested_height = Height;
+
+			can_cache_preferred_size = true;
 		}
 		#endregion	// Internal Constructor
 
@@ -177,7 +184,20 @@ namespace System.Windows.Forms
 
 		internal override Size GetPreferredSizeCore (Size proposedSize)
 		{
-			return new Size (Width, Height);
+			Size bordersAndPadding = SizeFromClientSize(Size.Empty) + Padding.Size;
+			if (BorderStyle != BorderStyle.None)
+				bordersAndPadding += new Size(0, 7);
+			proposedSize -= bordersAndPadding;
+
+			TextFormatFlags format = TextFormatFlags.NoPrefix;
+			if (!Multiline)
+				format |= TextFormatFlags.SingleLine;
+			else if (WordWrap)
+				format |= TextFormatFlags.WordBreak;
+
+			Size textSize = TextRenderer.MeasureText(this.Text, this.Font, proposedSize, format);
+			textSize.Height = Math.Max(textSize.Height, FontHeight);
+			return textSize + bordersAndPadding;
 		}
 
 		internal override void HandleClick (int clicks, MouseEventArgs me)
@@ -276,8 +296,7 @@ namespace System.Windows.Forms
 				if (value == actual_border_style)
 					return;
 
-				if (actual_border_style != BorderStyle.Fixed3D || value != BorderStyle.Fixed3D)
-					Invalidate ();
+				Invalidate ();
 
 				actual_border_style = value;
 				document.UpdateMargins ();
@@ -431,12 +450,8 @@ namespace System.Windows.Forms
 				if (value != document.multiline) {
 					document.multiline = value;
 
-					if (this is TextBox)
-						SetStyle (ControlStyles.FixedHeight, !value);
-
-					// SetBoundsCore overrides the Height for multiline if it needs to,
-					// so we don't need to worry about it here.
-					SetBoundsCore (Left, Top, Width, ExplicitBounds.Height, BoundsSpecified.None);
+					SetStyle (ControlStyles.FixedHeight, !value);
+					FixupHeight ();
 					
 					if (Parent != null)
 						Parent.PerformLayout ();
@@ -458,8 +473,7 @@ namespace System.Windows.Forms
 					}
 				}
 
-				if (IsHandleCreated)
-					CalculateDocument ();
+				CalculateDocument ();
 			}
 		}
 
@@ -469,13 +483,11 @@ namespace System.Windows.Forms
 		// This returns the preferred outer height, not the client height.
 		public int PreferredHeight {
 			get {
-				int clientDelta = Height - ClientSize.Height;
-				if (BorderStyle != BorderStyle.None)
-					return Font.Height + 7 + clientDelta;
-
-				// usually in borderless mode the top margin is 0, but
-				// try to access it, in case it was set manually, as ToolStrip* controls do
-				return Font.Height + TopMargin + clientDelta;
+				int height = FontHeight;
+				if (BorderStyle != BorderStyle.None) {
+					height += 7;
+				}
+				return height;
 			}
 		}
 
@@ -604,7 +616,10 @@ namespace System.Windows.Forms
 				Line line = null;
 				for (int i = 1; i <= document.Lines; i++) {
 					line = document.GetLine (i);
-					sb.Append(line.text.ToString ());
+					if (i == document.Lines)
+						sb.Append(line.TextWithoutEnding ());
+					else
+						sb.Append(line.text.ToString ());
 				}
 
 				return sb.ToString();
@@ -702,7 +717,7 @@ namespace System.Windows.Forms
 
 		protected override System.Drawing.Size DefaultSize {
 			get {
-				return new Size(100, 20);
+				return new Size(100, PreferredHeight);
 			}
 		}
 
@@ -969,7 +984,8 @@ namespace System.Windows.Forms
 				case Keys.PageUp:
 				case Keys.PageDown:
 				case Keys.Home:
-				case Keys.End: {
+				case Keys.End:
+				case Keys.Back: {
 					return true;
 				}
 			}
@@ -993,17 +1009,15 @@ namespace System.Windows.Forms
 		protected override void OnFontChanged (EventArgs e)
 		{
 			base.OnFontChanged (e);
-
-			if (auto_size && !document.multiline) {
-				if (PreferredHeight != Height) {
-					Height = PreferredHeight;
-				}
-			}
+			FixupHeight ();
 		}
 
 		protected override void OnHandleCreated (EventArgs e)
 		{
 			base.OnHandleCreated (e);
+			if (delayed_font_or_color_change) {
+				TextBoxBase_FontOrColorChanged (this, e);
+			}
 			FixupHeight ();
 		}
 
@@ -1463,20 +1477,13 @@ namespace System.Windows.Forms
 		{
 			// Make sure we don't get sized bigger than we want to be
 
+			if ((specified & BoundsSpecified.Height) != 0) {
+				requested_height = height;
+			}
+
 			if (!richtext) {
 				if (!document.multiline) {
-					if (height != PreferredHeight) {
-						// If the specified has Height, we need to store that in the
-						// ExplicitBounds because we are going to override it
-						if ((specified & BoundsSpecified.Height) != 0) {
-							Rectangle r = ExplicitBounds;
-							r.Height = height;
-							ExplicitBounds = r;
-							specified &= ~BoundsSpecified.Height;
-						}
-						
-						height = PreferredHeight;
-					}
+					height = PreferredHeight;
 				}
 			}
 
@@ -1719,7 +1726,7 @@ namespace System.Windows.Forms
 
 		internal int TopMargin {
 			get {
-				return document.top_margin;
+				return document == null ? 0 : document.top_margin;
 			}
 			set {
 				document.top_margin = value;
@@ -1737,14 +1744,6 @@ namespace System.Windows.Forms
 		}
 
 		#endregion UIA Framework Properties
-
-		internal Graphics CreateGraphicsInternal ()
-		{
-			if (IsHandleCreated)
-				return base.CreateGraphics();
-				
-			return DeviceContext;
-		}
 
 		internal override void OnPaintInternal (PaintEventArgs pevent)
 		{
@@ -1767,11 +1766,15 @@ namespace System.Windows.Forms
 		private void FixupHeight ()
 		{
 			if (!richtext) {
+				int saved_requested_height = requested_height;
 				if (!document.multiline) {
 					if (PreferredHeight != Height) {
-						Height = PreferredHeight;
+						SetBoundsCore (Left, Top, Width, PreferredHeight, BoundsSpecified.Height);
 					}
+				} else {
+					SetBoundsCore (Left, Top, Width, Math.Max(PreferredHeight, requested_height), BoundsSpecified.Height);
 				}
+				requested_height = saved_requested_height;
 			}
 		}
 
@@ -1820,6 +1823,7 @@ namespace System.Windows.Forms
 				}
 
 				document.PositionCaret(e.X + document.ViewPortX, e.Y + document.ViewPortY);
+				document.DisplayCaret ();
 
 				if (dbliclick) {
 					switch (click_mode) {
@@ -1959,14 +1963,12 @@ namespace System.Windows.Forms
 
 		private void TextBoxBase_SizeChanged (object sender, EventArgs e)
 		{
-			if (IsHandleCreated)
-				CalculateDocument ();
+			CalculateDocument ();
 		}
 
 		private void TextBoxBase_RightToLeftChanged (object o, EventArgs e)
 		{
-			if (IsHandleCreated)
-				CalculateDocument ();
+			CalculateDocument ();
 		}
 
 		private void TextBoxBase_MouseWheel (object sender, MouseEventArgs e)
@@ -2027,9 +2029,12 @@ namespace System.Windows.Forms
 
 		internal void CalculateDocument()
 		{
-			CalculateScrollBars ();
-			document.RecalculateDocument (CreateGraphicsInternal ());
+			if (!IsHandleCreated)
+				return;
 
+			CalculateScrollBars ();
+			using (var graphics = CreateGraphics())
+				document.RecalculateDocument (graphics);
 
 			if (document.caret.line != null && document.caret.line.Y < document.ViewPortHeight) {
 				// The window has probably been resized, making the entire thing visible, so
@@ -2040,22 +2045,24 @@ namespace System.Windows.Forms
 			Invalidate();
 		}
 
-		internal void CalculateScrollBars ()
+		internal bool CalculateScrollBars ()
 		{
-			// FIXME - need separate calculations for center and right alignment
+			var old_canvas_width = canvas_width;
+
 			SizeControls ();
 
-			if (document.Width >= document.ViewPortWidth) {
+			if (document.Width > document.ViewPortWidth) {
 				hscroll.SetValues (0, Math.Max (1, document.Width), -1,
 						document.ViewPortWidth < 0 ? 0 : document.ViewPortWidth);
 				if (document.multiline)
 					hscroll.Enabled = true;
 			} else {
 				hscroll.Enabled = false;
+				hscroll.Value = hscroll.Minimum;
 				hscroll.Maximum = document.ViewPortWidth;
 			}
 
-			if (document.Height >= document.ViewPortHeight) {
+			if (document.Height > document.ViewPortHeight) {
 				vscroll.SetValues (0, Math.Max (1, document.Height), -1,
 						document.ViewPortHeight < 0 ? 0 : document.ViewPortHeight);
 				if (document.multiline)
@@ -2106,16 +2113,16 @@ namespace System.Windows.Forms
 			PositionControls ();
 
 			SizeControls (); //Update sizings now we've decided whats visible
+
+			return (canvas_width != old_canvas_width);
 		}
 
-		private void document_WidthChanged (object sender, EventArgs e)
+		private void document_SizeChanged (object sender, Document.SizeChangedEventArgs e)
 		{
-			CalculateScrollBars();
-		}
-
-		private void document_HeightChanged (object sender, EventArgs e)
-		{
-			CalculateScrollBars();
+			var canvas_width_changed = CalculateScrollBars ();
+			if (e.HeightChanged && canvas_width_changed)
+				CalculateDocument (); // Viewport has changed due to the document change, update the document.
+			// TODO: technically the opposite situation could happen too, where a document width change causes a change in canvas height.
 		}
 
 		private void ScrollLinks (int xChange, int yChange)
@@ -2239,13 +2246,20 @@ namespace System.Windows.Forms
 		{
 			Line	line;
 
+			if (!IsHandleCreated) {
+				delayed_font_or_color_change = true;
+				return;
+			}
+
 			document.SuspendRecalc ();
 			// Font changes apply to the whole document
 			for (int i = 1; i <= document.Lines; i++) {
 				line = document.GetLine(i);
 				if (LineTag.FormatText(line, 1, line.text.Length, Font, ForeColor,
-						Color.Empty, FormatSpecified.Font | FormatSpecified.Color))
-					document.RecalculateDocument (CreateGraphicsInternal (), line.LineNo, line.LineNo, false);
+						Color.Empty, FormatSpecified.Font | FormatSpecified.Color)) {
+					using (var graphics = CreateGraphics())
+						document.RecalculateDocument (graphics, line.LineNo, line.LineNo, false);
+				}
 			}
 			document.ResumeRecalc (false);
 
@@ -2301,40 +2315,41 @@ namespace System.Windows.Forms
 			// If the caret moves to the left outside the visible area, we jump the document into view, not just one
 			// character, but 1/3 of the width of the document
 			// If the caret moves to the right outside the visible area, we scroll just enough to keep the caret visible
+			// For comparison, in Windows 8.1 / .Net 4:
+			//  Multiline: as above, but 1/4
+			//  Single line: either direction with the cursors jumps 1/4
+			// Both are irrespective of alignment.
 
 			// Handle horizontal scrolling
-			if (document.CaretLine.alignment == HorizontalAlignment.Left) {
-				// Check if we moved out of view to the left
-				if (pos.X < (document.ViewPortX)) {
-					do {
-						if ((hscroll.Value - document.ViewPortWidth / 3) >= hscroll.Minimum) {
-							hscroll.SafeValueSet (hscroll.Value - document.ViewPortWidth / 3);
-						} else {
-							hscroll.Value = hscroll.Minimum;
-						}
-					} while (hscroll.Value > pos.X);
-				}
-
-				// Check if we moved out of view to the right
-				if ((pos.X >= (document.ViewPortWidth + document.ViewPortX)) && (hscroll.Value != hscroll.Maximum)) {
-					if ((pos.X - document.ViewPortWidth + 1) <= hscroll.Maximum) {
-						if (pos.X - document.ViewPortWidth >= 0) {
-							hscroll.SafeValueSet (pos.X - document.ViewPortWidth + 1);
-						} else {
-							hscroll.Value = 0;
-						}
+			// Check if we moved out of view to the left
+			if (pos.X < (document.ViewPortX)) {
+				do {
+					var newVal = hscroll.Value - document.ViewPortWidth / 3 - 1;  // - 1 so that we're guaranteed to move, even if document.ViewPortWidth is < 3.
+					if (newVal >= hscroll.Minimum) {
+						hscroll.SafeValueSet (newVal);
 					} else {
-						hscroll.Value = hscroll.Maximum;
+						hscroll.Value = hscroll.Minimum;
 					}
-				}
-			} else if (document.CaretLine.alignment == HorizontalAlignment.Right) {
-//				hscroll.Value = pos.X;
+				} while (hscroll.Value > pos.X);
+			}
 
-//				if ((pos.X > (this.canvas_width + document.ViewPortX)) && (hscroll.Enabled && (hscroll.Value != hscroll.Maximum))) {
-//					hscroll.Value = hscroll.Maximum;
-//				}
-			} else {
-				// FIXME - implement center cursor alignment
+			// Check if we moved out of view to the right
+			if ((pos.X >= (document.ViewPortWidth + document.ViewPortX)) && (hscroll.Value != hscroll.Maximum)) {
+				int newVal;
+				if (Multiline) {
+					newVal = pos.X - document.ViewPortWidth + 1;
+				} else {
+					newVal = pos.X - document.ViewPortWidth * 2 / 3 + 1;
+				}
+				if (newVal <= hscroll.Maximum - document.ViewPortWidth + 1) {
+					if (newVal >= 0) {
+						hscroll.SafeValueSet (newVal);
+					} else {
+						hscroll.Value = 0;
+					}
+				} else {
+					hscroll.Value = hscroll.Maximum - document.ViewPortWidth + 1;
+				}
 			}
 
 			if (Text.Length > 0)
@@ -2344,7 +2359,10 @@ namespace System.Windows.Forms
 				return;
 
 			// Handle vertical scrolling
-			height = document.CaretLine.Height + 1;
+			height = document.CaretLine.Height;
+
+			if (document.CaretLine.line_no < document.Lines)
+				height += 1; // Add a bit of room on the bottom if there are more lines - but don't scroll past the bottom when ther aren't.
 
 			if (pos.Y < document.ViewPortY)
 				vscroll.SafeValueSet (pos.Y);

@@ -30,15 +30,14 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !FULL_AOT_RUNTIME || IOS_REFLECTION
 using System.Runtime.InteropServices;
 
 namespace System.Reflection.Emit {
 
 	[ComVisible (true)]
 	[Serializable]
-	public struct Label {
-		internal int label;
+	public readonly struct Label : IEquatable<Label> {
+		internal readonly int label;
 
 		internal Label (int val) {
 			label = val;
@@ -73,4 +72,3 @@ namespace System.Reflection.Emit {
 		}
 	}
 }
-#endif

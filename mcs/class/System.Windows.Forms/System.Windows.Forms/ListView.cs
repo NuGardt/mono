@@ -1721,14 +1721,22 @@ namespace System.Windows.Forms
 		void CalculateCustomColumnWidth ()
 		{
 			int min_width = Int32.MaxValue;
+			int col_index_of_min = -1;
 			for (int i = 0; i < columns.Count; i++) {
 				int col_width = columns [i].Width;
 
-				if (col_width < min_width)
+				if (col_width < min_width) {
 					min_width = col_width;
+					col_index_of_min = i;
+				}
 			}
 
-			custom_column_width = min_width;
+			if (min_width >= 0) // manual width
+				custom_column_width = min_width;
+			else if (col_index_of_min != -1) // automatic width, either -1 or -2
+				custom_column_width = GetChildColumnSize(col_index_of_min).Width;
+			else
+				custom_column_width = 0;
 		}
 
 		void LayoutIcons (Size item_size, bool left_aligned, int x_spacing, int y_spacing)
@@ -3369,6 +3377,9 @@ namespace System.Windows.Forms
 				if (!virtual_mode) // In virtual mode we don't save the items
 					foreach (ListViewItem item in items)
 						item.Owner = null;
+
+				if (item_tooltip != null)
+					item_tooltip.Dispose();
 			}
 			
 			base.Dispose (disposing);
@@ -3841,7 +3852,7 @@ namespace System.Windows.Forms
 		{
 			Size item_size = ItemSize;
 			for (int i = 0; i < items.Count; i++) {
-				Rectangle item_rect = items [i].Bounds;
+				Rectangle item_rect = new Rectangle(GetItemLocation(i), item_size);
 				if (item_rect.Contains (x, y))
 					return items [i];
 			}
@@ -3949,8 +3960,8 @@ namespace System.Windows.Forms
 		{
 			int count = this.Items.Count;
 
-			if (count == 0)
-				return string.Format ("System.Windows.Forms.ListView, Items.Count: 0");
+			if (count == 0 || VirtualMode)
+				return string.Format ("System.Windows.Forms.ListView, Items.Count: {0}", count);
 			else
 				return string.Format ("System.Windows.Forms.ListView, Items.Count: {0}, Items[0]: {1}", count, this.Items [0].ToString ());
 		}
@@ -5145,8 +5156,6 @@ namespace System.Windows.Forms
 
 			public virtual void Clear ()
 			{
-				if (owner != null && owner.VirtualMode)
-					throw new InvalidOperationException ();
 				if (is_main_collection && owner != null) {
 					owner.SetFocusedItem (-1);
 					owner.h_scroll.Value = owner.v_scroll.Value = 0;
@@ -5411,9 +5420,12 @@ namespace System.Windows.Forms
 				bool selection_changed = false;
 				if (is_main_collection && owner != null) {
 
-					int display_index = item.DisplayIndex;
-					if (item.Focused && display_index + 1 == Count) // Last item
-						owner.SetFocusedItem (display_index == 0 ? -1 : display_index - 1);
+					ListViewItem focused_item = owner.FocusedItem;
+					if (focused_item != null) {
+						int focused_item_index = focused_item.DisplayIndex;
+						if (focused_item_index + 1 >= Count) // Last item
+							owner.SetFocusedItem (Count - 2);
+					}
 
 					selection_changed = owner.SelectedIndices.Contains (index);
 					owner.item_control.CancelEdit (item);
@@ -5479,7 +5491,7 @@ namespace System.Windows.Forms
 
 					value.SetGroup (group);
 				}
-
+				value.DisplayIndex = -1;
 				list.Add (value);
 
 				// force an update of the selected info if the new item is selected.

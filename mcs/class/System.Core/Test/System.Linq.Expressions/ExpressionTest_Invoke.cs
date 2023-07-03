@@ -36,6 +36,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions {
 
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_Invoke {
 
 		static Expression CreateInvokable<T> ()
@@ -130,7 +131,6 @@ namespace MonoTests.System.Linq.Expressions {
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void InvokeWithExpressionLambdaAsArguments ()
 		{
 			var p = Expression.Parameter (typeof (string), "s");

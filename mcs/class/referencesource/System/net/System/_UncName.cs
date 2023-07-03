@@ -1,4 +1,4 @@
-#if !PLATFORM_UNIX
+#if !PLATFORM_UNIX || MONO
 //------------------------------------------------------------------------------
 // <copyright file="_UncName.cs" company="Microsoft">
 //     Copyright (c) Microsoft Corporation.  All rights reserved.
@@ -54,6 +54,7 @@ namespace System {
 
             if (start==end)
                 return false;
+
             //
             // First segment could consist of only '_' or '-' but it cannot be all digits or empty
             //

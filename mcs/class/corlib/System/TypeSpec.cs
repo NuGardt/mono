@@ -30,6 +30,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Threading;
 
 namespace System {
 	internal interface ModifierSpec {
@@ -69,6 +70,18 @@ namespace System {
 		public override string ToString ()
 		{
 			return Append (new Text.StringBuilder ()).ToString ();
+		}
+
+		public int Rank {
+			get {
+				return dimensions;
+			}
+		}
+
+		public bool IsBound {
+			get {
+				return bound;
+			}
 		}
 	}
 
@@ -129,7 +142,7 @@ namespace System {
 				if (nested != null)
 					return nested;
 				else
-					return EmptyArray<TypeName>.Value;
+					return Array.Empty<TypeName> ();
 			}
 		}
 
@@ -138,7 +151,7 @@ namespace System {
 				if (modifier_spec != null)
 					return modifier_spec;
 				else
-					return EmptyArray<ModifierSpec>.Value;
+					return Array.Empty<ModifierSpec> ();
 			}
 		}
 
@@ -283,11 +296,11 @@ namespace System {
 			return false;
 		}
 
-		internal Type Resolve (Func<AssemblyName,Assembly> assemblyResolver, Func<Assembly,string,bool,Type> typeResolver, bool throwOnError, bool ignoreCase)
+		internal Type Resolve (Func<AssemblyName,Assembly> assemblyResolver, Func<Assembly,string,bool,Type> typeResolver, bool throwOnError, bool ignoreCase, ref StackCrawlMark stackMark)
 		{
 			Assembly asm = null;
 			if (assemblyResolver == null && typeResolver == null)
-				return Type.GetType (DisplayFullName, throwOnError, ignoreCase);
+				return RuntimeType.GetType (DisplayFullName, throwOnError, ignoreCase, false, ref stackMark);
 
 			if (assembly_name != null) {
 				if (assemblyResolver != null)
@@ -328,7 +341,7 @@ namespace System {
 			if (generic_params != null) {
 				Type[] args = new Type [generic_params.Count];
 				for (int i = 0; i < args.Length; ++i) {
-					var tmp = generic_params [i].Resolve (assemblyResolver, typeResolver, throwOnError, ignoreCase);
+					var tmp = generic_params [i].Resolve (assemblyResolver, typeResolver, throwOnError, ignoreCase, ref stackMark);
 					if (tmp == null) {
 						if (throwOnError)
 							throw new TypeLoadException ("Could not resolve type '" + generic_params [i].name + "'");
@@ -443,7 +456,9 @@ namespace System {
 			}
 
 			if (name_start < pos)
-				data.AddName (name.Substring (name_start, pos - name_start));		
+				data.AddName (name.Substring (name_start, pos - name_start));
+			else if (name_start == pos)
+				data.AddName (String.Empty);
 
 			if (in_modifiers) {
 				for (; pos < name.Length; ++pos) {

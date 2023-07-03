@@ -28,6 +28,7 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Collections;
@@ -43,19 +44,100 @@ namespace MonoTests.System
 		static FieldInfo cachedDataField;
 		static object localFieldObj;
 
+		public static string MapTimeZoneId (string id)
+		{
+			if (Environment.OSVersion.Platform == PlatformID.Unix)
+				return id;
+			else {
+				switch (id) {
+				case "Pacific/Auckland":
+					return "New Zealand Standard Time";
+				case "Europe/Athens":
+					return "GTB Standard Time";
+				case "Europe/Chisinau":
+					return "E. Europe Standard Time";
+				case "America/New_York":
+					return "Eastern Standard Time";
+				case "America/Chicago":
+				case "US/Central":
+					return "Central Standard Time";
+				case "America/Los_Angeles":
+					return "Pacific Standard Time";
+				case "Australia/Sydney":
+				case "Australia/Melbourne":
+					return "AUS Eastern Standard Time";
+				case "Europe/Brussels":
+				case "Europe/Copenhagen":
+				case "Europe/Paris":
+				case "Europe/Madrid":
+					return "Romance Standard Time";
+				case "Africa/Kinshasa":
+					return "W. Central Africa Standard Time";
+				case "Europe/Rome":
+				case "Europe/Vatican":
+				case "Europe/Vienna":
+				case "Europe/Berlin":
+				case "Europe/Luxembourg":
+				case "Europe/Malta":
+				case "Europe/Monaco":
+				case "Europe/Amsterdam":
+				case "Europe/Oslo":
+				case "Europe/San_Marino":
+					return "W. Europe Standard Time";
+				case "America/Toronto":
+					return "Eastern Standard Time";
+				case "Asia/Tehran":
+					return "Iran Standard Time";
+				case "Europe/Guernsey":
+				case "Europe/Dublin":
+				case "Europe/Isle_of_Man":
+				case "Europe/Jersey":
+				case "Europe/Lisbon":
+				case "Europe/London":
+					return "GMT Standard Time";
+				case "America/Havana":
+					return "Cuba Standard Time";
+				case "America/Anchorage":
+					return "Alaskan Standard Time";
+				case "Atlantic/Azores":
+					return "Azores Standard Time";
+				case "Asia/Jerusalem":
+					return "Israel Standard Time";
+				case "Asia/Amman":
+					return "Jordan Standard Time";
+				case "Europe/Tirane":
+				case "Europe/Warsaw":
+					return "Central European Standard Time";
+				case "Europe/Sofia":
+				case "Europe/Tallinn":
+				case "Europe/Riga":
+				case "Europe/Vilnius":
+				case "Europe/Kiev":
+					return "FLE Standard Time";
+				case "Europe/Prague":
+				case "Europe/Budapest":
+				case "Europe/Bratislava":
+					return "Central Europe Standard Time";
+				default:
+					Assert.Fail ($"No mapping defined for zone id '{id}'");
+					return null;
+				}
+			}
+		}
+
 		public static void SetLocal (TimeZoneInfo val)
 		{
 			if (localField == null) {
-				if (Type.GetType ("Mono.Runtime") != null) {
+#if MOBILE
 					localField = typeof (TimeZoneInfo).GetField ("local",
 							BindingFlags.Static | BindingFlags.GetField | BindingFlags.NonPublic);
-				} else {
+#else
 					cachedDataField = typeof (TimeZoneInfo).GetField ("s_cachedData",
 							BindingFlags.Static | BindingFlags.GetField | BindingFlags.NonPublic);
 
-					localField = cachedDataField.FieldType.GetField ("m_localTimeZone",
+					localField = cachedDataField.FieldType.GetField ("_localTimeZone",
 						BindingFlags.Instance | BindingFlags.GetField | BindingFlags.NonPublic);
-				}
+#endif
 			}
 
 			if (cachedDataField != null)
@@ -70,8 +152,6 @@ namespace MonoTests.System
 			[Test]
 			public void GetLocal ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
 				TimeZoneInfo local = TimeZoneInfo.Local;
 				Assert.IsNotNull (local);
 				Assert.IsTrue (true);
@@ -83,6 +163,7 @@ namespace MonoTests.System
 			[Test] // Covers #24958
 			public void LocalId ()
 			{
+#if !MONOTOUCH && !XAMMAC
 				byte[] buf = new byte [512];
 
 				var path = "/etc/localtime";
@@ -93,10 +174,9 @@ namespace MonoTests.System
 				} catch (DllNotFoundException e) {
 					return;
 				}
-#if !MONOTOUCH && !XAMMAC
-				// this assumption is incorrect for iOS, tvO, watchOS and OSX
-				Assert.IsTrue (TimeZoneInfo.Local.Id != "Local", "Local timezone id should not be \"Local\"");
 #endif
+				
+				Assert.IsTrue (TimeZoneInfo.Local.Id != "Local", "Local timezone id should not be \"Local\"");
 			}
 		}
 
@@ -239,6 +319,7 @@ namespace MonoTests.System
 		}
 		
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class IsDaylightSavingTimeTests
 		{
 			TimeZoneInfo london;
@@ -262,8 +343,6 @@ namespace MonoTests.System
 			[Test]
 			public void DSTInLondon ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
 				DateTime june01 = new DateTime (2007, 06, 01);
 				DateTime xmas = new DateTime (2007, 12, 25);
 				Assert.IsTrue (london.IsDaylightSavingTime (june01), "June 01 is DST in London");
@@ -271,10 +350,9 @@ namespace MonoTests.System
 			}
 		
 			[Test]
-			public void DSTTransisions ()
+			[Category ("MobileNotWorking")]
+			public void DSTTransitions ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
 				DateTime beforeDST = new DateTime (2007, 03, 25, 0, 59, 59, DateTimeKind.Unspecified);
 				DateTime startDST = new DateTime (2007, 03, 25, 2, 0, 0, DateTimeKind.Unspecified);
 				DateTime endDST = new DateTime (2007, 10, 28, 1, 59, 59, DateTimeKind.Unspecified);
@@ -286,7 +364,7 @@ namespace MonoTests.System
 			}
 		
 			[Test]
-			public void DSTTransisionsUTC ()
+			public void DSTTransitionsUTC ()
 			{
 				DateTime beforeDST = new DateTime (2007, 03, 25, 0, 59, 59, DateTimeKind.Utc);
 				DateTime startDST = new DateTime (2007, 03, 25, 1, 0, 0, DateTimeKind.Utc);
@@ -315,12 +393,7 @@ namespace MonoTests.System
 			[Test (Description="Description xambug #17155")]
 			public void AdjustmentRuleAfterNewYears ()
 			{
-				TimeZoneInfo tz;
-				if (Environment.OSVersion.Platform == PlatformID.Unix)
-					tz = TimeZoneInfo.FindSystemTimeZoneById ("Pacific/Auckland"); // *nix
-				else
-					tz = TimeZoneInfo.FindSystemTimeZoneById ("New Zealand Standard Time"); // Windows
-
+				TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Pacific/Auckland"));
 				// DST start: 9/29/2013 2:00:00 AM
 				// DST end: 4/6/2014 3:00:00 AM
 				DateTime dt = new DateTime (2014, 1, 9, 23, 0, 0, DateTimeKind.Utc);
@@ -354,14 +427,332 @@ namespace MonoTests.System
 			[Test] //Covers #25050
 			public void TestAthensDST ()
 			{
-				TimeZoneInfo tzi = TimeZoneInfo.FindSystemTimeZoneById ("Europe/Athens");
+				TimeZoneInfo tzi = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Athens"));
 				var date = new DateTime (2014, 3, 30 , 2, 0, 0);
 				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
 				Assert.AreEqual (new TimeSpan (2,0,0), tzi.GetUtcOffset (date));
 			}
+
+			[Test]
+			public void TestAthensDST_InDSTDelta ()
+			{
+				// In .NET/.Net Core GetUtcOffset() returns the BaseUtcOffset for times within the hour
+				// lost when DST starts and IsDaylightSavingTime() returns false for datetime and true for datetimeoffset
+
+				TimeZoneInfo tzi = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Athens"));
+
+				var date = new DateTime (2014, 3, 30 , 2, 0, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (2, 0, 0), tzi.GetUtcOffset (date));
+				Assert.IsFalse (tzi.IsDaylightSavingTime (new DateTimeOffset (date, tzi.GetUtcOffset (date))));
+
+				date = new DateTime (2014, 3, 30 , 3, 0, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (2, 0, 0), tzi.GetUtcOffset (date));
+				Assert.IsTrue (tzi.IsDaylightSavingTime (new DateTimeOffset (date, tzi.GetUtcOffset (date))));
+
+				date = new DateTime (2014, 3, 30 , 3, 1, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (2, 0, 0), tzi.GetUtcOffset (date));
+				Assert.IsTrue (tzi.IsDaylightSavingTime (new DateTimeOffset (date, tzi.GetUtcOffset (date))));
+
+				date = new DateTime (2014, 3, 30 , 3, 59, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (2, 0, 0), tzi.GetUtcOffset (date));
+				Assert.IsTrue (tzi.IsDaylightSavingTime (new DateTimeOffset (date, tzi.GetUtcOffset (date))));
+
+				date = new DateTime (2014, 3, 30 , 4, 0, 0);
+				Assert.IsTrue (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (3, 0, 0), tzi.GetUtcOffset (date));
+				Assert.IsTrue (tzi.IsDaylightSavingTime (new DateTimeOffset (date, tzi.GetUtcOffset (date))));
+			}
+
+			[Test] //Covers #41349
+			public void TestIsDST_DateTimeOffset ()
+			{
+				TimeZoneInfo tzi = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Athens"));
+				var date = new DateTime (2014, 3, 30 , 2, 0, 0);
+				var offset = tzi.GetUtcOffset (date);
+				var dateOffset = new DateTimeOffset (date, offset);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (dateOffset));
+
+				date = new DateTime (2014, 3, 30 , 3, 0, 0);
+				offset = tzi.GetUtcOffset (date);
+				dateOffset = new DateTimeOffset (date, offset);
+				Assert.IsTrue (tzi.IsDaylightSavingTime (dateOffset));
+			}
+
+			// https://github.com/mono/mono/issues/16742
+			[Test]
+			public void Bug_16472 ()
+			{
+				var parsedTime = DateTime.Parse ("1948-02-19T23:00:00Z", CultureInfo.InvariantCulture);
+				var newTime = TimeZoneInfo.ConvertTime (parsedTime, TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Rome")));
+				Assert.AreEqual (1948, newTime.Year);
+			}
+
+			// https://github.com/mono/mono/issues/9664
+			[Test]
+			public void Bug_9664 ()
+			{
+				TimeZoneInfo tzi;
+				try {
+					tzi = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("US/Central"));
+				} catch (TimeZoneNotFoundException e) {
+					Assert.Ignore ("Timezone US/Central not found.");
+					return;
+				}
+				var date = new DateTime (2019, 3, 9, 21, 0, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (-6, 0, 0), tzi.GetUtcOffset (date));
+
+				date = new DateTime (2019, 3, 10, 2, 0, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (-6, 0, 0), tzi.GetUtcOffset (date));
+
+				date = new DateTime (2019, 3, 10, 2, 30, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (-6, 0, 0), tzi.GetUtcOffset (date));
+
+				date = new DateTime (2019, 3, 10, 3, 0, 0);
+				Assert.IsTrue (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (-5, 0, 0), tzi.GetUtcOffset (date));
+
+#if !WINAOT // https://github.com/mono/mono/issues/15439
+				tzi = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Vatican"));
+				date = new DateTime (2018, 10, 28, 2, 15, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (1, 0, 0), tzi.GetUtcOffset (date));
+
+				tzi = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Asia/Tehran"));
+				date = new DateTime (2018, 9, 21, 23, 15, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (3, 30, 0), tzi.GetUtcOffset (date));
+
+				// for Greenwitch Mean Time (Guernsey)
+				tzi = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Guernsey"));
+				date = new DateTime (2019, 10, 27, 1, 15, 0);
+				Assert.IsFalse (tzi.IsDaylightSavingTime (date));
+				Assert.AreEqual (new TimeSpan (0, 0, 0), tzi.GetUtcOffset (date));
+#endif
+			}
+
+			[Test]
+			public void Bug_16395 ()
+			{
+				// Cuba, Havana (Cuba Standard Time):    Jumps ahead at 12:00 AM on 3/8/2020 to 1:00 AM
+				CheckJumpingIntoDST ("America/Havana",
+									new DateTime (2020, 3, 8, 0, 0, 0), new DateTime (2020, 3, 8, 0, 30, 0), new DateTime (2020, 3, 8, 1, 0, 0), 
+									new TimeSpan (-5, 0, 0), new TimeSpan (-4, 0, 0));
+
+				// US, Kansas City, MO (US Central Time):    Jumps ahead at 2:00 AM on 3/8/2020 to 3:00 AM
+				CheckJumpingIntoDST ("America/Chicago",
+									new DateTime (2020, 3, 8, 2, 0, 0), new DateTime (2020, 3, 8, 2, 30, 0), new DateTime (2020, 3, 8, 3, 0, 0),
+									new TimeSpan (-6, 0, 0), new TimeSpan (-5, 0, 0));
+
+				// Anchorage, AK (Alaska Time):    Jumps ahead at 2:00 AM on 3/8/2020 to 3:00 AM
+				CheckJumpingIntoDST ("America/Anchorage",
+									new DateTime (2020, 3, 8, 2, 0, 0), new DateTime (2020, 3, 8, 2, 30, 0), new DateTime (2020, 3, 8, 3, 0, 0),
+									new TimeSpan (-9, 0, 0), new TimeSpan (-8, 0, 0));
+
+				// Azores ST (Ponta Delgada, Portugal):    Jumps ahead at 12:00 AM on 3/29/2020 to 1:00 AM
+				CheckJumpingIntoDST ("Atlantic/Azores",
+									new DateTime (2020, 3, 29, 0, 0, 0), new DateTime (2020, 3, 29, 0, 30, 0), new DateTime (2020, 3, 29, 1, 0, 0),
+									new TimeSpan (-1, 0, 0), new TimeSpan (0, 0, 0));
+									
+				// Iran, Tehran (Iran ST):    Jumps ahead at 12:00 AM on 3/21/2020 to 1:00 AM
+				CheckJumpingIntoDST ("Asia/Tehran",
+									new DateTime (2020, 3, 21, 0, 0, 0), new DateTime (2020, 3, 21, 0, 30, 0), new DateTime (2020, 3, 21, 1, 0, 0),
+									new TimeSpan (3, 30, 0), new TimeSpan (4, 30, 0));
+									
+				// Israel, Jerusalem (Israel ST):    Jumps ahead at 2:00 AM on 3/27/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Asia/Jerusalem",
+									new DateTime (2020, 3, 27, 2, 0, 0), new DateTime (2020, 3, 27, 2, 30, 0), new DateTime (2020, 3, 27, 3, 0, 0),
+									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// Jordan, Amman (Eastern European ST):    Jumps ahead at 12:00 AM on 3/27/2020 to 1:00 AM
+// TODO: this fails as of 2022-12-20, maybe there was a tzdb change?
+//				CheckJumpingIntoDST ("Asia/Amman",
+//									new DateTime (2020, 3, 27, 0, 0, 0), new DateTime (2020, 3, 27, 0, 30, 0), new DateTime (2020, 3, 27, 1, 0, 0),
+//									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// Albania, Tirana (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Tirane",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Austria, Vienna (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Vienna",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Belgium, Brussels (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Brussels",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Bulgaria, Sofia (Eastern European ST):    Jumps ahead at 3:00 AM on 3/29/2020 to 4:00 AM
+				CheckJumpingIntoDST ("Europe/Sofia",
+									new DateTime (2020, 3, 29, 3, 0, 0), new DateTime (2020, 3, 29, 3, 30, 0), new DateTime (2020, 3, 29, 4, 0, 0),
+									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// Czechia, Prague (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Prague",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Denmark, Copenhagen (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Copenhagen",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Estonia, Tallinn (Eastern European ST):    Jumps ahead at 3:00 AM on 3/29/2020 to 4:00 AM
+				CheckJumpingIntoDST ("Europe/Tallinn",
+									new DateTime (2020, 3, 29, 3, 0, 0), new DateTime (2020, 3, 29, 3, 30, 0), new DateTime (2020, 3, 29, 4, 0, 0),
+									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// France, Paris (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Paris",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Germany, Berlin (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Berlin",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Greece, Athens (Eastern European ST):    Jumps ahead at 3:00 AM on 3/29/2020 to 4:00 AM
+				CheckJumpingIntoDST ("Europe/Athens",
+									new DateTime (2020, 3, 29, 3, 0, 0), new DateTime (2020, 3, 29, 3, 30, 0), new DateTime (2020, 3, 29, 4, 0, 0),
+									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// Guernsey (UK)    Jumps ahead at 1:00 AM on 3/29/2020 to 2:00 AM
+				CheckJumpingIntoDST ("Europe/Guernsey",
+									new DateTime (2020, 3, 29, 1, 0, 0), new DateTime (2020, 3, 29, 1, 30, 0), new DateTime (2020, 3, 29, 2, 0, 0),
+									new TimeSpan (0, 0, 0), new TimeSpan (1, 0, 0));
+
+				// Holy See, Vatican City (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Vatican",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Hungary, Budapest (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Budapest",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// // Ireland, Dublin (Greenwich Mean Time -> Irish Standard Time):    Jumps ahead at 1:00 AM on 3/29/2020 to 2:00 AM
+				// CheckJumpingIntoDST ("Europe/Dublin",
+				// 					new DateTime (2020, 3, 29, 1, 0, 0), new DateTime (2020, 3, 29, 1, 30, 0), new DateTime (2020, 3, 29, 2, 0, 0),
+				// 					new TimeSpan (0, 0, 0), new TimeSpan (1, 0, 0));
+
+				// UK, Douglas, Isle of Man (GMT+1:00):    Jumps ahead at 1:00 AM on 3/29/2020 to 2:00 AM
+				CheckJumpingIntoDST ("Europe/Isle_of_Man",
+									new DateTime (2020, 3, 29, 1, 0, 0), new DateTime (2020, 3, 29, 1, 30, 0), new DateTime (2020, 3, 29, 2, 0, 0),
+									new TimeSpan (0, 0, 0), new TimeSpan (1, 0, 0));
+
+				// Italy, Rome (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Rome",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Jersey (UK):   Jumps ahead at 1:00 AM on 3/29/2020 to 2:00 AM
+				CheckJumpingIntoDST ("Europe/Jersey",
+									new DateTime (2020, 3, 29, 1, 0, 0), new DateTime (2020, 3, 29, 1, 30, 0), new DateTime (2020, 3, 29, 2, 0, 0),
+									new TimeSpan (0, 0, 0), new TimeSpan (1, 0, 0));
+
+				// Latvia, Riga (Eastern European ST):    Jumps ahead at 3:00 AM on 3/29/2020 to 4:00 AM
+				CheckJumpingIntoDST ("Europe/Riga",
+									new DateTime (2020, 3, 29, 3, 0, 0), new DateTime (2020, 3, 29, 3, 30, 0), new DateTime (2020, 3, 29, 4, 0, 0),
+									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// Lithuania, Vilnius (Eastern European ST):    Jumps ahead at 3:00 AM on 3/29/2020 to 4:00 AM
+				CheckJumpingIntoDST ("Europe/Vilnius",
+									new DateTime (2020, 3, 29, 3, 0, 0), new DateTime (2020, 3, 29, 3, 30, 0), new DateTime (2020, 3, 29, 4, 0, 0),
+									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// Luxembourg, Luxembourg (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Luxembourg",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Malta, Valletta (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Malta",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Moldova, Chişinău (Eastern European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Chisinau",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// Monaco, Monaco (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Monaco",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Netherlands, Amsterdam (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Amsterdam",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Norway, Oslo (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Oslo",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Poland, Warsaw (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Warsaw",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Portugal, Lisbon (Western European ST):    Jumps ahead at 1:00 AM on 3/29/2020 to 2:00 AM
+				CheckJumpingIntoDST ("Europe/Lisbon",
+									new DateTime (2020, 3, 29, 1, 0, 0), new DateTime (2020, 3, 29, 1, 30, 0), new DateTime (2020, 3, 29, 2, 0, 0),
+									new TimeSpan (0, 0, 0), new TimeSpan (1, 0, 0));
+
+				// San Marino, San Marino (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/San_Marino",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Slovakia, Bratislava (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Bratislava",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Spain, Madrid (Central European ST):    Jumps ahead at 2:00 AM on 3/29/2020 to 3:00 AM
+				CheckJumpingIntoDST ("Europe/Madrid",
+									new DateTime (2020, 3, 29, 2, 0, 0), new DateTime (2020, 3, 29, 2, 30, 0), new DateTime (2020, 3, 29, 3, 0, 0),
+									new TimeSpan (1, 0, 0), new TimeSpan (2, 0, 0));
+
+				// Ukraine, Kiev (Eastern European ST):    Jumps ahead at 3:00 AM on 3/29/2020 to 4:00 AM
+				CheckJumpingIntoDST ("Europe/Kiev",
+									new DateTime (2020, 3, 29, 3, 0, 0), new DateTime (2020, 3, 29, 3, 30, 0), new DateTime (2020, 3, 29, 4, 0, 0),
+									new TimeSpan (2, 0, 0), new TimeSpan (3, 0, 0));
+
+				// United Kingdom, London (British ST):    Jumps ahead at 1:00 AM on 3/29/2020 to 2:00 AM
+				CheckJumpingIntoDST ("Europe/London",
+									new DateTime (2020, 3, 29, 1, 0, 0), new DateTime (2020, 3, 29, 1, 30, 0), new DateTime (2020, 3, 29, 2, 0, 0),
+									new TimeSpan (0, 0, 0), new TimeSpan (1, 0, 0));
+			}
+
+			void CheckJumpingIntoDST (string tzId, DateTime dstDeltaStart, DateTime inDstDelta, DateTime dstDeltaEnd, TimeSpan baseOffset, TimeSpan dstOffset)
+			{
+				var tzi = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId (tzId));
+				Assert.IsFalse (tzi.IsDaylightSavingTime (dstDeltaStart), $"{tzId}: #1");
+				Assert.AreEqual (baseOffset, tzi.GetUtcOffset (dstDeltaStart), $"{tzId}: #2");
+
+				Assert.IsFalse (tzi.IsDaylightSavingTime (inDstDelta), $"{tzId}: #3");
+				Assert.AreEqual (baseOffset, tzi.GetUtcOffset (inDstDelta), $"{tzId}: #4");
+
+				Assert.IsTrue (tzi.IsDaylightSavingTime (dstDeltaEnd), $"{tzId}: #5");
+				Assert.AreEqual (dstOffset, tzi.GetUtcOffset (dstDeltaEnd), $"{tzId}: #6");
+			}
 		}
-		
+
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class ConvertTimeTests_LocalUtc : ConvertTimeTests
 		{
 			static TimeZoneInfo oldLocal;
@@ -372,7 +763,7 @@ namespace MonoTests.System
 				base.CreateTimeZones ();
 
 				oldLocal = TimeZoneInfo.Local;
-				TimeZoneInfoTest.SetLocal (TimeZoneInfo.Utc);
+				TimeZoneInfoTest.SetLocal (TimeZoneInfo.GetSystemTimeZones().First(t => t.BaseUtcOffset == TimeSpan.Zero));
 			}
 
 			[TearDown]
@@ -383,6 +774,7 @@ namespace MonoTests.System
 		}
 
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class ConvertTimeTests
 		{
 			TimeZoneInfo london;
@@ -400,8 +792,6 @@ namespace MonoTests.System
 			[ExpectedException (typeof (ArgumentException))]
 			public void ConvertFromUtc_KindIsLocalException ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					throw new ArgumentException ();
 				TimeZoneInfo.ConvertTimeFromUtc (new DateTime (2007, 5, 3, 11, 8, 0, DateTimeKind.Local), TimeZoneInfo.Local);	
 			}
 		
@@ -423,8 +813,6 @@ namespace MonoTests.System
 			[Test]
 			public void ConvertFromUTC_ConvertInWinter ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
 				DateTime utc = new DateTime (2007, 12, 25, 12, 0, 0);
 				DateTime converted = TimeZoneInfo.ConvertTimeFromUtc (utc, london);
 				Assert.AreEqual (utc, converted);
@@ -433,8 +821,6 @@ namespace MonoTests.System
 			[Test]
 			public void ConvertFromUtc_ConvertInSummer ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
 				DateTime utc = new DateTime (2007, 06, 01, 12, 0, 0);
 				DateTime converted = TimeZoneInfo.ConvertTimeFromUtc (utc, london);
 				Assert.AreEqual (utc + new TimeSpan (1,0,0), converted);
@@ -460,8 +846,6 @@ namespace MonoTests.System
 			[ExpectedException (typeof (ArgumentException))]
 			public void ConvertToUTC_KindIsLocalButSourceIsNot ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					throw new ArgumentException ();
 				TimeZoneInfo.ConvertTimeToUtc (new DateTime (2007, 5, 3, 12, 8, 0, DateTimeKind.Local), london);	
 			}
 		
@@ -492,8 +876,6 @@ namespace MonoTests.System
 			[Test]
 			public void ConvertFromToUtc ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
 				DateTime utc = DateTime.UtcNow;
 				Assert.AreEqual (utc.Kind, DateTimeKind.Utc);
 				DateTime converted = TimeZoneInfo.ConvertTimeFromUtc (utc, london);
@@ -542,10 +924,7 @@ namespace MonoTests.System
 			[Test]
 			public void ConvertToTimeZone ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-
-				TimeZoneInfo.ConvertTime (DateTime.Now, TimeZoneInfo.FindSystemTimeZoneById("Pacific/Auckland"));
+				TimeZoneInfo.ConvertTime (DateTime.Now, TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Pacific/Auckland")));
 			}
 
 			[Test]
@@ -556,6 +935,7 @@ namespace MonoTests.System
 			}
 
 			[Test]
+			[Category ("MobileNotWorking")]
 			public void ConvertTime_DateTime_TimeZoneInfo_DateTimeKindMatch ()
 			{
 				var sdt = new DateTime (2014, 1, 9, 23, 0, 0, DateTimeKind.Utc);
@@ -570,7 +950,7 @@ namespace MonoTests.System
 
 				sdt = new DateTime (2014, 1, 9, 23, 0, 0);
 				ddt = TimeZoneInfo.ConvertTime (sdt, TimeZoneInfo.Local);
-				var expectedKind = (TimeZoneInfo.Local == TimeZoneInfo.Utc)? DateTimeKind.Utc : sdt.Kind;
+				var expectedKind = (TimeZoneInfo.Local == TimeZoneInfo.Utc)? DateTimeKind.Utc : DateTimeKind.Local;
 				Assert.AreEqual (expectedKind,  ddt.Kind, "#3.1");
 				Assert.AreEqual (DateTimeKind.Unspecified, sdt.Kind, "#3.2");
 			}
@@ -592,11 +972,7 @@ namespace MonoTests.System
 			[Test (Description="Fix for xambug https://bugzilla.xamarin.com/show_bug.cgi?id=17155")]
 			public void ConvertTime_AdjustmentRuleAfterNewYears ()
 			{
-				TimeZoneInfo tz;
-				if (Environment.OSVersion.Platform == PlatformID.Unix)
-					tz = TimeZoneInfo.FindSystemTimeZoneById ("Pacific/Auckland"); // *nix
-				else
-					tz = TimeZoneInfo.FindSystemTimeZoneById ("New Zealand Standard Time"); // Windows
+				TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Pacific/Auckland"));
 
 				// DST start: 9/29/2013 2:00:00 AM
 				// DST end: 4/6/2014 3:00:00 AM
@@ -635,19 +1011,8 @@ namespace MonoTests.System
 			[Test (Description="Fix the bug https://bugzilla.xamarin.com/show_bug.cgi?id=1849")]
 			public void ConvertTime_AjustmentConvertTimeWithSourceTimeZone () {
 				
-				TimeZoneInfo easternTimeZone;
-				TimeZoneInfo pacificTimeZone;
-
-				if (Environment.OSVersion.Platform == PlatformID.Unix) {
-					// *nix
-					easternTimeZone = TimeZoneInfo.FindSystemTimeZoneById ("US/Eastern");
-					pacificTimeZone = TimeZoneInfo.FindSystemTimeZoneById ("US/Pacific");	
-				}
-				else {
-					// Windows
-					easternTimeZone = TimeZoneInfo.FindSystemTimeZoneById ("Eastern Standard Time");
-					pacificTimeZone = TimeZoneInfo.FindSystemTimeZoneById ("Pacific Standard Time");
-				}
+				TimeZoneInfo easternTimeZone = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("America/New_York"));
+				TimeZoneInfo pacificTimeZone = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("America/Los_Angeles"));
 
 				DateTime lastMidnight = new DateTime (new DateTime (2012, 06, 13).Ticks, DateTimeKind.Unspecified);
 				DateTime lastMidnightAsEST = TimeZoneInfo.ConvertTime (lastMidnight, pacificTimeZone, easternTimeZone);
@@ -659,9 +1024,18 @@ namespace MonoTests.System
 				Assert.AreEqual (expectedDate, lastMidnightAsEST);
 				Assert.AreEqual (lastMidnight, lastMidnightAsPST);
 			}
+
+			[Test]
+			public void ConvertTimeBySystemTimeZoneId_UtcId ()
+			{
+				DateTime localTime = TimeZoneInfo.ConvertTime (DateTime.UtcNow, TimeZoneInfo.Utc, TimeZoneInfo.Local);
+
+				TimeZoneInfo.ConvertTimeBySystemTimeZoneId (DateTime.UtcNow, TimeZoneInfo.Utc.Id, TimeZoneInfo.Local.Id);
+			}
 		}
 		
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class IsInvalidTimeTests
 		{
 			TimeZoneInfo london;
@@ -696,6 +1070,7 @@ namespace MonoTests.System
 		}
 		
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class IsAmbiguousTimeTests
 		{
 			TimeZoneInfo london;
@@ -710,25 +1085,23 @@ namespace MonoTests.System
 			}
 		
 			[Test]
+			[Category ("MobileNotWorking")]
 			public void AmbiguousDates ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				Assert.IsFalse (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 1, 0, 0)));
+				Assert.IsTrue (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 1, 0, 0)));
 				Assert.IsTrue (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 1, 0, 1)));
-				Assert.IsTrue (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 2, 0, 0)));
+				Assert.IsFalse (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 2, 0, 0)));
 				Assert.IsFalse (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 2, 0, 1)));
 			}
 		
 			[Test]
+			[Category ("MobileNotWorking")]
 			public void AmbiguousUTCDates ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				Assert.IsFalse (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 0, 0, 0, DateTimeKind.Utc)));
+				Assert.IsTrue (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 0, 0, 0, DateTimeKind.Utc)));
 				Assert.IsTrue (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 0, 0, 1, DateTimeKind.Utc)));
 				Assert.IsTrue (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 0, 59, 59, DateTimeKind.Utc)));
-				Assert.IsFalse (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 1, 0, 0, DateTimeKind.Utc)));
+				Assert.IsTrue (london.IsAmbiguousTime (new DateTime (2007, 10, 28, 1, 0, 0, DateTimeKind.Utc)));
 			}
 		
 		#if SLOW_TESTS
@@ -743,6 +1116,7 @@ namespace MonoTests.System
 		}
 		
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class GetSystemTimeZonesTests
 		{
 			[Test]
@@ -754,8 +1128,6 @@ namespace MonoTests.System
 			[Test]
 			public void NotEmpty ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
 				global::System.Collections.ObjectModel.ReadOnlyCollection<TimeZoneInfo> systemTZ = TimeZoneInfo.GetSystemTimeZones ();
 				Assert.IsNotNull(systemTZ, "SystemTZ is null");
 				Assert.IsFalse (systemTZ.Count == 0, "SystemTZ is empty");
@@ -764,11 +1136,9 @@ namespace MonoTests.System
 			[Test]
 			public void ContainsBrussels ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
 				global::System.Collections.ObjectModel.ReadOnlyCollection<TimeZoneInfo> systemTZ = TimeZoneInfo.GetSystemTimeZones ();
 				foreach (TimeZoneInfo tz in systemTZ) {
-					if (tz.Id == "Europe/Brussels")
+					if (tz.Id == MapTimeZoneId ("Europe/Brussels"))
 						return;
 				}
 				Assert.Fail ("Europe/Brussels not found in SystemTZ");
@@ -787,15 +1157,19 @@ namespace MonoTests.System
 			[Test]
 			public void WindowsRegistryTimezoneWithParentheses ()
 			{
-				var method = (MethodInfo) typeof (TimeZoneInfo).GetMember ("TrimSpecial", MemberTypes.Method, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)[0];
+				var memberInfos = typeof (TimeZoneInfo).GetMember ("TrimSpecial", MemberTypes.Method, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
 
-				var name = method.Invoke (null, new object [] { " <--->  Central Standard Time (Mexico)   ||<<>>" });
+				if (memberInfos.Length == 0)
+					Assert.Ignore ("TrimSpecial method not found");
+
+				var name = ((MethodInfo)memberInfos[0]).Invoke (null, new object [] { " <--->  Central Standard Time (Mexico)   ||<<>>" });
 				Assert.AreEqual (name, "Central Standard Time (Mexico)", "#1");
 			}
 #endif
 		}
 		
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class FindSystemTimeZoneByIdTests
 		{
 			[Test]
@@ -809,72 +1183,58 @@ namespace MonoTests.System
 			[ExpectedException (typeof (TimeZoneNotFoundException))]
 			public void NonSystemTimezone ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					throw new TimeZoneNotFoundException ();
 				TimeZoneInfo.FindSystemTimeZoneById ("Neverland/The_Lagoon");
 			}
 		
 			[Test]
 			public void FindBrusselsTZ ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById ("Europe/Brussels");
+				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Brussels"));
 				Assert.IsNotNull (brussels);
 			}
 		
 			[Test]
 			public void OffsetIsCorrectInKinshasa ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				TimeZoneInfo kin = TimeZoneInfo.FindSystemTimeZoneById ("Africa/Kinshasa");
+				TimeZoneInfo kin = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Africa/Kinshasa"));
 				Assert.AreEqual (new TimeSpan (1,0,0), kin.BaseUtcOffset, "BaseUtcOffset in Kinshasa is not +1h");
 			}
 		
 			[Test]
 			public void OffsetIsCorrectInBrussels ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById ("Europe/Brussels");
+				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Brussels"));
 				Assert.AreEqual (new TimeSpan (1,0,0), brussels.BaseUtcOffset, "BaseUtcOffset for Brussels is not +1h");
 			}
 		
 			[Test]
-			public void NoDSTInKinshasa ()
+			[Category ("MobileNotWorking")]
+			[Category ("NotOnWindows")]
+			public void DSTInKinshasa ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				TimeZoneInfo kin = TimeZoneInfo.FindSystemTimeZoneById ("Africa/Kinshasa");
-				Assert.IsFalse (kin.SupportsDaylightSavingTime);
+				TimeZoneInfo kin = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Africa/Kinshasa"));
+				Assert.IsTrue (kin.SupportsDaylightSavingTime);
 			}
 		
 			[Test]
 			public void BrusselsSupportsDST ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById ("Europe/Brussels");
+				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Brussels"));
 				Assert.IsTrue (brussels.SupportsDaylightSavingTime);
 			}
 		
 			[Test]
 			public void MelbourneSupportsDST ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				TimeZoneInfo melbourne = TimeZoneInfo.FindSystemTimeZoneById ("Australia/Melbourne");
+				TimeZoneInfo melbourne = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Australia/Melbourne"));
 				Assert.IsTrue (melbourne.SupportsDaylightSavingTime);
 			}
 		
 			[Test]
 			public void RomeAndVaticanSharesTime ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				TimeZoneInfo rome = TimeZoneInfo.FindSystemTimeZoneById ("Europe/Rome");
-				TimeZoneInfo vatican = TimeZoneInfo.FindSystemTimeZoneById ("Europe/Vatican");
+				TimeZoneInfo rome = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Rome"));
+				TimeZoneInfo vatican = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Vatican"));
 				Assert.IsTrue (rome.HasSameRules (vatican));
 			}
 
@@ -911,6 +1271,15 @@ namespace MonoTests.System
 		#endif
 
 			[Test]
+			public void FindIsraelStandardTime ()
+			{
+				if (Environment.OSVersion.Platform != PlatformID.Win32NT)
+					Assert.Ignore ("Only applies to Windows.");
+
+				TimeZoneInfo.FindSystemTimeZoneById ("Israel Standard Time");
+			}
+
+			[Test]
 			public void SubminuteDSTOffsets ()
 			{
 				if (Environment.OSVersion.Platform != PlatformID.Unix)
@@ -920,33 +1289,31 @@ namespace MonoTests.System
 					"Europe/Dublin", // Europe/Dublin has a DST offset of 34 minutes and 39 seconds in 1916.
 					"Europe/Amsterdam",
 					"America/St_Johns",
-					"Canada/Newfoundland",
 					"Europe/Moscow",
 					"Europe/Riga",
-					"N/A", // testing that the test doesn't fail with inexistent TZs
 				};
 				foreach (var tz in subMinuteDSTs) {
-					try {
-						TimeZoneInfo.FindSystemTimeZoneById (tz);
-					} catch (TimeZoneNotFoundException) {
-						// ok;
-					} catch (Exception ex) {
-						Assert.Fail (string.Format ("Failed to load TZ {0}: {1}", tz, ex.ToString ()));
-					}
+					TimeZoneInfo.FindSystemTimeZoneById (tz);
 				}
+			}
+
+			[Test]
+			[ExpectedException (typeof (TimeZoneNotFoundException))]
+			public void InvalidName ()
+			{
+				TimeZoneInfo.FindSystemTimeZoneById ("N/A");
 			}
 		}
 		
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class GetAmbiguousTimeOffsetsTests
 		{
 			[Test]
 			[ExpectedException (typeof(ArgumentException))]
 			public void DateIsNotAmbiguous ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					throw new ArgumentException ();
-				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById ("Europe/Brussels");
+				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Brussels"));
 				DateTime date = new DateTime (2007, 05, 11, 11, 40, 00);
 				brussels.GetAmbiguousTimeOffsets (date);
 			}
@@ -954,9 +1321,7 @@ namespace MonoTests.System
 			[Test]
 			public void AmbiguousOffsets ()
 			{
-				if (Environment.OSVersion.Platform != PlatformID.Unix)
-					Assert.Ignore ("Not running on Unix.");
-				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById ("Europe/Brussels");
+				TimeZoneInfo brussels = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Brussels"));
 				DateTime date = new DateTime (2007, 10, 28, 2, 30, 00);
 				Assert.IsTrue (brussels.IsAmbiguousTime (date));
 				Assert.AreEqual (2, brussels.GetAmbiguousTimeOffsets (date).Length);
@@ -1110,6 +1475,7 @@ namespace MonoTests.System
 			}
 
 			[Test]
+			[Category ("MobileNotWorking")]
 			public void GetUtcOffset_FromUnspecified ()
 			{
 				var d = dst1Start.Add (dstOffset);
@@ -1119,8 +1485,7 @@ namespace MonoTests.System
 
 				d = dst1End.Add (-dstOffset);
 				Assert.AreEqual(dstUtcOffset, cairo.GetUtcOffset (d.Add (new TimeSpan(0,0,0,-1))));
-				Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset (d));
-				Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset (d.Add (new TimeSpan(0,0,0, 1))));
+				Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset (d.Add (new TimeSpan(0,1,0, 1))));
 
 				d = dst2Start.Add (dstOffset);
 				Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset (d.Add (new TimeSpan(0,0,0,-1))));
@@ -1129,11 +1494,11 @@ namespace MonoTests.System
 
 				d = dst2End.Add (-dstOffset);
 				Assert.AreEqual(dstUtcOffset, cairo.GetUtcOffset (d.Add (new TimeSpan(0,0,0,-1))));
-				Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset (d));
-				Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset (d.Add (new TimeSpan(0,0,0, 1))));
+				Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset (d.Add (new TimeSpan(0,1,0, 1))));
 			}
 
 		  [Test]
+		  [Category ("MobileNotWorking")]
 		  public void  GetUtcOffset_FromDateTimeOffset ()
 		  {
 			  DateTimeOffset offset;
@@ -1158,34 +1523,80 @@ namespace MonoTests.System
 			  Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset(offset), "dst2End_with_dstOffset+baseUtcOffset#exact");
 			  Assert.AreEqual(baseUtcOffset, cairo.GetUtcOffset(offset.Add(new TimeSpan(0, 0, 0, 1))), "dst2End_with_dstOffset+baseUtcOffset#after");
 		  }
+
+			[Test]
+			[Category ("MobileNotWorking")]
+			public void DTS_WithMinimalDate ()
+			{
+				TimeZoneInfo.TransitionTime startTransition, endTransition;
+				startTransition = TimeZoneInfo.TransitionTime.CreateFloatingDateRule (new DateTime (1, 1, 1, 4, 0, 0),
+																				  10, 2, DayOfWeek.Sunday);
+				endTransition = TimeZoneInfo.TransitionTime.CreateFloatingDateRule (new DateTime (1, 1, 1, 3, 0, 0),
+																				3, 2, DayOfWeek.Sunday);
+
+				var ctz = TimeZoneInfo.CreateCustomTimeZone ("test", TimeSpan.FromHours (-5), "display", "sdisplay", "dst", new [] {
+					TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule (DateTime.MinValue, DateTime.MaxValue.Date, TimeSpan.FromHours (-1), startTransition, endTransition) });
+
+				var offset = ctz.GetUtcOffset (DateTime.MinValue);
+				Assert.AreEqual (TimeSpan.FromHours (-6), offset);
+			}
     }
 
 		[TestFixture]
+		[Category ("NotWasm")]
 		public class GetDaylightChanges
 		{
-			MethodInfo getChanges;
-
-			[SetUp]
-			public void Setup ()
+			private static void GetDaylightTime (TimeZoneInfo tz, int year, out DateTime start, out DateTime end, out TimeSpan delta)
 			{
-				var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-				getChanges = typeof (TimeZoneInfo).GetMethod ("GetDaylightChanges", flags);
+#if !MOBILE
+					var rule = tz.GetAdjustmentRules ().FirstOrDefault (r => r.DateStart.Year <= year && r.DateEnd.Year >= year);
+					if (rule == null) {
+						start = DateTime.MinValue;
+						end = DateTime.MinValue;
+						delta = TimeSpan.Zero;
+						return;
+					}
+					var method = typeof (TimeZoneInfo).GetMethod ("GetDaylightTime", BindingFlags.Instance | BindingFlags.NonPublic);
+					var daylightTime = method.Invoke(tz, new object[] { year, rule, null });
+					var dts = daylightTime.GetType(); // internal readonly struct DaylightTimeStruct
+					start = (DateTime) dts.GetField ("Start").GetValue (daylightTime);
+					end = (DateTime) dts.GetField ("End").GetValue (daylightTime);
+					delta = (TimeSpan) dts.GetField ("Delta").GetValue (daylightTime);
+#else
+					MethodInfo getChanges = typeof (TimeZoneInfo).GetMethod ("GetDaylightChanges", BindingFlags.Instance | BindingFlags.NonPublic);
+					var changes = (DaylightTime) getChanges.Invoke (tz, new object [] {year});
+					start = changes.Start;
+					end = changes.End;
+					delta = changes.Delta;
+#endif
 			}
 
 			[Test]
+			[Category ("MobileNotWorking")]
+			[Category ("NotOnWindows")]
 			public void TestSydneyDaylightChanges ()
 			{
-				TimeZoneInfo tz;
-				if (Environment.OSVersion.Platform == PlatformID.Unix)
-					tz = TimeZoneInfo.FindSystemTimeZoneById ("Australia/Sydney");
-				else
-					tz = TimeZoneInfo.FindSystemTimeZoneById ("W. Australia Standard Time");
+				TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Australia/Sydney"));
 
-				var changes = (DaylightTime) getChanges.Invoke (tz, new object [] {2014});
+				GetDaylightTime (tz, 2014, out DateTime start, out DateTime end, out TimeSpan delta);
 
-				Assert.AreEqual (new TimeSpan (1, 0, 0), changes.Delta);
-				Assert.AreEqual (new DateTime (2014, 10, 5, 2, 0, 0), changes.Start);
-				Assert.AreEqual (new DateTime (2014, 4, 6, 3, 0, 0), changes.End);
+				Assert.AreEqual (new TimeSpan (1, 0, 0), delta);
+				Assert.AreEqual (new DateTime (2014, 10, 6, 2, 0, 0), start);
+				Assert.AreEqual (new DateTime (2014, 4, 6, 2, 59, 59), end);
+			}
+
+			[Test]
+			[Category ("MobileNotWorking")]
+			[Category ("NotOnWindows")]
+			public void TestAthensDaylightChanges ()
+			{
+				TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById (MapTimeZoneId ("Europe/Athens"));
+
+				GetDaylightTime (tz, 2014, out DateTime start, out DateTime end, out TimeSpan delta);
+
+				Assert.AreEqual (new TimeSpan (0, 0, 0), delta);
+				Assert.AreEqual (new DateTime (2014, 10, 27, 3, 0, 0), start);
+				Assert.AreEqual (new DateTime (2014, 03, 30, 2, 59, 59), end);
 			}
 
 			[Test]
@@ -1194,7 +1605,7 @@ namespace MonoTests.System
 				foreach (var tz in TimeZoneInfo.GetSystemTimeZones ()) {
 					try {
 						for (var year = 1950; year <= 2051; year++)
-							getChanges.Invoke (tz, new object [] {year} );
+							GetDaylightTime (tz, year, out DateTime start, out DateTime end, out TimeSpan delta);
 					} catch (Exception e) {
 						Assert.Fail ("TimeZone " + tz.Id + " exception: " + e.ToString ()); 
 					}
@@ -1215,6 +1626,7 @@ namespace MonoTests.System
 			}
 
 			[Test]
+			[Category ("NotWorking")]
 			public void Bug31432 ()
 			{
 				// Europe/Moscow from failing device

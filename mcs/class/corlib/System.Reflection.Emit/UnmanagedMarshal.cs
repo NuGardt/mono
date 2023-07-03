@@ -31,7 +31,7 @@
 // (C) 2001-2002 Ximian, Inc.  http://www.ximian.com
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System.Reflection.Emit;
 using System.Runtime.InteropServices;
 using System;
@@ -50,7 +50,7 @@ namespace System.Reflection.Emit {
 		string guid;
 		string mcookie;
 		string marshaltype;
-		Type marshaltyperef;
+		internal Type marshaltyperef;
 		private int param_num;
 		private bool has_size;
 #pragma warning restore 169, 414

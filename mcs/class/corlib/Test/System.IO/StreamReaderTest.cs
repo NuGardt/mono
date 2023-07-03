@@ -9,26 +9,31 @@
 using System;
 using System.IO;
 using System.Text;
-#if NET_4_5
 using System.Threading.Tasks;
-#endif
 
 using NUnit.Framework;
+
+using MonoTests.Helpers;
 
 namespace MonoTests.System.IO
 {
 [TestFixture]
 public class StreamReaderTest
 {
-	static string TempFolder = Path.Combine (Path.GetTempPath (), "MonoTests.System.IO.Tests");
-	private string _codeFileName = TempFolder + Path.DirectorySeparatorChar + "AFile.txt";
+	private string _tmpFolder;
+	private string _codeFileName;
 	private const string TestString = "Hello World!";
 
 	[SetUp]
 	public void SetUp ()
 	{	
-		if (!Directory.Exists (TempFolder))
-			Directory.CreateDirectory (TempFolder);
+		_tmpFolder = Path.GetTempFileName ();
+		if (File.Exists (_tmpFolder))
+			File.Delete (_tmpFolder);
+		_codeFileName = _tmpFolder + Path.DirectorySeparatorChar + "AFile.txt";
+
+		if (!Directory.Exists (_tmpFolder))
+			Directory.CreateDirectory (_tmpFolder);
 		
 		if (!File.Exists (_codeFileName))
 			File.Create (_codeFileName).Close ();
@@ -37,8 +42,8 @@ public class StreamReaderTest
 	[TearDown]
 	public void TearDown ()
 	{
-		if (Directory.Exists (TempFolder))
-			Directory.Delete (TempFolder, true);
+		if (Directory.Exists (_tmpFolder))
+			Directory.Delete (_tmpFolder, true);
 	}
 
 
@@ -247,7 +252,7 @@ public class StreamReaderTest
 		{
 			bool errorThrown = false;
 			try {
-				new StreamReader(TempFolder + "/nonexistentfile", false);
+				new StreamReader(_tmpFolder + "/nonexistentfile", false);
 			} catch (FileNotFoundException) {
 				errorThrown = true;
 			} catch (Exception e) {
@@ -258,7 +263,7 @@ public class StreamReaderTest
 		{
 			bool errorThrown = false;
 			try {
-				new StreamReader(TempFolder + "/nonexistentdir/file", false);
+				new StreamReader(_tmpFolder + "/nonexistentdir/file", false);
 			} catch (DirectoryNotFoundException) {
 				errorThrown = true;
 			} catch (Exception e) {
@@ -312,7 +317,7 @@ public class StreamReaderTest
 		{
 			bool errorThrown = false;
 			try {
-				new StreamReader(TempFolder + "/nonexistentfile", true);
+				new StreamReader(_tmpFolder + "/nonexistentfile", true);
 			} catch (FileNotFoundException) {
 				errorThrown = true;
 			} catch (Exception e) {
@@ -323,7 +328,7 @@ public class StreamReaderTest
 		{
 			bool errorThrown = false;
 			try {
-				new StreamReader(TempFolder + "/nonexistentdir/file", true);
+				new StreamReader(_tmpFolder + "/nonexistentdir/file", true);
 			} catch (DirectoryNotFoundException) {
 				errorThrown = true;
 			} catch (Exception e) {
@@ -777,7 +782,7 @@ public class StreamReaderTest
 	[Category ("MobileNotWorking")]
 	public void EndOfBufferIsCR ()
 	{
-		using (StreamReader reader = new StreamReader ("Test/resources/Fergie.GED")) {
+		using (StreamReader reader = new StreamReader (TestResourceHelper.GetFullPathOfResource ("Test/resources/Fergie.GED"))) {
 			string line;
 			int count = 0;
 			while ((line = reader.ReadLine ()) != null) {
@@ -845,7 +850,6 @@ public class StreamReaderTest
 		Assert.AreEqual (0, StreamReader.Null.ReadBlock (buffer, 0, buffer.Length));
 	}
 
-#if NET_4_5
 	[Test]
 	public void ReadLineAsync ()
 	{
@@ -866,7 +870,6 @@ public class StreamReaderTest
 		Assert.IsTrue (result.Wait (3000), "#1");
 		Assert.AreEqual ("ab" + Environment.NewLine, result.Result);
 	}
-#endif
 }
 
 class MyStream : Stream {

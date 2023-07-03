@@ -34,14 +34,13 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Diagnostics.Contracts;
 
 namespace System.Globalization
 {
 	[System.Runtime.InteropServices.ComVisible (true)]
 	[Serializable]
 	[StructLayout (LayoutKind.Sequential)]
-	public class CultureInfo : ICloneable, IFormatProvider
+	public partial class CultureInfo : ICloneable, IFormatProvider
 	{
 		static volatile CultureInfo invariant_culture_info = new CultureInfo (InvariantCultureId, false, true);
 		static object shared_table_lock = new object ();
@@ -112,10 +111,19 @@ namespace System.Globalization
 		[NonSerialized]internal CultureData m_cultureData;
  		[NonSerialized]internal bool m_isInherited;
 		
+		// adapters for .NET Core sources (DateTimeFormatInfo) to reduce diff in mono/corefx repository
+		internal CultureData _cultureData => m_cultureData;
+		internal bool _isInherited => m_isInherited;
+
 		internal const int InvariantCultureId = 0x7F;
 		const int CalendarTypeBits = 8;
 
+		internal const int LOCALE_INVARIANT = 0x007F;
+
 		const string MSG_READONLY = "This instance is read only";
+
+		static volatile CultureInfo s_DefaultThreadCurrentUICulture;
+		static volatile CultureInfo s_DefaultThreadCurrentCulture;
 		
 		public static CultureInfo InvariantCulture {
 			get {
@@ -127,11 +135,17 @@ namespace System.Globalization
 			get {
 				return Thread.CurrentThread.CurrentCulture;
 			}
+			set {
+				Thread.CurrentThread.CurrentCulture = value;
+			}
 		}
 
 		public static CultureInfo CurrentUICulture { 
 			get {
 				return Thread.CurrentThread.CurrentUICulture;
+			}
+			set {
+				Thread.CurrentThread.CurrentUICulture = value;
 			}
 		}
 
@@ -139,6 +153,9 @@ namespace System.Globalization
 		{
 			if (default_current_culture != null)
 				return default_current_culture;
+
+			if (GlobalizationMode.Invariant)
+				return InvariantCulture;
 
 			var locale_name = get_current_locale_name ();
 			CultureInfo ci = null;
@@ -171,7 +188,8 @@ namespace System.Globalization
 			get { return territory; }
 		}
 
-#if !NET_2_1
+		internal string _name => m_name;
+
 		// FIXME: It is implemented, but would be hell slow.
 		[ComVisible (false)]
 		public CultureTypes CultureTypes {
@@ -257,7 +275,6 @@ namespace System.Globalization
 				}
 			}
 		}
-#endif
 
 		public virtual int LCID {
 			get {
@@ -505,7 +522,7 @@ namespace System.Globalization
 			}
 		}
 
-		internal void CheckNeutral ()
+		void CheckNeutral ()
 		{
 		}
 
@@ -539,8 +556,12 @@ namespace System.Globalization
 				if (!constructed) Construct ();
 				CheckNeutral ();
 
-				var temp = new DateTimeFormatInfo (m_cultureData, Calendar);
-				temp.m_isReadOnly = m_isReadOnly;
+				DateTimeFormatInfo temp;
+				if (GlobalizationMode.Invariant)
+					temp = new DateTimeFormatInfo();
+				else
+					temp = new DateTimeFormatInfo(m_cultureData, Calendar);
+				temp._isReadOnly = m_isReadOnly;
 				System.Threading.Thread.MemoryBarrier();
 				dateTimeInfo = temp;
 				return dateTimeInfo;
@@ -1064,19 +1085,19 @@ namespace System.Globalization
 		
 		public static CultureInfo DefaultThreadCurrentCulture {
 			get {
-				return Thread.default_culture;
+				return s_DefaultThreadCurrentCulture;
 			}
 			set {
-				Thread.default_culture = value;
+				s_DefaultThreadCurrentCulture = value;
 			}
 		}
 		
 		public static CultureInfo DefaultThreadCurrentUICulture {
 			get {
-				return Thread.default_ui_culture;
+				return s_DefaultThreadCurrentUICulture;
 			}
 			set {
-				Thread.default_ui_culture = value;
+				s_DefaultThreadCurrentUICulture = value;
 			}
 		}
 
@@ -1085,6 +1106,19 @@ namespace System.Globalization
 				return m_name;
 			}
 		}
+
+		internal static CultureInfo UserDefaultUICulture {
+			get {
+				return ConstructCurrentUICulture ();
+			}
+		}
+
+		internal static CultureInfo UserDefaultCulture {
+			get {
+				return ConstructCurrentCulture ();
+			}
+		}
+
 
 #region reference sources
 		// TODO:
@@ -1106,7 +1140,6 @@ namespace System.Globalization
                                 obj.GetType(),
                                 container.GetType()));
             }
-            Contract.EndContractBlock();
         }
 
         // For resource lookup, we consider a culture the invariant culture by name equality.
@@ -1136,6 +1169,17 @@ namespace System.Globalization
                 return false;
             }
             return true;
+        }
+
+        internal static bool VerifyCultureName(CultureInfo culture, bool throwException) {
+            //If we have an instance of one of our CultureInfos, the user can't have changed the
+            //name and we know that all names are valid in files.
+            if (!culture.m_isInherited) {
+                return true;
+            }
+
+            return VerifyCultureName(culture.Name, throwException);
+
         }
 
 #endregion

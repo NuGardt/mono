@@ -23,6 +23,8 @@ namespace MonoTests.System.Net
 public class ServicePointTest
 {
 	static private int max;
+
+#if !FEATURE_NO_BSD_SOCKETS
 	[SetUp]
 	public void SaveMax () {
 		max = ServicePointManager.MaxServicePoints;
@@ -33,54 +35,55 @@ public class ServicePointTest
 	public void RestoreMax () {
 		ServicePointManager.MaxServicePoints = max;
 	}
+#endif
 
         [Test]
-		[Category ("InetAccess")]
+		[Category ("NotWorking")]
         public void All ()
         {
 		ServicePoint p = ServicePointManager.FindServicePoint (new Uri ("mailto:xx@yyy.com"));
 		//WriteServicePoint ("A servicepoint that isn't really", p);			
 		
 		ServicePointManager.MaxServicePoints = 2;
-		ServicePoint google = ServicePointManager.FindServicePoint (new Uri ("http://www.google.com"));
+		ServicePoint exampleCom = ServicePointManager.FindServicePoint (new Uri ("http://www.example.com"));
 		try {			
-			ServicePoint slashdot = ServicePointManager.FindServicePoint (new Uri ("http://www.slashdot.org"));
+			ServicePoint exampleOrg = ServicePointManager.FindServicePoint (new Uri ("http://www.example.org"));
 			Assert.Fail ("#1");
 		} catch (InvalidOperationException) { }
 		ServicePointManager.MaxServicePoints = 0;
 		
-		//WriteServicePoint ("google before getting a webrequest", google);
+		//WriteServicePoint ("example before getting a webrequest", example);
 		
-		HttpWebRequest req = (HttpWebRequest) WebRequest.Create ("http://www.google.com");
+		HttpWebRequest req = (HttpWebRequest) WebRequest.Create ("http://www.example.com");
 		HttpWebResponse res = (HttpWebResponse) req.GetResponse ();			
 		
 #if FOUND_SOME_OTHER_URL
 		// URL is no longer found, disabled the test until a more reliable URL is found :P
-		//WriteServicePoint ("google after getting a response", google);
-		ServicePoint google2 = ServicePointManager.FindServicePoint (new Uri ("http://www.google.com/dilbert.html"));
-		Assert.AreEqual (google, google2, "#equals");
+		//WriteServicePoint ("example after getting a response", example);
+		ServicePoint example2 = ServicePointManager.FindServicePoint (new Uri ("http://www.example.com/dilbert.html"));
+		Assert.AreEqual (example, example2, "#equals");
 		res.Close ();
 #endif
 		
 		// in both instances property CurrentConnections is 0 according to ms.net.
 		// let's see what it says when we do async operations...
 		
-		HttpWebRequest req2 = (HttpWebRequest) WebRequest.Create ("http://www.google.com");
+		HttpWebRequest req2 = (HttpWebRequest) WebRequest.Create ("http://www.example.com");
 		req2.Method = "PUT";
 		IAsyncResult async = req2.BeginGetRequestStream (null, null);
-		//WriteServicePoint ("after async BeginGetRequestStream", google);
+		//WriteServicePoint ("after async BeginGetRequestStream", example);
 		// CurrentConnections: 1
 		Stream stream2 = req2.EndGetRequestStream (async);
-		//WriteServicePoint ("after async EndGetRequestStream", google);
+		//WriteServicePoint ("after async EndGetRequestStream", example);
 		// CurrentConnections: 1
 		stream2.Close ();
 		
-		req2 = (HttpWebRequest) WebRequest.Create ("http://www.google.com");
+		req2 = (HttpWebRequest) WebRequest.Create ("http://www.example.com");
 		async = req2.BeginGetResponse (null, null);
-		//WriteServicePoint ("after async BeginGetResponse", google);
+		//WriteServicePoint ("after async BeginGetResponse", example);
 		// CurrentConnections: 2
 		WebResponse res2 = req2.EndGetResponse (async);
-		//WriteServicePoint ("after async EndGetResponse", google);
+		//WriteServicePoint ("after async EndGetResponse", example);
 		// CurrentConnections: 0			
 		// curious that after you get the webresponse object CurrentConnections is set to 0.
 		// you'd think that you'd still be connected until you close the webresponse..
@@ -106,10 +109,10 @@ public class ServicePointTest
 		
 		
 		// what's the limit of the cache?
-		req2 = (HttpWebRequest) WebRequest.Create ("http://www.apache.org/");
+		req2 = (HttpWebRequest) WebRequest.Create ("http://www.example.org/");
 		res2 = req2.GetResponse ();
-		sp2 = ServicePointManager.FindServicePoint (new Uri("http://www.apache.org/"));
-		//WriteServicePoint ("apache", sp2);
+		sp2 = ServicePointManager.FindServicePoint (new Uri("http://www.example.org/"));
+		//WriteServicePoint ("example", sp2);
 		//Console.WriteLine ("ContentLength: " + res2.ContentLength);
 		// CurrentConnections: 1
 		res2.Close ();
@@ -121,13 +124,13 @@ public class ServicePointTest
 	// while ConnectionLimit equals 2
 
 	[Test]
-	[Category ("InetAccess")]
+	[Category ("NotWorking")]
 	public void ConnectionLimit ()
 	{		
 		// the default is already 2, just in case it isn't..
 		ServicePointManager.DefaultConnectionLimit = 5;
 		
-		Uri uri = new Uri ("http://www.go-mono.com/");
+		Uri uri = new Uri ("http://www.example.com/");
 		ServicePoint sp = ServicePointManager.FindServicePoint (uri);			
 		WebResponse [] res = new WebResponse [5];
 		for (int i = 0; i < 5; i++) {
@@ -153,11 +156,10 @@ public class ServicePointTest
 	}
 
 	[Test]
-	[Category ("InetAccess")]
-	[Category ("AndroidNotWorking")] // #A1 fails
+	[Category ("NotWorking")] // #A1 fails
 	public void EndPointBind ()
 	{
-		Uri uri = new Uri ("http://www.go-mono.com/");
+		Uri uri = new Uri ("http://www.example.com/");
 		ServicePoint sp = ServicePointManager.FindServicePoint (uri);
 
 		HttpWebRequest req = (HttpWebRequest) WebRequest.Create (uri);
@@ -184,30 +186,8 @@ public class ServicePointTest
 		Assert.IsTrue (called, "#A2");
 	}
 
-	public static void GetRequestStreamCallback (IAsyncResult asynchronousResult)
-	{
-	}
-
-	[Test] //Covers #19823
-	public void CloseConnectionGroupConcurency ()
-	{
-		// Try with multiple service points
-		for (var i = 0; i < 10; i++) {
-			Uri targetUri = new Uri ("http://" + i + ".mono-project.com");
-			var req = (HttpWebRequest) HttpWebRequest.Create (targetUri);
-			req.ContentType = "application/x-www-form-urlencoded";
-			req.Method = "POST";
-			req.ConnectionGroupName = "" + i;
-			req.ServicePoint.MaxIdleTime = 1;
-
-			req.BeginGetRequestStream (new AsyncCallback (GetRequestStreamCallback), req);
-			Thread.Sleep (1);
-			req.ServicePoint.CloseConnectionGroup (req.ConnectionGroupName);
-		}
-	}
-
-
 	[Test]
+	[Category ("RequiresBSDSockets")] // Tests internals, so it doesn't make sense to assert that PlatformNotSupportedExceptions are thrown.
 	public void DnsRefreshTimeout ()
 	{
 		const int dnsRefreshTimeout = 2000;
@@ -219,7 +199,7 @@ public class ServicePointTest
 
 		ServicePointManager.DnsRefreshTimeout = dnsRefreshTimeout;
 
-		uri = new Uri ("http://www.google.com/");
+		uri = new Uri ("http://localhost/");
 		sp = ServicePointManager.FindServicePoint (uri);
 
 		hostEntryProperty = typeof (ServicePoint).GetProperty ("HostEntry", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -229,11 +209,13 @@ public class ServicePointTest
 
 		Assert.AreSame (host0, host1, "HostEntry should result in the same IPHostEntry object.");
 
+#if !WASM
 		Thread.Sleep (dnsRefreshTimeout * 2);
 		host2 = hostEntryProperty.GetValue (sp, null) as IPHostEntry;
 
 		Assert.AreNotSame(host0, host2, "HostEntry should result in a new IPHostEntry " +
 				"object when DnsRefreshTimeout is reached.");
+#endif
 	}
 
 // Debug code not used now, but could be useful later

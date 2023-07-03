@@ -1,5 +1,6 @@
-/*
- * mono-hwcap-x86.c: x86 hardware feature detection
+/**
+ * \file
+ * x86 hardware feature detection
  *
  * Authors:
  *    Alex Rønne Petersen (alexrp@xamarin.com)
@@ -19,29 +20,17 @@
  * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
-#include "mono/utils/mono-hwcap-x86.h"
+#include "mono/utils/mono-hwcap.h"
 
 #if defined(HAVE_UNISTD_H)
 #include <unistd.h>
 #endif
-
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
 
-gboolean mono_hwcap_x86_is_xen = FALSE;
-gboolean mono_hwcap_x86_has_cmov = FALSE;
-gboolean mono_hwcap_x86_has_fcmov = FALSE;
-gboolean mono_hwcap_x86_has_sse1 = FALSE;
-gboolean mono_hwcap_x86_has_sse2 = FALSE;
-gboolean mono_hwcap_x86_has_sse3 = FALSE;
-gboolean mono_hwcap_x86_has_ssse3 = FALSE;
-gboolean mono_hwcap_x86_has_sse41 = FALSE;
-gboolean mono_hwcap_x86_has_sse42 = FALSE;
-gboolean mono_hwcap_x86_has_sse4a = FALSE;
-
-static gboolean
-cpuid (int id, int *p_eax, int *p_ebx, int *p_ecx, int *p_edx)
+gboolean
+mono_hwcap_x86_call_cpuidex (int id, int sub_id, int *p_eax, int *p_ebx, int *p_ecx, int *p_edx)
 {
 #if defined(_MSC_VER)
 	int info [4];
@@ -91,7 +80,7 @@ cpuid (int id, int *p_eax, int *p_ebx, int *p_ecx, int *p_edx)
 	/* Now issue the actual cpuid instruction. We can use
 	   MSVC's __cpuid on both 32-bit and 64-bit. */
 #if defined(_MSC_VER)
-	__cpuid (info, id);
+	__cpuidex (info, id, sub_id);
 	*p_eax = info [0];
 	*p_ebx = info [1];
 	*p_ecx = info [2];
@@ -104,13 +93,13 @@ cpuid (int id, int *p_eax, int *p_ebx, int *p_ecx, int *p_edx)
 		"cpuid\n\t"
 		"xchgl\t%%ebx, %k1\n\t"
 		: "=a" (*p_eax), "=&r" (*p_ebx), "=c" (*p_ecx), "=d" (*p_edx)
-		: "0" (id)
+		: "0" (id), "2" (sub_id)
 	);
 #else
 	__asm__ __volatile__ (
 		"cpuid\n\t"
 		: "=a" (*p_eax), "=b" (*p_ebx), "=c" (*p_ecx), "=d" (*p_edx)
-		: "a" (id)
+		: "a" (id), "2" (sub_id)
 	);
 #endif
 
@@ -122,7 +111,7 @@ mono_hwcap_arch_init (void)
 {
 	int eax, ebx, ecx, edx;
 
-	if (cpuid (1, &eax, &ebx, &ecx, &edx)) {
+	if (mono_hwcap_x86_call_cpuidex (1, 0, &eax, &ebx, &ecx, &edx)) {
 		if (edx & (1 << 15)) {
 			mono_hwcap_x86_has_cmov = TRUE;
 
@@ -147,33 +136,29 @@ mono_hwcap_arch_init (void)
 
 		if (ecx & (1 << 20))
 			mono_hwcap_x86_has_sse42 = TRUE;
+
+		if (ecx & (1 << 23))
+			mono_hwcap_x86_has_popcnt = TRUE;
+
+		if (ecx & (1 << 28))
+			mono_hwcap_x86_has_avx = TRUE;
 	}
 
-	if (cpuid (0x80000000, &eax, &ebx, &ecx, &edx)) {
+	if (mono_hwcap_x86_call_cpuidex (0x80000000, 0, &eax, &ebx, &ecx, &edx)) {
 		if ((unsigned int) eax >= 0x80000001 && ebx == 0x68747541 && ecx == 0x444D4163 && edx == 0x69746E65) {
-			if (cpuid (0x80000001, &eax, &ebx, &ecx, &edx)) {
+			if (mono_hwcap_x86_call_cpuidex (0x80000001, 0, &eax, &ebx, &ecx, &edx)) {
 				if (ecx & (1 << 6))
 					mono_hwcap_x86_has_sse4a = TRUE;
 			}
 		}
 	}
 
-#if defined(HAVE_UNISTD_H)
+	if (mono_hwcap_x86_call_cpuidex (0x80000001, 0, &eax, &ebx, &ecx, &edx)) {
+		if (ecx & (1 << 5))
+			mono_hwcap_x86_has_lzcnt = TRUE;
+	}
+
+#if defined(HAVE_UNISTD_H) && defined(HAVE_ACCESS)
 	mono_hwcap_x86_is_xen = !access ("/proc/xen", F_OK);
 #endif
-}
-
-void
-mono_hwcap_print (FILE *f)
-{
-	g_fprintf (f, "mono_hwcap_x86_is_xen = %i\n", mono_hwcap_x86_is_xen);
-	g_fprintf (f, "mono_hwcap_x86_has_cmov = %i\n", mono_hwcap_x86_has_cmov);
-	g_fprintf (f, "mono_hwcap_x86_has_fcmov = %i\n", mono_hwcap_x86_has_fcmov);
-	g_fprintf (f, "mono_hwcap_x86_has_sse1 = %i\n", mono_hwcap_x86_has_sse1);
-	g_fprintf (f, "mono_hwcap_x86_has_sse2 = %i\n", mono_hwcap_x86_has_sse2);
-	g_fprintf (f, "mono_hwcap_x86_has_sse3 = %i\n", mono_hwcap_x86_has_sse3);
-	g_fprintf (f, "mono_hwcap_x86_has_ssse3 = %i\n", mono_hwcap_x86_has_ssse3);
-	g_fprintf (f, "mono_hwcap_x86_has_sse41 = %i\n", mono_hwcap_x86_has_sse41);
-	g_fprintf (f, "mono_hwcap_x86_has_sse42 = %i\n", mono_hwcap_x86_has_sse42);
-	g_fprintf (f, "mono_hwcap_x86_has_sse4a = %i\n", mono_hwcap_x86_has_sse4a);
 }

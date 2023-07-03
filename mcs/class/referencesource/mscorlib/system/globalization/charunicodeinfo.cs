@@ -1,3 +1,4 @@
+#if __MonoCS__
 // ==++==
 //
 //   Copyright (c) Microsoft Corporation.  All rights reserved.
@@ -46,7 +47,9 @@ namespace System.Globalization {
         internal const int UNICODE_CATEGORY_OFFSET = 0;
         internal const int BIDI_CATEGORY_OFFSET = 1;
 
+#pragma warning disable 414
         static bool s_initialized = InitTable();
+#pragma warning restore
 
         // The native pointer to the 12:4:4 index table of the Unicode cateogry data.
         [SecurityCritical]
@@ -481,6 +484,10 @@ namespace System.Globalization {
             return (InternalGetUnicodeCategory(ch)) ;
         }
 
+#if MONO
+        public static UnicodeCategory GetUnicodeCategory(int codePoint) => GetUnicodeCategory((char)codePoint);
+#endif
+
         public static UnicodeCategory GetUnicodeCategory(String s, int index)
         {
             if (s==null)
@@ -590,3 +597,4 @@ namespace System.Globalization {
         }
     }
 }
+#endif

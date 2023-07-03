@@ -1,5 +1,6 @@
-/*
- * util.c: Assorted utilities for the disassembler
+/**
+ * \file
+ * Assorted utilities for the disassembler
  *
  * Author:
  *   Miguel de Icaza (miguel@ximian.com)
@@ -13,15 +14,11 @@
 #include <math.h>
 #include "util.h"
 #include "mono/utils/mono-compiler.h"
-
-#ifdef HAVE_IEEEFP_H
-#include <ieeefp.h>
-#endif
+#include "mono/utils/mono-math.h"
 
 /**
- * map:
- * @code: code to lookup in table
- * @table: table to decode code
+ * \param code code to lookup in table
+ * \param table table to decode code
  *
  * Warning: returns static buffer.
  */
@@ -37,9 +34,8 @@ map (guint32 code, dis_map_t *table)
 }
 
 /**
- * flags:
- * @code: bitfield
- * @table: table to decode bitfield
+ * \param code bitfield
+ * \param table table to decode bitfield
  *
  * Warning: returns static buffer.
  */
@@ -127,37 +123,3 @@ data_dump (const char *data, int len, const char* prefix) {
 	g_string_append_printf (str, "\n");
 	return g_string_free (str, FALSE);
 }
-
-int
-dis_isinf (double num)
-{
-#ifdef HAVE_ISINF
-	return isinf (num);
-#elif defined(HAVE_IEEEFP_H)
-	fpclass_t klass;
-
-	klass = fpclass (num);
-	if (klass == FP_NINF)
-		return -1;
-
-	if (klass == FP_PINF)
-		return 1;
-
-	return 0;
-#elif defined(HAVE__FINITE)
-	return _finite (num) ? 0 : 1;
-#else
-#error "Don't know how to implement isinf for this platform."
-#endif
-}
-
-int
-dis_isnan (double num)
-{
-#ifdef __MINGW32_VERSION
-return _isnan (num);
-#else
-return isnan (num);
-#endif
-}
-

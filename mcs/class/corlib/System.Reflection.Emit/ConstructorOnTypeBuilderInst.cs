@@ -27,7 +27,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System;
 using System.Globalization;
 using System.Reflection;
@@ -42,11 +42,11 @@ namespace System.Reflection.Emit
 	internal class ConstructorOnTypeBuilderInst : ConstructorInfo
 	{
 		#region Keep in sync with object-internals.h
-		MonoGenericClass instantiation;
-		ConstructorInfo cb;
+		internal TypeBuilderInstantiation instantiation;
+		internal ConstructorInfo cb;
 		#endregion
 
-		public ConstructorOnTypeBuilderInst (MonoGenericClass instantiation, ConstructorInfo cb)
+		public ConstructorOnTypeBuilderInst (TypeBuilderInstantiation instantiation, ConstructorInfo cb)
 		{
 			this.instantiation = instantiation;
 			this.cb = cb;
@@ -121,17 +121,36 @@ namespace System.Reflection.Emit
 				res = new ParameterInfo [cbuilder.parameters.Length];
 				for (int i = 0; i < cbuilder.parameters.Length; i++) {
 					Type type = instantiation.InflateType (cbuilder.parameters [i]);
-					res [i] = ParameterInfo.New (cbuilder.pinfo == null ? null : cbuilder.pinfo [i], type, this, i + 1);
+					res [i] = RuntimeParameterInfo.New (cbuilder.pinfo?[i], type, this, i + 1);
 				}
 			} else {
 				ParameterInfo[] parms = cb.GetParameters ();
 				res = new ParameterInfo [parms.Length];
 				for (int i = 0; i < parms.Length; i++) {
 					Type type = instantiation.InflateType (parms [i].ParameterType);
-					res [i] = ParameterInfo.New (parms [i], type, this, i + 1);
+					res [i] = RuntimeParameterInfo.New (parms [i], type, this, i + 1);
 				}
 			}
 			return res;
+		}
+
+		internal override Type[] GetParameterTypes () {
+			if (cb is ConstructorBuilder) {
+				return (cb as ConstructorBuilder).parameters;
+			} else {
+				ParameterInfo[] parms = cb.GetParameters ();
+				var res = new Type [parms.Length];
+				for (int i = 0; i < parms.Length; i++) {
+					res [i] = parms [i].ParameterType;
+				}
+				return res;
+			}
+		}
+
+		// Called from the runtime to return the corresponding finished ConstructorInfo object
+		internal ConstructorInfo RuntimeResolve () {
+			var type = instantiation.InternalResolve ();
+			return type.GetConstructor (cb);
 		}
 
 		public override int MetadataToken {

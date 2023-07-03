@@ -8,7 +8,7 @@
 // (C) 2006 Novell
 // 
 
-#if !MOBILE
+#if !MOBILE && !XAMMAC_4_5
 
 using System;
 using System.CodeDom;
@@ -27,6 +27,8 @@ using NUnit.Framework;
 
 using MonoTests.System.Xml.TestClasses;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.System.XmlSerialization
 {
 	[TestFixture]
@@ -43,10 +45,11 @@ namespace MonoTests.System.XmlSerialization
 			ICodeGenerator generator = provider.CreateGenerator ();
 			generator.GenerateCodeFromNamespace (codeNamespace, sw, new CodeGeneratorOptions ());
 
+			var currentAssembly = Assembly.GetEntryAssembly ().GetName ();
 			Assert.AreEqual (string.Format(CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"{1}\", \"{2}\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -64,7 +67,7 @@ namespace MonoTests.System.XmlSerialization
 				"            this.namesField = value;{0}" +
 				"        }}{0}" +
 				"    }}{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine, currentAssembly.Name, currentAssembly.Version), sw.ToString (), "#2");
 
 
 			codeNamespace = ExportCode (typeof (ArrayClass[]));
@@ -76,7 +79,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -93,7 +96,7 @@ namespace MonoTests.System.XmlSerialization
 				"            this.namesField = value;{0}" +
 				"        }}{0}" +
 				"    }}{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#4");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#4");
 		}
 
 		[Test]
@@ -110,7 +113,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -128,7 +131,7 @@ namespace MonoTests.System.XmlSerialization
 				"            this.itemsField = value;{0}" +
 				"        }}{0}" +
 				"    }}{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 		}
 
 		[Test]
@@ -145,7 +148,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -163,7 +166,7 @@ namespace MonoTests.System.XmlSerialization
 				"            this.cdataField = value;{0}" +
 				"        }}{0}" +
 				"    }}{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 		}
 
 		[Test]
@@ -182,7 +185,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -204,7 +207,7 @@ namespace MonoTests.System.XmlSerialization
 				"            this.myChoiceField = value;{0}" +
 				"        }}{0}" +
 				"    }}{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 		}
 
 		[Test]
@@ -222,7 +225,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -403,7 +406,7 @@ namespace MonoTests.System.XmlSerialization
 				"{0}" +
 				"/// <remarks/>{0}" +
 				"[System.FlagsAttribute()]{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"public enum MapModifiers {{{0}" +
 				"    {0}" +
@@ -414,7 +417,7 @@ namespace MonoTests.System.XmlSerialization
 				"    /// <remarks/>{0}" +
 				"    [System.Xml.Serialization.XmlEnumAttribute(\"protected\")]{0}" +
 				"    Protected = 2,{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 		}
 
 		[Test]
@@ -431,7 +434,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Xml.Serialization.XmlTypeAttribute(IncludeInSchema=false)]{0}" +
 				"[System.Xml.Serialization.XmlRootAttribute(Namespace=\"\", IsNullable=false)]{0}" +
@@ -446,7 +449,7 @@ namespace MonoTests.System.XmlSerialization
 				"    {0}" +
 				"    /// <remarks/>{0}" +
 				"    ChoiceTwo,{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 
 			codeNamespace = ExportCode (typeof (ItemChoiceType[]));
 			Assert.IsNotNull (codeNamespace, "#3");
@@ -457,7 +460,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Xml.Serialization.XmlTypeAttribute(IncludeInSchema=false)]{0}" +
 				"public enum ItemChoiceType {{{0}" +
@@ -471,7 +474,7 @@ namespace MonoTests.System.XmlSerialization
 				"    {0}" +
 				"    /// <remarks/>{0}" +
 				"    ChoiceTwo,{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#4");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#4");
 		}
 
 		[Test]
@@ -488,7 +491,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -509,7 +512,7 @@ namespace MonoTests.System.XmlSerialization
 				"}}{0}" +
 				"{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -526,7 +529,7 @@ namespace MonoTests.System.XmlSerialization
 				"            this.somethingField = value;{0}" +
 				"        }}{0}" +
 				"    }}{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 		}
 
 		[Test]
@@ -544,7 +547,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -578,7 +581,7 @@ namespace MonoTests.System.XmlSerialization
 				"}}{0}" +
 				"{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -667,7 +670,7 @@ namespace MonoTests.System.XmlSerialization
 				"{0}" +
 				"/// <remarks/>{0}" +
 				"[System.FlagsAttribute()]{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Xml.Serialization.XmlTypeAttribute(Namespace=\"some:urn\")]{0}" +
 				"public enum FlagEnum {{{0}" +
@@ -786,7 +789,7 @@ namespace MonoTests.System.XmlSerialization
 				"{0}" +
 				"/// <remarks/>{0}" +
 				"[System.FlagsAttribute()]{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Xml.Serialization.XmlTypeAttribute(Namespace=\"urn:myNS\")]{0}" +
 				"public enum FlagEnum {{{0}" +
@@ -806,7 +809,7 @@ namespace MonoTests.System.XmlSerialization
 				"{0}" +
 				"/// <remarks/>{0}" +
 				"[System.FlagsAttribute()]{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Xml.Serialization.XmlTypeAttribute(Namespace=\"urn:myNS\")]{0}" +
 				"public enum FlagEnum_Encoded {{{0}" +
@@ -819,7 +822,7 @@ namespace MonoTests.System.XmlSerialization
 				"    {0}" +
 				"    /// <remarks/>{0}" +
 				"    e4 = 4,{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 		}
 
 		[Test]
@@ -836,7 +839,7 @@ namespace MonoTests.System.XmlSerialization
 			Assert.AreEqual (string.Format (CultureInfo.InvariantCulture,
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Diagnostics.DebuggerStepThroughAttribute()]{0}" +
 				"[System.ComponentModel.DesignerCategoryAttribute(\"code\")]{0}" +
@@ -855,7 +858,7 @@ namespace MonoTests.System.XmlSerialization
 				"            this.somethingField = value;{0}" +
 				"        }}{0}" +
 				"    }}{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 		}
 
 		[Test]
@@ -909,7 +912,7 @@ namespace MonoTests.System.XmlSerialization
 				"{0}{0}" +
 				"/// <remarks/>{0}" +
 				"[System.FlagsAttribute()]{0}" +
-				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"System.Xml\", \"{1}\")]{0}" +
+				"[System.CodeDom.Compiler.GeneratedCodeAttribute(\"nunit-lite-console\", \"0.0.0.0\")]{0}" +
 				"[System.SerializableAttribute()]{0}" +
 				"[System.Xml.Serialization.XmlRootAttribute(Namespace=\"\", IsNullable=false)]{0}" +
 				"public enum ZeroFlagEnum {{{0}" +
@@ -925,13 +928,13 @@ namespace MonoTests.System.XmlSerialization
 				"    /// <remarks/>{0}" +
 				"    [System.Xml.Serialization.XmlEnumAttribute(\"tns:t<w>o\")]{0}" +
 				"    e2 = 4,{0}" +
-				"}}{0}", Environment.NewLine, XmlFileVersion), sw.ToString (), "#2");
+				"}}{0}", Environment.NewLine), sw.ToString (), "#2");
 		}
 
 		[Test]
 		public void DuplicateIdentifiers ()
 		{
-			XmlSchema xs = XmlSchema.Read (File.OpenText ("Test/XmlFiles/xsd/82078.xsd"), null);
+			XmlSchema xs = XmlSchema.Read (File.OpenText (TestResourceHelper.GetFullPathOfResource ("Test/XmlFiles/xsd/82078.xsd")), null);
 
 			XmlSchemas xss = new XmlSchemas ();
 			xss.Add (xs);
@@ -1003,15 +1006,6 @@ namespace MonoTests.System.XmlSerialization
 			XmlCodeExporter exp = new XmlCodeExporter (codeNamespace);
 			exp.ExportTypeMapping (map);
 			return codeNamespace;
-		}
-
-		string XmlFileVersion {
-			get {
-				Assembly xmlAsm = typeof (XmlDocument).Assembly;
-				AssemblyFileVersionAttribute afv = (AssemblyFileVersionAttribute)
-					Attribute.GetCustomAttribute (xmlAsm, typeof (AssemblyFileVersionAttribute));
-				return afv.Version;
-			}
 		}
 
 		[XmlRootAttribute ("root", Namespace="urn:aNS", IsNullable=false)]

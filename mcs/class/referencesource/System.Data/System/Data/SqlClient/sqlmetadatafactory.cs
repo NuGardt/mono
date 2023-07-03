@@ -3,7 +3,7 @@
 //     Copyright (c) Microsoft Corporation.  All rights reserved.
 // </copyright>
 //
-// <owner current="true" primary="true">[....]</owner>
+// <owner current="true" primary="true">Microsoft</owner>
 // <owner current="true" primary="false">Mugunm</owner>
 //
 //------------------------------------------------------------------------------
@@ -242,7 +242,7 @@ namespace System.Data.SqlClient{
         private DataTable GetDataTypesTable(SqlConnection connection){
         
                                  
-            // verify the existance of the table in the data set
+            // verify the existence of the table in the data set
             DataTable dataTypesTable = CollectionDataSet.Tables[DbMetaDataCollectionNames.DataTypes]; 
             if (dataTypesTable == null){
                 throw ADP.UnableToBuildCollection(DbMetaDataCollectionNames.DataTypes);

@@ -1,3 +1,7 @@
+/**
+ * \file
+ */
+
 #ifndef __MONO_PUBLIB_H__
 #define __MONO_PUBLIB_H__
 
@@ -11,8 +15,8 @@
 #define MONO_BEGIN_DECLS  extern "C" {
 #define MONO_END_DECLS    }
 #else
-#define MONO_BEGIN_DECLS
-#define MONO_END_DECLS
+#define MONO_BEGIN_DECLS /* nothing */
+#define MONO_END_DECLS   /* nothing */
 #endif
 
 MONO_BEGIN_DECLS
@@ -44,8 +48,8 @@ typedef unsigned __int64	uint64_t;
 
 #include <stdint.h>
 
-#ifdef __GNUC__
-#define MONO_API_EXPORT __attribute__ ((visibility ("default")))
+#if defined (__clang__) || defined (__GNUC__)
+#define MONO_API_EXPORT __attribute__ ((__visibility__ ("default")))
 #else
 #define MONO_API_EXPORT
 #endif
@@ -53,23 +57,58 @@ typedef unsigned __int64	uint64_t;
 
 #endif /* end of compiler-specific stuff */
 
-#if defined(MONO_DLL_EXPORT)
-	#define MONO_API MONO_API_EXPORT
-#elif defined(MONO_DLL_IMPORT)
-	#define MONO_API MONO_API_IMPORT
+#include <stdlib.h>
+
+#ifdef __cplusplus
+#define MONO_EXTERN_C extern "C"
 #else
-	#define MONO_API
+#define MONO_EXTERN_C /* nothing */
 #endif
+
+#if defined(MONO_DLL_EXPORT)
+	#define MONO_API_NO_EXTERN_C MONO_API_EXPORT
+#elif defined(MONO_DLL_IMPORT)
+	#define MONO_API_NO_EXTERN_C MONO_API_IMPORT
+#else
+	#define MONO_API_NO_EXTERN_C /* nothing  */
+#endif
+
+#define MONO_API MONO_EXTERN_C MONO_API_NO_EXTERN_C
+
+// Should (but not must) wrap in extern "C" (MONO_BEGIN_DECLS, MONO_END_DECLS).
+#define MONO_API_DATA MONO_API_NO_EXTERN_C extern
 
 typedef int32_t		mono_bool;
 typedef uint8_t		mono_byte;
+typedef mono_byte       MonoBoolean;
+#ifdef _WIN32
+MONO_END_DECLS
+#include <wchar.h>
+typedef wchar_t 	mono_unichar2;
+MONO_BEGIN_DECLS
+#else
 typedef uint16_t	mono_unichar2;
+#endif
 typedef uint32_t	mono_unichar4;
 
 typedef void	(*MonoFunc)	(void* data, void* user_data);
 typedef void	(*MonoHFunc)	(void* key, void* value, void* user_data);
 
 MONO_API void mono_free (void *);
+
+#define MONO_ALLOCATOR_VTABLE_VERSION 1
+
+typedef struct {
+	int version;
+	void *(*malloc)      (size_t size);
+	void *(*realloc)     (void *mem, size_t count);
+	void (*free)        (void *mem);
+	void *(*calloc)      (size_t count, size_t size);
+} MonoAllocatorVTable;
+
+MONO_API mono_bool
+mono_set_allocator_vtable (MonoAllocatorVTable* vtable);
+
 
 #define MONO_CONST_RETURN const
 
@@ -88,20 +127,61 @@ MONO_API void mono_free (void *);
 
 #if defined (MONO_INSIDE_RUNTIME)
 
-#if defined (__clang__)
-#define MONO_RT_EXTERNAL_ONLY __attribute__ ((unavailable("The mono runtime must not call this function")))
-#elif defined (__GNUC__)
-#define MONO_RT_EXTERNAL_ONLY __attribute__ ((error("The mono runtime must not call this function")))
+#if defined (__CENTRINEL__)
+/* Centrinel is an analyzer that warns about raw pointer to managed objects
+ * inside Mono.
+ */
+#define MONO_RT_MANAGED_ATTR __CENTRINEL_MANAGED_ATTR
+#define MONO_RT_CENTRINEL_SUPPRESS __CENTRINEL_SUPPRESS_ATTR(1)
 #else
-#define MONO_RT_EXTERNAL_ONLY
-#endif /* __clang__ */
+#define MONO_RT_MANAGED_ATTR
+#define MONO_RT_CENTRINEL_SUPPRESS
+#endif
+
+#if defined (__clang__) || defined (__GNUC__)
+// attribute(deprecated(message)) was introduced in gcc 4.5.
+// attribute(deprecated))         was introduced in gcc 4.0.
+// Compare: https://gcc.gnu.org/onlinedocs/gcc-3.4.6/gcc/Function-Attributes.html
+//          https://gcc.gnu.org/onlinedocs/gcc-4.4.0/gcc/Function-Attributes.html
+//          https://gcc.gnu.org/onlinedocs/gcc-4.5.0/gcc/Function-Attributes.html
+#if defined (__clang__) || (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 5)
+#define MONO_RT_EXTERNAL_ONLY \
+	__attribute__ ((__deprecated__ ("The mono runtime must not call this function."))) \
+	MONO_RT_CENTRINEL_SUPPRESS
+#elif __GNUC__ >= 4
+#define MONO_RT_EXTERNAL_ONLY __attribute__ ((__deprecated__)) MONO_RT_CENTRINEL_SUPPRESS
+#else
+#define MONO_RT_EXTERNAL_ONLY MONO_RT_CENTRINEL_SUPPRESS
+#endif
+
+#if defined (__clang__) || (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 2)
+// Pragmas for controlling diagnostics appear to be from gcc 4.2.
+// This is used in place of configure gcc -Werror=deprecated-declarations:
+// 1. To be portable across build systems.
+// 2. configure is very sensitive to compiler flags; they break autoconf's probes.
+// Though #2 can be mitigated by being late in configure.
+#pragma GCC diagnostic error "-Wdeprecated-declarations"
+#endif
+
+#else
+#define MONO_RT_EXTERNAL_ONLY MONO_RT_CENTRINEL_SUPPRESS
+#endif // clang or gcc
 
 #else
 #define MONO_RT_EXTERNAL_ONLY
+#define MONO_RT_MANAGED_ATTR
 #endif /* MONO_INSIDE_RUNTIME */
 
+#if defined (__clang__) || defined (__GNUC__)
+#define _MONO_DEPRECATED __attribute__ ((__deprecated__))
+#elif defined (_MSC_VER)
+#define _MONO_DEPRECATED __declspec (deprecated)
+#else
+#define _MONO_DEPRECATED
+#endif
+
+#define MONO_DEPRECATED MONO_API MONO_RT_EXTERNAL_ONLY _MONO_DEPRECATED
 
 MONO_END_DECLS
 
 #endif /* __MONO_PUBLIB_H__ */
-

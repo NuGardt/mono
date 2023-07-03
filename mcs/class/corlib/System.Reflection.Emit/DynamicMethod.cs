@@ -31,7 +31,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 
 using System;
 using System.Reflection;
@@ -66,7 +66,7 @@ namespace System.Reflection.Emit {
 #pragma warning restore 169, 414, 649
 		
 		private Delegate deleg;
-		private MonoMethod method;
+		private RuntimeMethodInfo method;
 		private ParameterBuilder[] pinfo;
 		internal bool creating;
 		private DynamicILInfo il_info;
@@ -131,33 +131,36 @@ namespace System.Reflection.Emit {
 		}
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		private extern void create_dynamic_method (DynamicMethod m);
+		private static extern void create_dynamic_method (DynamicMethod m);
 
 		private void CreateDynMethod () {
-			if (mhandle.Value == IntPtr.Zero) {
-				if (ilgen == null || ilgen.ILOffset == 0)
-					throw new InvalidOperationException ("Method '" + name + "' does not have a method body.");
+			// Clearing of ilgen in create_dynamic_method is not yet synchronized for multiple threads
+			lock (this) {
+				if (mhandle.Value == IntPtr.Zero) {
+					if (ilgen == null || ilgen.ILOffset == 0)
+						throw new InvalidOperationException ("Method '" + name + "' does not have a method body.");
 
-				ilgen.label_fixup (this);
+					ilgen.label_fixup (this);
 
-				// Have to create all DynamicMethods referenced by this one
-				try {
-					// Used to avoid cycles
-					creating = true;
-					if (refs != null) {
-						for (int i = 0; i < refs.Length; ++i) {
-							if (refs [i] is DynamicMethod) {
-								DynamicMethod m = (DynamicMethod)refs [i];
-								if (!m.creating)
-									m.CreateDynMethod ();
+					// Have to create all DynamicMethods referenced by this one
+					try {
+						// Used to avoid cycles
+						creating = true;
+						if (refs != null) {
+							for (int i = 0; i < refs.Length; ++i) {
+								if (refs [i] is DynamicMethod) {
+									DynamicMethod m = (DynamicMethod)refs [i];
+									if (!m.creating)
+										m.CreateDynMethod ();
+								}
 							}
 						}
+					} finally {
+						creating = false;
 					}
-				} finally {
-					creating = false;
+					create_dynamic_method (this);
+					ilgen = null;
 				}
-
-				create_dynamic_method (this);
 			}
 		}
 
@@ -172,7 +175,7 @@ namespace System.Reflection.Emit {
 
 			CreateDynMethod ();
 
-			deleg = Delegate.CreateDelegate (delegateType, this);
+			deleg = Delegate.CreateDelegate (delegateType, null, this);
 			return deleg;
 		}
 
@@ -210,15 +213,20 @@ namespace System.Reflection.Emit {
 			return this;
 		}
 
-		[MonoTODO("Not implemented")]
 		public override object[] GetCustomAttributes (bool inherit) {
-			throw new NotImplementedException ();
+			// support for MethodImplAttribute PCA
+			return new Object[] { new MethodImplAttribute(GetMethodImplementationFlags()) };
 		}
 
-		[MonoTODO("Not implemented")]
 		public override object[] GetCustomAttributes (Type attributeType,
-													  bool inherit) {
-			throw new NotImplementedException ();
+							      bool inherit) {
+			if (attributeType == null)
+				throw new ArgumentNullException ("attributeType");
+
+			if (attributeType.IsAssignableFrom (typeof (MethodImplAttribute)))
+				return new Object[] { new MethodImplAttribute (GetMethodImplementationFlags()) };
+			else
+				return EmptyArray<Object>.Value;
 		}
 
 		public DynamicILInfo GetDynamicILInfo () {
@@ -244,7 +252,7 @@ namespace System.Reflection.Emit {
 		}		
 
 		public override MethodImplAttributes GetMethodImplementationFlags () {
-			return MethodImplAttributes.IL | MethodImplAttributes.Managed;
+			return MethodImplAttributes.IL | MethodImplAttributes.Managed | MethodImplAttributes.NoInlining;
 		}
 
 		public override ParameterInfo[] GetParameters ()
@@ -259,7 +267,7 @@ namespace System.Reflection.Emit {
 
 			ParameterInfo[] retval = new ParameterInfo [parameters.Length];
 			for (int i = 0; i < parameters.Length; i++) {
-				retval [i] = ParameterInfo.New (pinfo == null ? null : pinfo [i + 1], parameters [i], this, i + 1);
+				retval [i] = RuntimeParameterInfo.New (pinfo?[i + 1], parameters [i], this, i + 1);
 			}
 			return retval;
 		}
@@ -277,7 +285,7 @@ namespace System.Reflection.Emit {
 		public override object Invoke (object obj, object[] parameters) {
 			CreateDynMethod ();
 			if (method == null)
-				method = new MonoMethod (mhandle);
+				method = new RuntimeMethodInfo (mhandle);
 			return method.Invoke (obj, parameters);
 		}
 		*/
@@ -289,18 +297,23 @@ namespace System.Reflection.Emit {
 			try {
 				CreateDynMethod ();
 				if (method == null)
-					method = new MonoMethod (mhandle);
+					method = new RuntimeMethodInfo (mhandle);
 
-				return method.Invoke (obj, parameters);
+				return method.Invoke (obj, invokeAttr, binder, parameters, culture);
 			}
 			catch (MethodAccessException mae) {
 				throw new TargetInvocationException ("Method cannot be invoked.", mae);
 			}
 		}
 
-		[MonoTODO("Not implemented")]
 		public override bool IsDefined (Type attributeType, bool inherit) {
-			throw new NotImplementedException ();
+			if (attributeType == null)
+				throw new ArgumentNullException ("attributeType");
+
+			if (attributeType.IsAssignableFrom (typeof (MethodImplAttribute)))
+				return true;
+			else
+				return false;
 		}
 
 		public override string ToString () {
@@ -414,8 +427,9 @@ namespace System.Reflection.Emit {
 		}
 
 		// This class takes care of constructing the module in a thread safe manner
-		class AnonHostModuleHolder {
-			public static Module anon_host_module;
+		static class AnonHostModuleHolder
+		{
+			public static readonly Module anon_host_module;
 
 			static AnonHostModuleHolder () {
 				AssemblyName aname = new AssemblyName ();

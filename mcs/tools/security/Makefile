@@ -4,7 +4,7 @@ DIST_ONLY_SUBDIRS = certview
 include ../../build/rules.make
 
 LOCAL_MCS_FLAGS = 
-LIB_REFS = Mono.Security System
+LIB_REFS = Mono.Security System System.Core
 
 SECURITY_PROGRAMS = secutil.exe cert2spc.exe sn.exe makecert.exe chktrust.exe crlupdate.exe \
 	signcode.exe setreg.exe certmgr.exe caspol.exe permview.exe mozroots.exe cert-sync.exe
@@ -40,6 +40,7 @@ install-local: $(SECURITY_TARGETS)
 	for p in $(SECURITY_TARGETS) ; do \
 	    $(INSTALL_BIN) $$p $(DESTDIR)$(PROGRAM_INSTALL_DIR) ; \
 	    test ! -f $$p.mdb || $(INSTALL_BIN) $$p.mdb $(DESTDIR)$(PROGRAM_INSTALL_DIR) ; \
+	    test ! -f $${p%.exe}.pdb || $(INSTALL_BIN) $${p%.exe}.pdb $(DESTDIR)$(PROGRAM_INSTALL_DIR) ; \
 	done
 
 uninstall-local:
@@ -50,7 +51,7 @@ endif
 
 test-local:
 
-run-test-local run-test-ondotnet-local csproj-local:
+run-test-local run-test-ondotnet-local:
 
 clean-local:
 	rm -f *.exe *.mdb *.pdb
@@ -59,10 +60,10 @@ clean-local:
 dist-local: dist-default
 
 sn.exe $(topdir)/class/lib/$(PROFILE)/sn.exe: $(SN_SOURCES)
-	$(CSCOMPILE) -r:$(topdir)/class/lib/$(PROFILE)/Mono.Security.dll /out:$@ $(SN_SOURCES)
+	$(CSCOMPILE) -r:$(topdir)/class/lib/$(PROFILE)/mscorlib.dll -r:$(topdir)/class/lib/$(PROFILE)/Mono.Security.dll /out:$@ $(SN_SOURCES)
 
 permview.exe: permview.cs
-	$(CSCOMPILE) $^ $(HELPER_SOURCES) -r:$(topdir)/class/lib/$(PROFILE)/Mono.Cecil.dll
+	$(CSCOMPILE) $^ $(HELPER_SOURCES) -r:$(topdir)/class/lib/$(PROFILE)/mscorlib.dll -r:$(topdir)/class/lib/$(PROFILE)/Mono.Cecil.dll
 
 %.exe: %.cs $(HELPER_SOURCES)
-	$(CSCOMPILE) -r:$(topdir)/class/lib/$(PROFILE)/Mono.Security.dll -r:$(topdir)/class/lib/$(PROFILE)/System.dll $^
+	$(CSCOMPILE) -r:$(topdir)/class/lib/$(PROFILE)/mscorlib.dll -r:$(topdir)/class/lib/$(PROFILE)/Mono.Security.dll -r:$(topdir)/class/lib/$(PROFILE)/System.dll -r:$(topdir)/class/lib/$(PROFILE)/System.Core.dll $^

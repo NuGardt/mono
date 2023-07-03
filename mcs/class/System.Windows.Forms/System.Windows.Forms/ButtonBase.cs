@@ -93,6 +93,8 @@ namespace System.Windows.Forms {
 				ControlStyles.CacheText |
 				ControlStyles.OptimizedDoubleBuffer, true);
 			SetStyle (ControlStyles.StandardClick, false);
+
+			can_cache_preferred_size = true;
 		}
 		#endregion	// Public Constructors
 
@@ -569,7 +571,7 @@ namespace System.Windows.Forms {
 
 				if (ClientRectangle.Contains (mevent.Location))
 					if (!ValidationFailed) {
-						OnClick (EventArgs.Empty);
+						OnClick (mevent);
 						OnMouseClick (mevent);
 					}
 			}

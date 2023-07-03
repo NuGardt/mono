@@ -1,27 +1,34 @@
-#!/bin/bash
+#!/bin/bash -e
 
-TEST_FILE=$1
-USE_AOT=$2
+DEFAULT_PROFILE=$1
+TEST_FILE=$2
+USE_AOT=$3
 
 TMP_FILE_PREFIX=$(basename $0).tmp
 BASEDIR=$(dirname $0)
 
 case "$(uname -s)" in
-	CYGWIN*) PLATFORM_PATH_SEPARATOR=';';;
-	*) PLATFORM_PATH_SEPARATOR=':';;
+	CYGWIN*)
+		PLATFORM_PATH_SEPARATOR=';'
+		PLATFORM_AOT_ARGUMENT=--aot=asmonly
+		;;
+	*)
+		PLATFORM_PATH_SEPARATOR=':'
+		PLATFORM_AOT_ARGUMENT=--aot
+		;;
 esac
 
-MONO_PATH=$BASEDIR/../../mcs/class/lib/net_4_x$PLATFORM_PATH_SEPARATOR$BASEDIR
+MONO_PATH=$BASEDIR/../../mcs/class/lib/$DEFAULT_PROFILE$PLATFORM_PATH_SEPARATOR$BASEDIR
 RUNTIME=$BASEDIR/../../runtime/mono-wrapper
 
 trap "rm -rf ${TMP_FILE_PREFIX}*" EXIT
 
 tmp_file () {
-	mktemp ./${TMP_FILE_PREFIX}XXXX
+	mktemp ./${TMP_FILE_PREFIX}XXXXXX
 }
 
 clean_aot () {
-	rm -rf *.exe.so *.exe.dylib *.exe.dylib.dSYM *.exe.dll
+	rm -rf *.exe.so *.exe.dylib *.exe.dylib.dSYM *.exe.dll *.exe.s
 }
 
 # The test compares the generated native code size between a compilation with and without seq points.
@@ -31,34 +38,38 @@ clean_aot () {
 get_methods () {
 	if [ -z $4 ]; then
 		MONO_PATH=$1 $2 -v --compile-all=1 $3 | grep '^Method .*code length' | sed 's/emitted[^()]*//' | sort
+		return ${PIPESTATUS[0]}
 	else
 		clean_aot
-		MONO_PATH=$1 $2 -v --aot $3 | grep '^Method .*code length' | sed 's/emitted[^()]*//' | sort
+		MONO_PATH=$1 $2 -v $PLATFORM_AOT_ARGUMENT $3 | grep '^Method .*code length' | sed 's/emitted[^()]*//' | sort
+		return ${PIPESTATUS[0]}
 	fi
 }
 
 get_method () {
 	if [ -z $5 ]; then
 		MONO_VERBOSE_METHOD="$4" MONO_PATH=$1 $2 --compile-all=1 $3 | sed 's/0x[0-9a-fA-F]*/0x0/g'
+		return ${PIPESTATUS[0]}
 	else
 		clean_aot
-		MONO_VERBOSE_METHOD="$4" MONO_PATH=$1 $2 --aot $3 | sed 's/0x[0-9a-fA-F]*/0x0/g'
+		MONO_VERBOSE_METHOD="$4" MONO_PATH=$1 $2 $PLATFORM_AOT_ARGUMENT $3 | sed 's/0x[0-9a-fA-F]*/0x0/g'
+		return ${PIPESTATUS[0]}
 	fi
 }
 
 diff_methods () {
 	TMP_FILE1=$(tmp_file)
 	TMP_FILE2=$(tmp_file)
-	echo "$(MONO_DEBUG=single-imm-size get_methods $1 $2 $3 $4)" >$TMP_FILE1
-	echo "$(MONO_DEBUG=gen-compact-seq-points,single-imm-size get_methods $1 $2 $3 $4)" >$TMP_FILE2
+	echo "$(MONO_DEBUG=no-compact-seq-points,single-imm-size get_methods $1 $2 $3 $4 || echo Non-zero exit code for file1: $?)" >$TMP_FILE1
+	echo "$(MONO_DEBUG=single-imm-size get_methods $1 $2 $3 $4 || echo Non-zero exit code for file2: $?)" >$TMP_FILE2
 	diff $TMP_FILE1 $TMP_FILE2
 }
 
 diff_method () {
 	TMP_FILE1=$(tmp_file)
 	TMP_FILE2=$(tmp_file)
-	echo "$(MONO_DEBUG=single-imm-size get_method $1 $2 $3 $4 $5)" >$TMP_FILE1
-	echo "$(MONO_DEBUG=gen-compact-seq-points,single-imm-size get_method $1 $2 $3 $4 $5 | grep -Ev il_seq_point)" >$TMP_FILE2
+	echo "$(MONO_DEBUG=no-compact-seq-points,single-imm-size get_method $1 $2 $3 $4 $5)" >$TMP_FILE1
+	echo "$(MONO_DEBUG=single-imm-size get_method $1 $2 $3 $4 $5 | grep -Ev il_seq_point)" >$TMP_FILE2
 	sdiff -w 150 $TMP_FILE1 $TMP_FILE2
 }
 
@@ -81,13 +92,16 @@ TMP_FILE=$(tmp_file)
 echo "$(diff_methods $MONO_PATH $RUNTIME $TEST_FILE $USE_AOT)" > $TMP_FILE
 
 CHANGES=0
+FAIL=0
 METHOD=""
 MIN_SIZE=10000
 
 while read line; do
 	if [ "$line" != "" ]; then
 		echo $line
-		if [[ ${line:0:1} == "<" ]]; then
+		if [[ "$line" == *"Non-zero exit code"* ]]; then
+			FAIL=1
+		elif [[ ${line:0:1} == "<" ]]; then
 			CHANGES=$((CHANGES+1))
 			SIZE=$(get_method_length "$line")
 			if [[ SIZE -lt MIN_SIZE ]]; then
@@ -102,7 +116,19 @@ TESTRESULT_FILE=TestResult-op_il_seq_point.tmp
 
 echo -n "              <test-case name=\"MonoTests.op_il_seq_point.${TEST_FILE}${USE_AOT}\" executed=\"True\" time=\"0\" asserts=\"0\" success=\"" >> $TESTRESULT_FILE
 
-if [ $CHANGES != 0 ]
+if [ $FAIL != 0 ]
+then
+	echo "False\">" >> $TESTRESULT_FILE
+	echo "                <failure>" >> $TESTRESULT_FILE
+	echo -n "                  <message><![CDATA[" >> $TESTRESULT_FILE
+	echo "Mono failed on $TEST_FILE" >> $TESTRESULT_FILE
+	echo "]]></message>" >> $TESTRESULT_FILE
+	echo "                  <stack-trace>" >> $TESTRESULT_FILE
+	echo "                  </stack-trace>" >> $TESTRESULT_FILE
+	echo "                </failure>" >> $TESTRESULT_FILE
+	echo "              </test-case>" >> $TESTRESULT_FILE
+	exit 1
+elif [ $CHANGES != 0 ]
 then
 	METHOD_NAME=$(get_method_name "$METHOD")
 

@@ -29,9 +29,12 @@
 #include <mono/metadata/class-internals.h>
 #include <mono/metadata/object-internals.h>
 #include <mono/metadata/loader.h>
-#include <mono/metadata/assembly.h>
+#include <mono/metadata/assembly-internals.h>
 #include <mono/metadata/appdomain.h>
+#include <mono/metadata/w32handle.h>
 #include <mono/utils/bsearch.h>
+#include <mono/utils/mono-counters.h>
+#include "mono/metadata/class-init.h"
 
 static void     setup_filter          (MonoImage *image);
 static gboolean should_include_type   (int idx);
@@ -664,7 +667,7 @@ dis_locals (MonoImage *m, MonoMethodHeader *mh, const char *ptr)
 static void
 dis_code (MonoImage *m, guint32 token, guint32 rva, MonoGenericContainer *container)
 {
-	MonoError error;
+	ERROR_DECL (error);
 	MonoMethodHeader *mh;
 	const char *ptr = mono_image_rva_map (m, rva);
 	const char *loc;
@@ -680,7 +683,7 @@ dis_code (MonoImage *m, guint32 token, guint32 rva, MonoGenericContainer *contai
 		g_free (override);
 	}
 
-	mh = mono_metadata_parse_mh_full (m, container, ptr, &error);
+	mh = mono_metadata_parse_mh_full (m, container, ptr, error);
 	entry_point = mono_image_get_entry_point (m);
 	if (entry_point && mono_metadata_token_index (entry_point) && mono_metadata_token_table (entry_point) == MONO_TABLE_METHOD) {
 		loc = mono_metadata_locate_token (m, entry_point);
@@ -701,7 +704,7 @@ dis_code (MonoImage *m, guint32 token, guint32 rva, MonoGenericContainer *contai
 */
 		mono_metadata_free_mh (mh);
 	} else {
-		mono_error_cleanup (&error);
+		mono_error_cleanup (error);
 	}
 }
 
@@ -838,7 +841,7 @@ dis_method_list (const char *klass_name, MonoImage *m, guint32 start, guint32 en
 	}
 
 	for (i = start; i < end; i++){
-		MonoError error;
+		ERROR_DECL (error);
 		MonoMethodSignature *ms;
 		MonoGenericContainer *container;
 		char *flags, *impl_flags;
@@ -856,23 +859,23 @@ dis_method_list (const char *klass_name, MonoImage *m, guint32 start, guint32 en
 		sig = mono_metadata_blob_heap (m, cols [MONO_METHOD_SIGNATURE]);
 		mono_metadata_decode_blob_size (sig, &sig);
 
-		container = mono_metadata_load_generic_params (m, MONO_TOKEN_METHOD_DEF | (i + 1), type_container);
+		container = mono_metadata_load_generic_params (m, MONO_TOKEN_METHOD_DEF | (i + 1), type_container, NULL);
 		if (container) {
-			MonoError error;
-			mono_metadata_load_generic_param_constraints_checked (m, MONO_TOKEN_METHOD_DEF | (i + 1), container, &error);
-			g_assert (mono_error_ok (&error)); /*FIXME don't swallow the error message*/
+			ERROR_DECL (error);
+			mono_metadata_load_generic_param_constraints_checked (m, MONO_TOKEN_METHOD_DEF | (i + 1), container, error);
+			g_assert (is_ok (error)); /*FIXME don't swallow the error message*/
 		} else {
 			container = type_container;
 		}
 
-		ms = mono_metadata_parse_method_signature_full (m, container, i + 1, sig, &sig, &error);
+		ms = mono_metadata_parse_method_signature_full (m, container, i + 1, sig, &sig, error);
 		if (ms != NULL){
 			sig_str = dis_stringify_method_signature (m, ms, i + 1, container, FALSE);
 			method_name = mono_metadata_string_heap (m, cols [MONO_METHOD_NAME]);
 		} else {
 			sig_str = NULL;
 			method_name = g_strdup ("<NULL METHOD SIGNATURE>");
-			mono_error_cleanup (&error);
+			mono_error_cleanup (error);
 		}
 
 		fprintf (output, "    // method line %d\n", i + 1);
@@ -962,7 +965,7 @@ dis_property_methods (MonoImage *m, guint32 prop, MonoGenericContainer *containe
 static char*
 dis_property_signature (MonoImage *m, guint32 prop_idx, MonoGenericContainer *container)
 {
-	MonoError error;
+	ERROR_DECL (error);
 	MonoTableInfo *propt = &m->tables [MONO_TABLE_PROPERTY];
 	const char *ptr;
 	guint32 pcount, i;
@@ -985,12 +988,12 @@ dis_property_signature (MonoImage *m, guint32 prop_idx, MonoGenericContainer *co
 		g_string_append (res, "instance ");
 	ptr++;
 	pcount = mono_metadata_decode_value (ptr, &ptr);
-	type = mono_metadata_parse_type_checked (m, container, 0, FALSE, ptr, &ptr, &error);
+	type = mono_metadata_parse_type_checked (m, container, 0, FALSE, ptr, &ptr, error);
 	if (type) {
 		blurb = dis_stringify_type (m, type, TRUE);
 	} else {
-		blurb = g_strdup_printf ("Invalid type due to %s", mono_error_get_message (&error));
-		mono_error_cleanup (&error);
+		blurb = g_strdup_printf ("Invalid type due to %s", mono_error_get_message (error));
+		mono_error_cleanup (error);
 	}
 	if (prop_flags & 0x0200)
 		g_string_append (res, "specialname ");
@@ -1003,12 +1006,12 @@ dis_property_signature (MonoImage *m, guint32 prop_idx, MonoGenericContainer *co
 	for (i = 0; i < pcount; i++) {
 		if (i)
 			g_string_append (res, ", ");
-		param = mono_metadata_parse_type_checked (m, container, 0, FALSE, ptr, &ptr, &error);
+		param = mono_metadata_parse_type_checked (m, container, 0, FALSE, ptr, &ptr, error);
 		if (type) {
 			blurb = dis_stringify_param (m, param);
 		} else {
-			blurb = g_strdup_printf ("Invalid type due to %s", mono_error_get_message (&error));
-			mono_error_cleanup (&error);
+			blurb = g_strdup_printf ("Invalid type due to %s", mono_error_get_message (error));
+			mono_error_cleanup (error);
 		}
 
 		g_string_append (res, blurb);
@@ -1199,11 +1202,11 @@ dis_type (MonoImage *m, int n, int is_nested, int forward)
 		g_free (esnspace);
 	}
 
-	container = mono_metadata_load_generic_params (m, MONO_TOKEN_TYPE_DEF | (n + 1), NULL);
+	container = mono_metadata_load_generic_params (m, MONO_TOKEN_TYPE_DEF | (n + 1), NULL, NULL);
 	if (container) {
-		MonoError error;
-		mono_metadata_load_generic_param_constraints_checked (m, MONO_TOKEN_TYPE_DEF | (n + 1), container, &error);
-		g_assert (mono_error_ok (&error)); /*FIXME don't swallow the error message*/
+		ERROR_DECL (error);
+		mono_metadata_load_generic_param_constraints_checked (m, MONO_TOKEN_TYPE_DEF | (n + 1), container, error);
+		g_assert (is_ok (error)); /*FIXME don't swallow the error message*/
 	}
 
 	esname = get_escaped_name (name);
@@ -1531,20 +1534,20 @@ dis_data (MonoImage *m)
 	MonoType *type;
 
 	for (i = 0; i < t->rows; i++) {
-		MonoError error;
+		ERROR_DECL (error);
 		mono_metadata_decode_row (t, i, cols, MONO_FIELD_RVA_SIZE);
 		rva = mono_image_rva_map (m, cols [MONO_FIELD_RVA_RVA]);
 		sig = mono_metadata_blob_heap (m, mono_metadata_decode_row_col (ft, cols [MONO_FIELD_RVA_FIELD] -1, MONO_FIELD_SIGNATURE));
 		mono_metadata_decode_value (sig, &sig);
 		/* FIELD signature == 0x06 */
 		g_assert (*sig == 0x06);
-		type = mono_metadata_parse_type_checked (m, NULL, 0, FALSE, sig + 1, &sig, &error);
+		type = mono_metadata_parse_type_checked (m, NULL, 0, FALSE, sig + 1, &sig, error);
 		if (!type) {
-			fprintf (output, "// invalid field %d due to %s\n", i, mono_error_get_message (&error));
-			mono_error_cleanup (&error);
+			fprintf (output, "// invalid field %d due to %s\n", i, mono_error_get_message (error));
+			mono_error_cleanup (error);
 			continue;
 		}
-		mono_class_init (mono_class_from_mono_type (type));
+		mono_class_init_internal (mono_class_from_mono_type_internal (type));
 		size = mono_type_size (type, &align);
 
 		if (rva) {
@@ -1617,7 +1620,7 @@ struct {
  *
  * Disassembles the @file file.
  */
-static void
+static int
 disassemble_file (const char *file)
 {
 	MonoImageOpenStatus status;
@@ -1626,10 +1629,14 @@ disassemble_file (const char *file)
 	img = mono_image_open (file, &status);
 	if (!img) {
 		fprintf (stderr, "Error while trying to process %s\n", file);
-		return;
+		return 1;
 	} else {
 		/* FIXME: is this call necessary? */
-		mono_assembly_load_from_full (img, file, &status, FALSE);
+		/* FIXME: if it's necessary, can it be refonly instead? */
+		MonoAssemblyLoadRequest req;
+		mono_assembly_request_prepare_load (&req, MONO_ASMCTX_DEFAULT, mono_domain_default_alc (mono_domain_get ()));
+
+		mono_assembly_request_load_from (img, file, &req, &status);
 	}
 
 	setup_filter (img);
@@ -1659,6 +1666,7 @@ disassemble_file (const char *file)
 	}
 	
 	mono_image_close (img);
+	return 0;
 }
 
 typedef struct {
@@ -1775,9 +1783,9 @@ sort_filter_elems (void)
 
 	for (item = filter_list; item; item = item->next) {
 		ifilter = (ImageFilter *)item->data;
-		qsort (ifilter->types.elems, ifilter->types.count, sizeof (int), int_cmp);
-		qsort (ifilter->fields.elems, ifilter->fields.count, sizeof (int), int_cmp);
-		qsort (ifilter->methods.elems, ifilter->methods.count, sizeof (int), int_cmp);
+		mono_qsort (ifilter->types.elems, ifilter->types.count, sizeof (int), int_cmp);
+		mono_qsort (ifilter->fields.elems, ifilter->fields.count, sizeof (int), int_cmp);
+		mono_qsort (ifilter->methods.elems, ifilter->methods.count, sizeof (int), int_cmp);
 	}
 }
 
@@ -1841,22 +1849,24 @@ load_filter (const char* filename)
 
 
 static gboolean
-try_load_from (MonoAssembly **assembly, const gchar *path1, const gchar *path2,
-					const gchar *path3, const gchar *path4, gboolean refonly)
+try_load_from (MonoAssembly **assembly,
+	       const gchar *path1, const gchar *path2,
+	       const gchar *path3, const gchar *path4,
+	       const MonoAssemblyOpenRequest *req)
 {
 	gchar *fullpath;
 
 	*assembly = NULL;
-	fullpath = g_build_filename (path1, path2, path3, path4, NULL);
+	fullpath = g_build_filename (path1, path2, path3, path4, (const char*)NULL);
 	if (g_file_test (fullpath, G_FILE_TEST_IS_REGULAR))
-		*assembly = mono_assembly_open_full (fullpath, NULL, refonly);
+		*assembly = mono_assembly_request_open (fullpath, req, NULL);
 
 	g_free (fullpath);
 	return (*assembly != NULL);
 }
 
 static MonoAssembly *
-real_load (gchar **search_path, const gchar *culture, const gchar *name, gboolean refonly)
+real_load (gchar **search_path, const gchar *culture, const gchar *name, const MonoAssemblyOpenRequest *req)
 {
 	MonoAssembly *result = NULL;
 	gchar **path;
@@ -1870,7 +1880,7 @@ real_load (gchar **search_path, const gchar *culture, const gchar *name, gboolea
 		local_culture = culture;
 	}
 
-	filename =  g_strconcat (name, ".dll", NULL);
+	filename =  g_strconcat (name, ".dll", (const char*)NULL);
 	len = strlen (filename);
 
 	for (path = search_path; *path; path++) {
@@ -1880,22 +1890,22 @@ real_load (gchar **search_path, const gchar *culture, const gchar *name, gboolea
 		/* See test cases in bug #58992 and bug #57710 */
 		/* 1st try: [culture]/[name].dll (culture may be empty) */
 		strcpy (filename + len - 4, ".dll");
-		if (try_load_from (&result, *path, local_culture, "", filename, refonly))
+		if (try_load_from (&result, *path, local_culture, "", filename, req))
 			break;
 
 		/* 2nd try: [culture]/[name].exe (culture may be empty) */
 		strcpy (filename + len - 4, ".exe");
-		if (try_load_from (&result, *path, local_culture, "", filename, refonly))
+		if (try_load_from (&result, *path, local_culture, "", filename, req))
 			break;
 
 		/* 3rd try: [culture]/[name]/[name].dll (culture may be empty) */
 		strcpy (filename + len - 4, ".dll");
-		if (try_load_from (&result, *path, local_culture, name, filename, refonly))
+		if (try_load_from (&result, *path, local_culture, name, filename, req))
 			break;
 
 		/* 4th try: [culture]/[name]/[name].exe (culture may be empty) */
 		strcpy (filename + len - 4, ".exe");
-		if (try_load_from (&result, *path, local_culture, name, filename, refonly))
+		if (try_load_from (&result, *path, local_culture, name, filename, req))
 			break;
 	}
 
@@ -1907,15 +1917,20 @@ real_load (gchar **search_path, const gchar *culture, const gchar *name, gboolea
  * Try to load referenced assemblies from assemblies_path.
  */
 static MonoAssembly *
-monodis_preload (MonoAssemblyName *aname,
-				 gchar **assemblies_path,
-				 gpointer user_data)
+monodis_preload (MonoAssemblyLoadContext *alc,
+                 MonoAssemblyName *aname,
+                 gchar **assemblies_path,
+                 gboolean refonly,
+                 gpointer user_data,
+                 MonoError *error)
 {
 	MonoAssembly *result = NULL;
-	gboolean refonly = GPOINTER_TO_UINT (user_data);
 
 	if (assemblies_path && assemblies_path [0] != NULL) {
-		result = real_load (assemblies_path, aname->culture, aname->name, refonly);
+		MonoAssemblyOpenRequest req;
+		mono_assembly_request_prepare_open (&req, refonly ? MONO_ASMCTX_REFONLY : MONO_ASMCTX_DEFAULT, alc);
+
+		result = real_load (assemblies_path, aname->culture, aname->name, &req);
 	}
 
 	return result;
@@ -1924,19 +1939,19 @@ monodis_preload (MonoAssemblyName *aname,
 static GList *loaded_assemblies = NULL;
 
 static void
-monodis_assembly_load_hook (MonoAssembly *assembly, gpointer user_data)
+monodis_assembly_load_hook (MonoAssemblyLoadContext *alc, MonoAssembly *assembly, gpointer user_data, MonoError *error)
 {
 	loaded_assemblies = g_list_prepend (loaded_assemblies, assembly);
 }
 
 static MonoAssembly *
-monodis_assembly_search_hook (MonoAssemblyName *aname, gpointer user_data)
+monodis_assembly_search_hook (MonoAssemblyLoadContext *alc, MonoAssembly *requesting, MonoAssemblyName *aname, gboolean refonly, gboolean postload, gpointer user_data, MonoError *error)
 {
         GList *tmp;
 
        for (tmp = loaded_assemblies; tmp; tmp = tmp->next) {
                MonoAssembly *ass = (MonoAssembly *)tmp->data;
-               if (mono_assembly_names_equal (aname, &ass->aname))
+               if (mono_assembly_check_name_match (aname, &ass->aname))
 		       return ass;
        }
        return NULL;
@@ -1945,8 +1960,10 @@ monodis_assembly_search_hook (MonoAssemblyName *aname, gpointer user_data)
 static void
 usage (void)
 {
-	GString *args = g_string_new ("[--output=filename] [--filter=filename] [--help] [--mscorlib]\n");
+	GString *args = g_string_new ("[--output=filename] [--filter=filename]\n");
 	int i;
+
+	g_string_append (args, "[--help] [--mscorlib] [--show-tokens] [--show-method-tokens]\n");
 	
 	for (i = 0; table_list [i].name != NULL; i++){
 		g_string_append (args, "[");
@@ -1962,9 +1979,22 @@ usage (void)
 	exit (1);
 }
 
+static void
+monodis_thread_state_init (MonoThreadUnwindState *ctx)
+{
+}
+
+#define monodis_setup_async_callback          NULL
+#define monodis_thread_state_init_from_sigctx NULL
+#define monodis_thread_state_init_from_handle NULL
+
 int
 main (int argc, char *argv [])
 {
+	static const MonoThreadInfoRuntimeCallbacks ticallbacks = {
+		MONO_THREAD_INFO_RUNTIME_CALLBACKS (MONO_INIT_CALLBACK, monodis)
+	};
+
 	GList *input_files = NULL, *l;
 	int i, j;
 
@@ -2015,8 +2045,16 @@ main (int argc, char *argv [])
 	if (input_files == NULL)
 		usage ();
 
-	mono_install_assembly_load_hook (monodis_assembly_load_hook, NULL);
-	mono_install_assembly_search_hook (monodis_assembly_search_hook, NULL);
+	CHECKED_MONO_INIT ();
+	mono_counters_init ();
+	mono_tls_init_runtime_keys ();
+#ifndef HOST_WIN32
+	mono_w32handle_init ();
+#endif
+	mono_thread_info_runtime_init (&ticallbacks);
+
+	mono_install_assembly_load_hook_v2 (monodis_assembly_load_hook, NULL, FALSE);
+	mono_install_assembly_search_hook_v2 (monodis_assembly_search_hook, NULL, FALSE, FALSE, FALSE);
 
 	/*
 	 * If we just have one file, use the corlib version it requires.
@@ -2026,14 +2064,16 @@ main (int argc, char *argv [])
 
 		mono_init_from_assembly (argv [0], filename);
 
-		mono_install_assembly_preload_hook (monodis_preload, GUINT_TO_POINTER (FALSE));
+		mono_install_assembly_preload_hook_v2 (monodis_preload, GUINT_TO_POINTER (FALSE), FALSE, FALSE);
 
-		disassemble_file (filename);
+		return disassemble_file (filename);
 	} else {
 		mono_init (argv [0]);
 
+		i = 0;
 		for (l = input_files; l; l = l->next)
-			disassemble_file ((const char *)l->data);
+			if (disassemble_file ((const char *)l->data) == 1) i = 1;
+		return i;
 	}
 
 	return 0;

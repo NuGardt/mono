@@ -1,11 +1,13 @@
-/*
- * abcremoval.c: Array bounds check removal
+/**
+ * \file
+ * Array bounds check removal
  *
  * Author:
  *   Massimiliano Mantione (massi@ximian.com)
  *
  * (C) 2004 Ximian, Inc.  http://www.ximian.com
  */
+#include <config.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -13,6 +15,7 @@
 #include <mono/metadata/mempool.h>
 #include <mono/metadata/opcodes.h>
 #include <mono/metadata/mempool-internals.h>
+#include <mono/utils/mono-compiler.h>
 
 #include <config.h>
 
@@ -20,7 +23,7 @@
 
 #include "abcremoval.h"
 
-#if SIZEOF_VOID_P == 8
+#if TARGET_SIZEOF_VOID_P == 8
 #define OP_PCONST OP_I8CONST
 #else
 #define OP_PCONST OP_ICONST
@@ -99,10 +102,10 @@ print_summarized_value (MonoSummarizedValue *value) {
 		printf ("ANY");
 		break;
 	case MONO_CONSTANT_SUMMARIZED_VALUE:
-		printf ("CONSTANT %d", value->value.constant.value);
+		printf ("CONSTANT %d, not-null = %d", value->value.constant.value, value->value.constant.nullness);
 		break;
 	case MONO_VARIABLE_SUMMARIZED_VALUE:
-		printf ("VARIABLE %d, delta %d", value->value.variable.variable, value->value.variable.delta);
+		printf ("VARIABLE %d, delta %d, not-null = %d", value->value.variable.variable, value->value.variable.delta, value->value.variable.nullness);
 		break;
 	case MONO_PHI_SUMMARIZED_VALUE: {
 		int phi;
@@ -179,14 +182,15 @@ print_evaluation_context_status (MonoRelationsEvaluationStatus status) {
 
 static void
 print_evaluation_context_ranges (MonoRelationsEvaluationRanges *ranges) {
-	printf ("(ranges: zero [%d,%d], variable [%d,%d])", ranges->zero.lower, ranges->zero.upper, ranges->variable.lower, ranges->variable.upper);
+	printf ("(ranges: zero [%d,%d] (not-null = %d), variable [%d,%d])",
+		ranges->zero.lower, ranges->zero.upper, ranges->zero.nullness,
+		ranges->variable.lower, ranges->variable.upper);
 }
 
 static void
-print_evaluation_context (MonoRelationsEvaluationContext *context) {
-	printf ("Context status: ");
-	print_evaluation_context_status (context->status);
-	if (context->status & (MONO_RELATIONS_EVALUATION_IN_PROGRESS|MONO_RELATIONS_EVALUATION_COMPLETED)) {
+print_evaluation_context (MonoRelationsEvaluationContext *context, MonoRelationsEvaluationStatus status) {
+	print_evaluation_context_status (status);
+	if (status & (MONO_RELATIONS_EVALUATION_IN_PROGRESS|MONO_RELATIONS_EVALUATION_COMPLETED)) {
 		print_evaluation_context_ranges (&(context->ranges));
 	}
 	printf ("\n");
@@ -269,16 +273,19 @@ get_relation_from_ins (MonoVariableRelationsEvaluationArea *area, MonoInst *ins,
 	case OP_ICONST:
 		value->type = MONO_CONSTANT_SUMMARIZED_VALUE;
 		value->value.constant.value = ins->inst_c0;
+		value->value.constant.nullness = MONO_VALUE_MAYBE_NULL;
 		break;
 	case OP_MOVE:
 		value->type = MONO_VARIABLE_SUMMARIZED_VALUE;
 		value->value.variable.variable = ins->sreg1;
 		value->value.variable.delta = 0;
+		value->value.variable.nullness = (MonoValueNullness) (MONO_VALUE_IS_VARIABLE | MONO_VALUE_MAYBE_NULL);
 		break;
 	case OP_SEXT_I4:
 		value->type = MONO_VARIABLE_SUMMARIZED_VALUE;
 		value->value.variable.variable = ins->sreg1;
 		value->value.variable.delta = 0;
+		value->value.variable.nullness = MONO_VALUE_MAYBE_NULL;
 		value_kind = MONO_INTEGER_VALUE_SIZE_8;
 		break;
 	case OP_PHI:
@@ -290,6 +297,7 @@ get_relation_from_ins (MonoVariableRelationsEvaluationArea *area, MonoInst *ins,
 		value->type = MONO_VARIABLE_SUMMARIZED_VALUE;
 		value->value.variable.variable = ins->sreg1;
 		value->value.variable.delta = ins->inst_imm;
+		value->value.variable.nullness = MONO_VALUE_MAYBE_NULL;
 		/* FIXME: */
 		//check_delta_safety (area, result);
 		break;
@@ -297,6 +305,7 @@ get_relation_from_ins (MonoVariableRelationsEvaluationArea *area, MonoInst *ins,
 		value->type = MONO_VARIABLE_SUMMARIZED_VALUE;
 		value->value.variable.variable = ins->sreg1;
 		value->value.variable.delta = -ins->inst_imm;
+		value->value.variable.nullness = MONO_VALUE_MAYBE_NULL;
 		/* FIXME: */
 		//check_delta_safety (area, result);
 		break;
@@ -306,6 +315,7 @@ get_relation_from_ins (MonoVariableRelationsEvaluationArea *area, MonoInst *ins,
 		value->type = MONO_VARIABLE_SUMMARIZED_VALUE;
 		value->value.variable.variable = ins->sreg2;
 		value->value.variable.delta = 0;
+		value->value.variable.nullness = MONO_VALUE_MAYBE_NULL;
 		value_kind = MONO_UNSIGNED_INTEGER_VALUE_SIZE_4;
 		break;
 	case OP_LDLEN:
@@ -316,19 +326,22 @@ get_relation_from_ins (MonoVariableRelationsEvaluationArea *area, MonoInst *ins,
 		value->type = MONO_VARIABLE_SUMMARIZED_VALUE;
 		value->value.variable.variable = ins->sreg1;
 		value->value.variable.delta = 0;
+		value->value.variable.nullness = MONO_VALUE_MAYBE_NULL;
 		value_kind = MONO_UNSIGNED_INTEGER_VALUE_SIZE_4;
 		break;
 	case OP_NEWARR:
 		value->type = MONO_VARIABLE_SUMMARIZED_VALUE;
 		value->value.variable.variable = ins->sreg1;
 		value->value.variable.delta = 0;
+		value->value.variable.nullness = MONO_VALUE_NOT_NULL;
 		area->defs [ins->dreg] = ins;
 		break;
 	case OP_LDADDR:
 		/* The result is non-null */
-		result->relation = MONO_GT_RELATION;
+		result->relation = MONO_GE_RELATION;
 		value->type = MONO_CONSTANT_SUMMARIZED_VALUE;
-		value->value.constant.value = 0;
+		value->value.constant.value = INT_MIN;
+		value->value.constant.nullness = MONO_VALUE_NOT_NULL;
 		break;
 
 		/* FIXME: Add more opcodes */
@@ -440,7 +453,8 @@ get_relations_from_previous_bb (MonoVariableRelationsEvaluationArea *area, MonoB
 	MonoValueRelation branch_relation;
 	MonoValueRelation symmetric_relation;
 	gboolean code_path;
-	
+
+	memset (relations, 0, sizeof (MonoAdditionalVariableRelationsForBB));
 	INITIALIZE_VALUE_RELATION (&(relations->relation1.relation));
 	relations->relation1.relation.relation_is_static_definition = FALSE;
 	relations->relation1.relation.next = NULL;
@@ -485,17 +499,20 @@ get_relations_from_previous_bb (MonoVariableRelationsEvaluationArea *area, MonoB
 				relations->relation1.relation.related_value.type = MONO_VARIABLE_SUMMARIZED_VALUE;
 				relations->relation1.relation.related_value.value.variable.variable = compare->sreg2;
 				relations->relation1.relation.related_value.value.variable.delta = 0;
+				relations->relation1.relation.related_value.value.variable.nullness = MONO_VALUE_MAYBE_NULL;
 
 				relations->relation2.variable = compare->sreg2;
 				relations->relation2.relation.relation = symmetric_relation;
 				relations->relation2.relation.related_value.type = MONO_VARIABLE_SUMMARIZED_VALUE;
 				relations->relation2.relation.related_value.value.variable.variable = compare->sreg1;
 				relations->relation2.relation.related_value.value.variable.delta = 0;
+				relations->relation1.relation.related_value.value.variable.nullness = MONO_VALUE_MAYBE_NULL;
 			} else if (compare->opcode == OP_ICOMPARE_IMM) {
 				relations->relation1.variable = compare->sreg1;
 				relations->relation1.relation.relation = branch_relation;
 				relations->relation1.relation.related_value.type = MONO_CONSTANT_SUMMARIZED_VALUE;
 				relations->relation1.relation.related_value.value.constant.value = compare->inst_imm;
+				relations->relation1.relation.related_value.value.constant.nullness = MONO_VALUE_MAYBE_NULL;
 			}
 		}
 	}
@@ -537,14 +554,30 @@ remove_change_from_evaluation_area (MonoAdditionalVariableRelation *change)
 
 
 static void
-clean_contexts (MonoRelationsEvaluationContext *contexts, int number)
+clean_contexts (MonoVariableRelationsEvaluationArea *area, int number)
 {
-	int i;
-	for (i = 0; i < number; i++) {
-		contexts [i].status = MONO_RELATIONS_EVALUATION_NOT_STARTED;
-	}
+	memset(area->statuses, MONO_RELATIONS_EVALUATION_NOT_STARTED, number * sizeof(MonoRelationsEvaluationStatus));
 }
 
+static void
+union_nullness (MonoRelationsEvaluationRange *range, MonoValueNullness n)
+{
+	range->nullness = (MonoValueNullness) (range->nullness & (MONO_VALUE_NULLNESS_MASK & n));
+}
+
+static void
+intersect_nullness (MonoRelationsEvaluationRange *range, MonoValueNullness n, MonoValueRelation relation)
+{
+	switch (relation) {
+	case MONO_NO_RELATION:
+	case MONO_ANY_RELATION:
+	case MONO_NE_RELATION:
+		range->nullness = MONO_VALUE_MAYBE_NULL;
+		break;
+	default:
+		range->nullness = (MonoValueNullness) (range->nullness | (MONO_VALUE_NULLNESS_MASK & n));
+	}
+}
 
 /*
  * Perform the intersection of a range and a constant value (taking into
@@ -554,7 +587,7 @@ clean_contexts (MonoRelationsEvaluationContext *contexts, int number)
  * relation: the relation between the range and the value
  */
 static void
-intersect_value( MonoRelationsEvaluationRange *range, int value, MonoValueRelation relation )
+intersect_value( MonoRelationsEvaluationRange *range, MonoSummarizedConstantValue value, MonoValueRelation relation )
 {
 	switch (relation) {
 	case MONO_NO_RELATION:
@@ -563,28 +596,29 @@ intersect_value( MonoRelationsEvaluationRange *range, int value, MonoValueRelati
 	case MONO_ANY_RELATION:
 		break;
 	case MONO_EQ_RELATION:
-		MONO_UPPER_EVALUATION_RANGE_INTERSECTION (range->upper, value);
-		MONO_LOWER_EVALUATION_RANGE_INTERSECTION (range->lower, value);
+		MONO_UPPER_EVALUATION_RANGE_INTERSECTION (range->upper, value.value);
+		MONO_LOWER_EVALUATION_RANGE_INTERSECTION (range->lower, value.value);
 		break;
 	case MONO_NE_RELATION: {
 		/* IMPROVEMENT Figure this out! (ignoring it is safe anyway) */
 		break;
 	}
 	case MONO_LT_RELATION:
-		MONO_UPPER_EVALUATION_RANGE_INTERSECTION (range->upper, MONO_UPPER_EVALUATION_RANGE_NOT_EQUAL (value));
+		MONO_UPPER_EVALUATION_RANGE_INTERSECTION (range->upper, MONO_UPPER_EVALUATION_RANGE_NOT_EQUAL (value.value));
 		break;
 	case MONO_LE_RELATION:
-		MONO_UPPER_EVALUATION_RANGE_INTERSECTION (range->upper, value);
+		MONO_UPPER_EVALUATION_RANGE_INTERSECTION (range->upper, value.value);
 		break;
 	case MONO_GT_RELATION:
-		MONO_LOWER_EVALUATION_RANGE_INTERSECTION (range->lower, MONO_LOWER_EVALUATION_RANGE_NOT_EQUAL (value));
+		MONO_LOWER_EVALUATION_RANGE_INTERSECTION (range->lower, MONO_LOWER_EVALUATION_RANGE_NOT_EQUAL (value.value));
 		break;
 	case MONO_GE_RELATION:
-		MONO_LOWER_EVALUATION_RANGE_INTERSECTION (range->lower, value);
+		MONO_LOWER_EVALUATION_RANGE_INTERSECTION (range->lower, value.value);
 		break;
 	default:
 		g_assert_not_reached();
 	}
+	intersect_nullness (range, value.nullness, relation);
 }
 
 
@@ -597,9 +631,9 @@ intersect_value( MonoRelationsEvaluationRange *range, int value, MonoValueRelati
  * relation: the relation between the pairs of ranges
  */
 static void
-intersect_ranges( MonoRelationsEvaluationRanges *ranges, MonoRelationsEvaluationRanges *other_ranges, int delta, MonoValueRelation relation )
+intersect_ranges (MonoRelationsEvaluationRanges *ranges, MonoRelationsEvaluationRanges *other_ranges, MonoSummarizedVariableValue value, MonoValueRelation relation)
 {
-	if (delta == 0) {
+	if (value.delta == 0) {
 		switch (relation) {
 		case MONO_NO_RELATION:
 			MONO_MAKE_RELATIONS_EVALUATION_RANGES_IMPOSSIBLE (*ranges);
@@ -632,10 +666,15 @@ intersect_ranges( MonoRelationsEvaluationRanges *ranges, MonoRelationsEvaluation
 		default:
 			g_assert_not_reached();
 		}
+		if (value.nullness & MONO_VALUE_IS_VARIABLE)
+			intersect_nullness (&ranges->zero, other_ranges->zero.nullness, relation);
+		intersect_nullness (&ranges->zero, value.nullness, relation);
 	} else {
 		MonoRelationsEvaluationRanges translated_ranges = *other_ranges;
-		MONO_ADD_DELTA_SAFELY_TO_RANGES (translated_ranges, delta);
-		intersect_ranges( ranges, &translated_ranges, FALSE, relation );
+		MONO_ADD_DELTA_SAFELY_TO_RANGES (translated_ranges, value.delta);
+		MonoSummarizedVariableValue translated_value = value;
+		translated_value.delta = 0;
+		intersect_ranges (ranges, &translated_ranges, translated_value, relation);
 	}
 }
 
@@ -655,24 +694,25 @@ intersect_ranges( MonoRelationsEvaluationRanges *ranges, MonoRelationsEvaluation
  *                 (or NULL for the first invocation)
  */
 static void
-evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *area, int variable, int target_variable, MonoRelationsEvaluationContext *father_context)
+evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *area, const int variable, const int target_variable, MonoRelationsEvaluationContext *father_context)
 {
-	MonoRelationsEvaluationContext *context = &(area->contexts [variable]);
+	MonoRelationsEvaluationContext * const context = &(area->contexts [variable]);
+	MonoRelationsEvaluationStatus * const status = &(area->statuses [variable]);
 	
 	// First of all, we check the evaluation status
 	// (what must be done is *very* different in each case)
-	switch (context->status) {
+	switch (*status) {
 	case MONO_RELATIONS_EVALUATION_NOT_STARTED: {
 		MonoSummarizedValueRelation *relation = &(area->relations [variable]);
 		
 		if (TRACE_ABC_REMOVAL) {
-			printf ("Evaluating variable %d (target variable %d)\n", variable, target_variable);
+			printf ("Evaluating variable %d (target variable %d); ", variable, target_variable);
 			print_summarized_value_relation (relation);
 			printf ("\n");
 		}
 		
 		// We properly inizialize the context
-		context->status = MONO_RELATIONS_EVALUATION_IN_PROGRESS;
+		*status = MONO_RELATIONS_EVALUATION_IN_PROGRESS;
 		context->father = father_context;
 		MONO_MAKE_RELATIONS_EVALUATION_RANGES_WEAK (context->ranges);
 		
@@ -704,7 +744,7 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 				break;
 			case MONO_CONSTANT_SUMMARIZED_VALUE:
 				// Intersect range with constant (taking into account the relation)
-				intersect_value (&(context->ranges.zero), relation->related_value.value.constant.value, relation->relation);
+				intersect_value (&(context->ranges.zero), relation->related_value.value.constant, relation->relation);
 				break;
 			case MONO_VARIABLE_SUMMARIZED_VALUE:
 				// Generally, evaluate related variable and intersect ranges.
@@ -714,24 +754,25 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 				if (relation->relation != MONO_ANY_RELATION) {
 					int related_variable = relation->related_value.value.variable.variable;
 					MonoRelationsEvaluationContext *related_context = &(area->contexts [related_variable]);
+					MonoRelationsEvaluationStatus related_status = area->statuses [related_variable];
 					
 					// The second condition in the "or" avoids messing with "back edges" in the graph traversal
 					// (they are simply ignored instead of triggering the handling of recursion)
-					if ( (related_context->status == MONO_RELATIONS_EVALUATION_NOT_STARTED) || !
+					if ( (related_status == MONO_RELATIONS_EVALUATION_NOT_STARTED) || !
 							((related_context->current_relation->related_value.type == MONO_VARIABLE_SUMMARIZED_VALUE) &&
 							(related_context->current_relation->related_value.value.variable.variable == variable))) {
 						// Evaluate the related variable
 						evaluate_relation_with_target_variable (area, related_variable, target_variable, context);
 						
 						// Check if we are part of a recursive loop
-						if (context->status & MONO_RELATIONS_EVALUATION_IS_RECURSIVE) {
+						if (*status & MONO_RELATIONS_EVALUATION_IS_RECURSIVE) {
 							if (TRACE_ABC_REMOVAL) {
 								printf ("Recursivity detected for variable %d (target variable %d), status ", variable, target_variable);
-								print_evaluation_context_status (context->status);
+								print_evaluation_context_status (*status);
 							}
 							
 							// If we are, check if the evaluation of the related variable is complete
-							if (related_context->status == MONO_RELATIONS_EVALUATION_COMPLETED) {
+							if (related_status == MONO_RELATIONS_EVALUATION_COMPLETED) {
 								// If it is complete, we are part of a recursive definition.
 								// Since it is a *definition* (and definitions are evaluated *before*
 								// conditions because they are first in the list), intersection is not
@@ -739,7 +780,7 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 								context->ranges = related_context->ranges;
 								/* Delta has already been checked for over/under-flow when evaluating values */
 								MONO_ADD_DELTA_SAFELY_TO_RANGES (context->ranges, relation->related_value.value.variable.delta);
-								context->status = MONO_RELATIONS_EVALUATION_COMPLETED;
+								*status = MONO_RELATIONS_EVALUATION_COMPLETED;
 								if (TRACE_ABC_REMOVAL) {
 									printf (", ranges already computed, result: \n");
 									print_evaluation_context_ranges (&(context->ranges));
@@ -753,7 +794,7 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 							}
 						} else {
 							// If we are not (the common case) intersect the result
-							intersect_ranges( &(context->ranges), &(related_context->ranges), relation->related_value.value.variable.delta, relation->relation );
+							intersect_ranges (&(context->ranges), &(related_context->ranges), relation->related_value.value.variable, relation->relation);
 						}
 					} else {
 						if (TRACE_ABC_REMOVAL) {
@@ -772,32 +813,35 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 				gboolean is_descending = FALSE;
 				
 				MONO_MAKE_RELATIONS_EVALUATION_RANGES_IMPOSSIBLE (phi_ranges);
+				phi_ranges.zero.nullness = relation->related_value.value.phi.number_of_alternatives > 0 ? MONO_VALUE_NOT_NULL : MONO_VALUE_MAYBE_NULL;
 				for (phi = 0; phi < relation->related_value.value.phi.number_of_alternatives; phi++) {
 					int phi_alternative = relation->related_value.value.phi.phi_alternatives [phi];
 					evaluate_relation_with_target_variable (area, phi_alternative, target_variable, context);
 					
 					// This means we are part of a recursive loop
-					if (context->status & MONO_RELATIONS_EVALUATION_IS_RECURSIVE) {
+					if (*status & MONO_RELATIONS_EVALUATION_IS_RECURSIVE) {
 						if (TRACE_ABC_REMOVAL) {
 							printf ("Recursivity detected for variable %d (target variable %d), status ", variable, target_variable);
-							print_evaluation_context_status (context->status);
+							print_evaluation_context_status (*status);
 							printf ("\n");
 						}
-						if (context->status & MONO_RELATIONS_EVALUATION_IS_RECURSIVELY_ASCENDING) {
+						if (*status & MONO_RELATIONS_EVALUATION_IS_RECURSIVELY_ASCENDING) {
 							is_ascending = TRUE;
 						}
-						if (context->status & MONO_RELATIONS_EVALUATION_IS_RECURSIVELY_DESCENDING) {
+						if (*status & MONO_RELATIONS_EVALUATION_IS_RECURSIVELY_DESCENDING) {
 							is_descending = TRUE;
 						}
-						if (context->status & MONO_RELATIONS_EVALUATION_IS_RECURSIVELY_INDEFINITE) {
+						if (*status & MONO_RELATIONS_EVALUATION_IS_RECURSIVELY_INDEFINITE) {
 							is_ascending = TRUE;
 							is_descending = TRUE;
 						}
+						phi_ranges.zero.nullness = MONO_VALUE_MAYBE_NULL;
 						
 						// Clear "recursivity" bits in the status (recursion has been handled)
-						context->status = MONO_RELATIONS_EVALUATION_IN_PROGRESS;
+						*status = MONO_RELATIONS_EVALUATION_IN_PROGRESS;
 					} else {
 						MONO_RELATIONS_EVALUATION_RANGES_UNION (phi_ranges, area->contexts [phi_alternative].ranges);
+						union_nullness (&phi_ranges.zero, area->contexts [phi_alternative].ranges.zero.nullness);
 					}
 				}
 				
@@ -813,6 +857,7 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 				
 				// Intersect final result
 				MONO_RELATIONS_EVALUATION_RANGES_INTERSECTION (context->ranges, phi_ranges);
+				intersect_nullness (&context->ranges.zero, phi_ranges.zero.nullness, MONO_EQ_RELATION);
 				break;
 			}
 			default:
@@ -824,16 +869,16 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 		}
 		
 		// Check if any recursivity bits are still in the status, and in any case clear them
-		if (context->status & MONO_RELATIONS_EVALUATION_IS_RECURSIVE) {
+		if (*status & MONO_RELATIONS_EVALUATION_IS_RECURSIVE) {
 			if (TRACE_ABC_REMOVAL) {
 				printf ("Recursivity for variable %d (target variable %d) discards computation, status ", variable, target_variable);
-				print_evaluation_context_status (context->status);
+				print_evaluation_context_status (*status);
 				printf ("\n");
 			}
 			// If yes, we did not have enough information (most likely we were evaluated inside a PHI, but we also
 			// depended on the same PHI, which was still in evaluation...), so clear the status to "NOT_STARTED"
 			// (if we will be evaluated again, the PHI will be already done, so our evaluation will succeed)
-			context->status = MONO_RELATIONS_EVALUATION_NOT_STARTED;
+			*status = MONO_RELATIONS_EVALUATION_NOT_STARTED;
 		} else {
 			if (TRACE_ABC_REMOVAL) {
 				printf ("Ranges for variable %d (target variable %d) computed: ", variable, target_variable);
@@ -841,7 +886,7 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 				printf ("\n");
 			}
 			// If not (the common case) the evaluation is complete, and the result is in the context
-			context->status = MONO_RELATIONS_EVALUATION_COMPLETED;
+			*status = MONO_RELATIONS_EVALUATION_COMPLETED;
 		}
 		break;
 	}
@@ -855,7 +900,7 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 		
 		if (TRACE_ABC_REMOVAL) {
 			printf ("Evaluation of variable %d (target variable %d) already in progress\n", variable, target_variable);
-			print_evaluation_context (context);
+			print_evaluation_context (context, *status);
 			print_summarized_value_relation (context->current_relation);
 			printf ("\n");
 		}
@@ -905,7 +950,9 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 			
 			current_context = father_context;
 			while (current_context != last_context) {
-				current_context->status = (MonoRelationsEvaluationStatus)(current_context->status | recursive_status);
+				int index = current_context - area->contexts;
+				MonoRelationsEvaluationStatus *current_status = &(area->statuses [index]);
+				*current_status = (MonoRelationsEvaluationStatus)(*current_status | recursive_status);
 				current_context = current_context->father;
 			}
 		} else {
@@ -921,7 +968,7 @@ evaluate_relation_with_target_variable (MonoVariableRelationsEvaluationArea *are
 	default:
 		if (TRACE_ABC_REMOVAL) {
 			printf ("Variable %d (target variable %d) already in a recursive ring, skipping\n", variable, target_variable);
-			print_evaluation_context (context);
+			print_evaluation_context (context, *status);
 			print_summarized_value_relation (context->current_relation);
 			printf ("\n");
 		}
@@ -986,7 +1033,7 @@ remove_abc_from_inst (MonoInst *ins, MonoVariableRelationsEvaluationArea *area)
 	MonoRelationsEvaluationContext *array_context = &(area->contexts [array_variable]);
 	MonoRelationsEvaluationContext *index_context = &(area->contexts [index_variable]);
 				
-	clean_contexts (area->contexts, area->cfg->next_vreg);
+	clean_contexts (area, area->cfg->next_vreg);
 				
 	evaluate_relation_with_target_variable (area, index_variable, array_variable, NULL);
 	evaluate_relation_with_target_variable (area, array_variable, array_variable, NULL);
@@ -1017,10 +1064,10 @@ eval_non_null (MonoVariableRelationsEvaluationArea *area, int reg)
 {
 	MonoRelationsEvaluationContext *context = &(area->contexts [reg]);
 
-	clean_contexts (area->contexts, area->cfg->next_vreg);
+	clean_contexts (area, area->cfg->next_vreg);
 	evaluate_relation_with_target_variable (area, reg, reg, NULL);
 				
-	return context->ranges.zero.lower > 0;
+	return context->ranges.zero.nullness == MONO_VALUE_NOT_NULL;
 }
 
 static void
@@ -1031,9 +1078,10 @@ add_non_null (MonoVariableRelationsEvaluationArea *area, MonoCompile *cfg, int r
 
 	rel = (MonoAdditionalVariableRelation *)mono_mempool_alloc0 (cfg->mempool, sizeof (MonoAdditionalVariableRelation));
 	rel->variable = reg;
-	rel->relation.relation = MONO_GT_RELATION;
+	rel->relation.relation = MONO_GE_RELATION;
 	rel->relation.related_value.type = MONO_CONSTANT_SUMMARIZED_VALUE;
-	rel->relation.related_value.value.constant.value = 0;
+	rel->relation.related_value.value.constant.value = INT_MIN;
+	rel->relation.related_value.value.constant.nullness = MONO_VALUE_NOT_NULL;
 
 	apply_change_to_evaluation_area (area, rel);
 
@@ -1055,14 +1103,13 @@ add_non_null (MonoVariableRelationsEvaluationArea *area, MonoCompile *cfg, int r
  */
 static void
 process_block (MonoCompile *cfg, MonoBasicBlock *bb, MonoVariableRelationsEvaluationArea *area) {
-	int inst_index;
 	MonoInst *ins;
 	MonoAdditionalVariableRelationsForBB additional_relations;
 	GSList *dominated_bb, *l;
 	GSList *check_relations = NULL;
 	
 	if (TRACE_ABC_REMOVAL) {
-		printf ("\nProcessing block %d [dfn %d]...\n", bb->block_num, bb->dfn);
+		printf ("\nABCREM BLOCK/2 %d [dfn %d]...\n", bb->block_num, bb->dfn);
 	}
 
 	if (bb->region != -1)
@@ -1084,21 +1131,14 @@ process_block (MonoCompile *cfg, MonoBasicBlock *bb, MonoVariableRelationsEvalua
 	apply_change_to_evaluation_area (area, &(additional_relations.relation1));
 	apply_change_to_evaluation_area (area, &(additional_relations.relation2));
 
-	inst_index = 0;
 	for (ins = bb->code; ins; ins = ins->next) {
 		MonoAdditionalVariableRelation *rel;
 		int array_var, index_var;
 
-		if (TRACE_ABC_REMOVAL) {
-			printf ("Processing instruction %d\n", inst_index);
-			inst_index++;
-		}
+		if (TRACE_ABC_REMOVAL)
+			mono_print_ins (ins);
 
 		if (ins->opcode == OP_BOUNDS_CHECK) { /* Handle OP_LDELEMA2D, too */
-			if (TRACE_ABC_REMOVAL) {
-				printf ("Attempting check removal...\n");
-			}
-
 			array_var = ins->sreg1;
 			index_var = ins->sreg2;
 		
@@ -1112,6 +1152,7 @@ process_block (MonoCompile *cfg, MonoBasicBlock *bb, MonoVariableRelationsEvalua
 				rel->relation.related_value.type = MONO_VARIABLE_SUMMARIZED_VALUE;
 				rel->relation.related_value.value.variable.variable = array_var;
 				rel->relation.related_value.value.variable.delta = 0;
+				rel->relation.related_value.value.variable.nullness = MONO_VALUE_MAYBE_NULL;
 
 				apply_change_to_evaluation_area (area, rel);
 
@@ -1122,6 +1163,7 @@ process_block (MonoCompile *cfg, MonoBasicBlock *bb, MonoVariableRelationsEvalua
 				rel->relation.relation = MONO_GE_RELATION;
 				rel->relation.related_value.type = MONO_CONSTANT_SUMMARIZED_VALUE;
 				rel->relation.related_value.value.constant.value = 0;
+				rel->relation.related_value.value.constant.nullness = MONO_VALUE_MAYBE_NULL;
 
 				apply_change_to_evaluation_area (area, rel);
 
@@ -1132,7 +1174,7 @@ process_block (MonoCompile *cfg, MonoBasicBlock *bb, MonoVariableRelationsEvalua
 		if (ins->opcode == OP_CHECK_THIS) {
 			if (eval_non_null (area, ins->sreg1)) {
 				if (REPORT_ABC_REMOVAL)
-					printf ("ARRAY-ACCESS: removed check_this instruction.\n");
+					printf ("ARRAY-ACCESS: removed check_this instruction for R%d.\n", ins->sreg1);
 				NULLIFY_INS (ins);
 			}
 		}
@@ -1140,10 +1182,15 @@ process_block (MonoCompile *cfg, MonoBasicBlock *bb, MonoVariableRelationsEvalua
 		if (ins->opcode == OP_NOT_NULL)
 			add_non_null (area, cfg, ins->sreg1, &check_relations);
 
-		/* 
-		 * FIXME: abcrem equates an array with its length,
-		 * so a = new int [100] implies a != null, but a = new int [0] doesn't.
-		 */
+		if (ins->opcode == OP_COMPARE_IMM && ins->inst_imm == 0 && ins->next && ins->next->opcode == OP_COND_EXC_EQ) {
+			if (eval_non_null (area, ins->sreg1)) {
+				if (REPORT_ABC_REMOVAL)
+					printf ("ARRAY-ACCESS: Removed null check for R%d.\n", ins->sreg1);
+				NULLIFY_INS (ins->next);
+				NULLIFY_INS (ins);
+			}
+		}
+
 		/*
 		 * Eliminate MONO_INST_FAULT flags if possible.
 		 */
@@ -1184,10 +1231,6 @@ process_block (MonoCompile *cfg, MonoBasicBlock *bb, MonoVariableRelationsEvalua
 		}
 	}	
 	
-	if (TRACE_ABC_REMOVAL) {
-		printf ("Processing block %d [dfn %d] done.\n", bb->block_num, bb->dfn);
-	}
-	
 	for (dominated_bb = bb->dominated; dominated_bb != NULL; dominated_bb = dominated_bb->next) {
 		process_block (cfg, (MonoBasicBlock*) (dominated_bb->data), area);
 	}
@@ -1224,10 +1267,10 @@ type_to_value_kind (MonoType *type)
 		return MONO_UNSIGNED_INTEGER_VALUE_SIZE_4;
 		break;
 	case MONO_TYPE_I:
-		return (MonoIntegerValueKind)SIZEOF_VOID_P;
+		return (MonoIntegerValueKind)TARGET_SIZEOF_VOID_P;
 		break;
 	case MONO_TYPE_U:
-		return (MonoIntegerValueKind)(MONO_UNSIGNED_VALUE_FLAG | SIZEOF_VOID_P);
+		return (MonoIntegerValueKind)(MONO_UNSIGNED_VALUE_FLAG | TARGET_SIZEOF_VOID_P);
 		break;
 	case MONO_TYPE_I8:
 		return MONO_INTEGER_VALUE_SIZE_8;
@@ -1241,7 +1284,7 @@ type_to_value_kind (MonoType *type)
 
 /**
  * mono_perform_abc_removal:
- * @cfg: Control Flow Graph
+ * \param cfg Control Flow Graph
  *
  * Performs the ABC removal from a cfg in SSA form.
  * It does the following:
@@ -1263,16 +1306,17 @@ mono_perform_abc_removal (MonoCompile *cfg)
 	int i;
 	
 	verbose_level = cfg->verbose_level;
-	
-	if (TRACE_ABC_REMOVAL) {
-		printf ("\nRemoving array bound checks in %s\n", mono_method_full_name (cfg->method, TRUE));
-	}
 
 	area.cfg = cfg;
 	area.relations = (MonoSummarizedValueRelation *)
 		mono_mempool_alloc (cfg->mempool, sizeof (MonoSummarizedValueRelation) * (cfg->next_vreg) * 2);
+
 	area.contexts = (MonoRelationsEvaluationContext *)
-		mono_mempool_alloc (cfg->mempool, sizeof (MonoRelationsEvaluationContext) * (cfg->next_vreg));
+		mono_mempool_alloc0 (cfg->mempool, sizeof (MonoRelationsEvaluationContext) * (cfg->next_vreg));
+
+	area.statuses = (MonoRelationsEvaluationStatus *)
+		mono_mempool_alloc0 (cfg->mempool, sizeof (MonoRelationsEvaluationStatus) * (cfg->next_vreg));
+
 	area.variable_value_kind = (MonoIntegerValueKind *)
 		mono_mempool_alloc (cfg->mempool, sizeof (MonoIntegerValueKind) * (cfg->next_vreg));
 	area.defs = (MonoInst **)mono_mempool_alloc (cfg->mempool, sizeof (MonoInst*) * cfg->next_vreg);
@@ -1293,9 +1337,21 @@ mono_perform_abc_removal (MonoCompile *cfg)
 
 		for (ins = bb->code; ins; ins = ins->next) {
 			const char *spec = INS_INFO (ins->opcode);
+			gint32 idx, *reg;
 			
 			if (spec [MONO_INST_DEST] == ' ' || MONO_IS_STORE_MEMBASE (ins))
 				continue;
+
+			MONO_INS_FOR_EACH_REG (ins, idx, reg) {
+				MonoInst *var = get_vreg_to_inst (cfg, *reg);
+				if (var && (var->flags & (MONO_INST_VOLATILE|MONO_INST_INDIRECT)))
+					break;
+			}
+			if (idx < MONO_INST_LEN) {
+				if (TRACE_ABC_REMOVAL)
+					printf ("Global register %d is not in the SSA form, skipping.\n", *reg);
+				continue;
+			}
 
 			if (spec [MONO_INST_DEST] == 'i') {
 				MonoIntegerValueKind effective_value_kind;
@@ -1354,12 +1410,17 @@ mono_perform_abc_removal (MonoCompile *cfg)
 		if (area.relations [i].related_value.type == MONO_VARIABLE_SUMMARIZED_VALUE) {
 			int related_index = cfg->next_vreg + i;
 			int related_variable = area.relations [i].related_value.value.variable.variable;
+			MonoValueNullness symmetric_nullness = MONO_VALUE_MAYBE_NULL;
+			if (area.relations [i].related_value.value.variable.nullness & MONO_VALUE_IS_VARIABLE) {
+				symmetric_nullness = area.relations [i].related_value.value.variable.nullness;
+			}
 			
 			area.relations [related_index].relation = MONO_EQ_RELATION;
 			area.relations [related_index].relation_is_static_definition = TRUE;
 			area.relations [related_index].related_value.type = MONO_VARIABLE_SUMMARIZED_VALUE;
 			area.relations [related_index].related_value.value.variable.variable = i;
 			area.relations [related_index].related_value.value.variable.delta = - area.relations [i].related_value.value.variable.delta;
+			area.relations [related_index].related_value.value.variable.nullness = symmetric_nullness;
 			
 			area.relations [related_index].next = area.relations [related_variable].next;
 			area.relations [related_variable].next = &(area.relations [related_index]);
@@ -1375,4 +1436,8 @@ mono_perform_abc_removal (MonoCompile *cfg)
 	process_block (cfg, cfg->bblocks [0], &area);
 }
 
-#endif /* DISABLE_JIT */
+#else /* !DISABLE_JIT */
+
+MONO_EMPTY_SOURCE_FILE (abcremoval);
+
+#endif /* !DISABLE_JIT */

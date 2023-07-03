@@ -1,5 +1,6 @@
-/*
- * cfold.c: Constant folding support
+/**
+ * \file
+ * Constant folding support
  *
  * Author:
  *   Paolo Molaro (lupus@ximian.com)
@@ -12,7 +13,7 @@
 #include "mini.h"
 #include "ir-emit.h"
 
-/* WTF is this doing here?!?!? */
+/* What is this doing here?!?!? */
 int
 mono_is_power_of_two (guint32 val)
 {
@@ -41,6 +42,18 @@ mono_is_power_of_two (guint32 val)
 	case name:	\
 	    dest->inst_c0 = arg1->inst_c0 op arg2->inst_c0;	\
         break;
+
+#define FOLD_FBINOP(name, op) \
+	case name: \
+	dest->inst_p0 = (double *)mono_mem_manager_alloc (cfg->mem_manager, sizeof (double)); \
+	*(double *)dest->inst_p0 = (*((double *) arg1->inst_p0)) op (*((double *) arg2->inst_p0)); \
+	break;
+
+#define FOLD_RBINOP(name, op) \
+	case name: \
+	dest->inst_p0 = (float *)mono_mem_manager_alloc (cfg->mem_manager, sizeof (float)); \
+	*(float *)dest->inst_p0 = (*((float *) arg1->inst_p0)) op (*((float *) arg2->inst_p0)); \
+	break;
 
 #define FOLD_BINOPC(name,op,cast)	\
 	case name:	\
@@ -88,6 +101,30 @@ mono_constant_fold_ins (MonoCompile *cfg, MonoInst *ins, MonoInst *arg1, MonoIns
 		dest = ins;
 
 	switch (ins->opcode) {
+	case OP_FADD:
+	case OP_FMUL:
+		if (arg1->opcode == OP_R8CONST && arg2->opcode == OP_R8CONST) {
+			ALLOC_DEST (cfg, dest, ins);
+			switch (ins->opcode) {
+				FOLD_FBINOP (OP_FADD, +);
+				FOLD_FBINOP (OP_FMUL, *);
+			}
+			dest->opcode = OP_R8CONST;
+			MONO_INST_NULLIFY_SREGS (dest);		
+		}
+		break;
+	case OP_RADD:
+	case OP_RMUL:
+		if (arg1->opcode == OP_R4CONST && arg2->opcode == OP_R4CONST) {
+			ALLOC_DEST (cfg, dest, ins);
+			switch (ins->opcode) {
+				FOLD_RBINOP (OP_RADD, +);
+				FOLD_RBINOP (OP_RMUL, *);
+			}
+			dest->opcode = OP_R4CONST;
+			MONO_INST_NULLIFY_SREGS (dest);		
+		}
+		break;
 	case OP_IMUL:
 	case OP_IADD:
 	case OP_IAND:
@@ -220,6 +257,13 @@ mono_constant_fold_ins (MonoCompile *cfg, MonoInst *ins, MonoInst *arg1, MonoIns
 			MONO_INST_NULLIFY_SREGS (dest);
 		}
 		break;
+	case OP_SEXT_I4:
+		if (arg1->opcode == OP_ICONST && arg1->inst_c0 >= 0 && arg1->inst_c0 < (1 << 16) && overwrite) {
+			dest->opcode = OP_I8CONST;
+			dest->sreg1 = -1;
+			dest->inst_l = arg1->inst_c0;
+		}
+		break;
 	case OP_MOVE:
 #if SIZEOF_REGISTER == 8
 		if ((arg1->opcode == OP_ICONST) || (arg1->opcode == OP_I8CONST)) {
@@ -230,6 +274,22 @@ mono_constant_fold_ins (MonoCompile *cfg, MonoInst *ins, MonoInst *arg1, MonoIns
 			dest->opcode = arg1->opcode;
 			MONO_INST_NULLIFY_SREGS (dest);
 			dest->inst_c0 = arg1->inst_c0;
+		}
+		break;
+	case OP_FMOVE:
+		if (arg1->opcode == OP_R8CONST) {
+			ALLOC_DEST (cfg, dest, ins);
+			dest->opcode = arg1->opcode;
+			dest->sreg1 = -1;
+			dest->inst_p0 = arg1->inst_p0;
+		}
+		break;
+	case OP_RMOVE:
+		if (arg1->opcode == OP_R4CONST) {
+			ALLOC_DEST (cfg, dest, ins);
+			dest->opcode = arg1->opcode;
+			dest->sreg1 = -1;
+			dest->inst_p0 = arg1->inst_p0;
 		}
 		break;
 	case OP_VMOVE:
@@ -361,16 +421,26 @@ mono_constant_fold_ins (MonoCompile *cfg, MonoInst *ins, MonoInst *arg1, MonoIns
 				return NULL;
 			}
 		}
-		break;
-	}
-	case OP_FMOVE:
-		if (arg1->opcode == OP_R8CONST) {
-			ALLOC_DEST (cfg, dest, ins);
-			dest->opcode = OP_R8CONST;
-			dest->sreg1 = -1;
-			dest->inst_p0 = arg1->inst_p0;
+		if ((arg1->opcode == OP_PCONST) && (arg2->opcode == OP_PCONST) && ins->next) {
+			MonoInst *next = ins->next;
+
+			if (next->opcode == OP_LCEQ) {
+				gboolean res = arg1->inst_p0 == arg2->inst_p0;
+				if (overwrite) {
+					NULLIFY_INS (ins);
+					next->opcode = OP_ICONST;
+					next->inst_c0 = res;
+					MONO_INST_NULLIFY_SREGS (next);
+				} else {
+					ALLOC_DEST (cfg, dest, ins);
+					dest->opcode = OP_ICONST;
+					dest->inst_c0 = res;
+				}
+				break;
+			}
 		}
 		break;
+	}
 
 		/*
 		 * TODO: 

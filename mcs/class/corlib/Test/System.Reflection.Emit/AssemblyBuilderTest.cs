@@ -99,6 +99,15 @@ public class AssemblyBuilderTest
 		return mb;
 	}
 
+#if !DISABLE_SECURITY
+	[Test]
+	[Category ("MobileNotWorking")]
+	public void DefaultCtor ()
+	{
+		Assert.IsNotNull (ab.Evidence, "#1");
+	}
+#endif
+
 	[Test]
 	[Category ("NotWorking")]
 	public void ManifestModule ()
@@ -410,7 +419,7 @@ public class AssemblyBuilderTest
 	}
 
 	[Test]
-	[Category ("AndroidNotWorking")] // DefineResource doesn't allow path in its fileName parameter and the test attempts to write to / in effect
+	[Category ("MobileNotWorking")] // DefineResource doesn't allow path in its fileName parameter and the test attempts to write to / in effect
 	public void TestDefineResource ()
 	{
 		ab.DefineResource ("foo", "FOO", "foo.txt", ResourceAttributes.Public);
@@ -587,12 +596,16 @@ public class AssemblyBuilderTest
 	}
 
 	[Test]
-	[Category ("AndroidNotWorking")] // Missing Mono.Compilerservices.SymbolWriter assembly
 	public void TestDefineDynamicModule ()
 	{
 		ab.DefineDynamicModule ("foo", "foo.dll");
-		ab.DefineDynamicModule ("foo2", true);
 		ab.DefineDynamicModule ("foo3", "foo3.dll");
+	}
+
+	[Category ("MobileNotWorking")] //XA doesn't ship SymbolWriter. https://bugzilla.xamarin.com/show_bug.cgi?id=53038
+	public void TestDefineDynamicModuleWithSymbolWriter ()
+	{
+		ab.DefineDynamicModule ("foo2", true);
 		ab.DefineDynamicModule ("foo4", "foo4.dll", true);
 	}
 
@@ -1778,8 +1791,7 @@ public class AssemblyBuilderTest
 
 			// load assembly in separate domain, so we can clean-up after the 
 			// test
-			newDomain = AppDomain.CreateDomain ("test2", currentDomain.Evidence,
-				currentDomain.SetupInformation);
+			newDomain = AppDomain.CreateDomain ("test2", null, currentDomain.SetupInformation);
 
 			Helper helper = new Helper (Path.Combine (tempDir, assemblyName.Name + ".dll"),
 				fullName);
@@ -1833,5 +1845,79 @@ public class AssemblyBuilderTest
 		} catch (NotSupportedException e) {
 		}
      }
+
+	class AssemblyBuilderResolver {
+		private Assembly mock;
+		private ResolveEventHandler d;
+		private string theName;
+
+		public AssemblyBuilderResolver (string theName) {
+			mock = CreateMock (theName);
+			d = new ResolveEventHandler (HandleResolveEvent);
+			this.theName = theName;
+		}
+
+		public void StartHandling () {
+			AppDomain.CurrentDomain.AssemblyResolve += d;
+		}
+
+		public void StopHandling () {
+			AppDomain.CurrentDomain.AssemblyResolve -= d;
+		}
+
+		public Assembly HandleResolveEvent (Object sender, ResolveEventArgs args) {
+			if (args.Name.StartsWith (theName))
+				return mock;
+			else
+				return null;
+		}
+
+		private static Assembly CreateMock (string name) {
+			var an = new AssemblyName (name);
+			var ab = AssemblyBuilder.DefineDynamicAssembly (an, AssemblyBuilderAccess.ReflectionOnly);
+			var mb = ab.DefineDynamicModule (an.Name);
+
+			// Just make some content for the assembly
+			var tb = mb.DefineType ("Foo", TypeAttributes.Public);
+			tb.DefineDefaultConstructor (MethodAttributes.Public);
+
+			tb.CreateType ();
+
+			return ab;
+		}
+	}
+
+	[Test]
+	public void ResolveEventHandlerReflectionOnlyError ()
+	{
+		// Regression test for 57850.
+
+		// If a ResolveEventHandler returns a reflection-only
+		// AssemblyBuilder, we should throw a FileNotFoundException.
+		var s = "ResolveEventHandlerReflectionOnlyErrorAssembly";
+		var h = new AssemblyBuilderResolver (s);
+		Assert.Throws<FileNotFoundException>(() => {
+				h.StartHandling ();
+				var aName = new AssemblyName (s);
+				try {
+					AppDomain.CurrentDomain.Load (aName);
+				} finally {
+					h.StopHandling ();
+				}
+			});
+	}
+
+	[Test]
+	public void GetReflectionOnly ()
+	{
+		// Regression test for 13028.
+		// Asserts ReflectionOnly is actually implemented.
+		AssemblyBuilder ab1 = genAssembly ();
+		AssemblyBuilder ab2 = genAssembly (AssemblyBuilderAccess.ReflectionOnly);
+		Assert.IsFalse (ab1.ReflectionOnly, "#1");
+		Assert.IsTrue (ab2.ReflectionOnly, "#2");
+	}
+
+
 }
 }

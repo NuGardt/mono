@@ -29,7 +29,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Collections;
@@ -82,17 +82,21 @@ namespace System.Reflection.Emit
 			this.mbuilder = mbuilder;
 			this.name = name;
 			this.index = index;
-
-			initialize ();
 		}
 
 		internal override Type InternalResolve ()
 		{
-			return tbuilder.InternalResolve ().GetGenericArguments () [index]; 
+			if (mbuilder != null)
+				return MethodBase.GetMethodFromHandle (mbuilder.MethodHandleInternal, mbuilder.TypeBuilder.InternalResolve ().TypeHandle).GetGenericArguments () [index];
+			return tbuilder.InternalResolve ().GetGenericArguments () [index];
 		}
 
-		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		private extern void initialize ();
+		internal override Type RuntimeResolve ()
+		{
+			if (mbuilder != null)
+				return MethodBase.GetMethodFromHandle (mbuilder.MethodHandleInternal, mbuilder.TypeBuilder.RuntimeResolve ().TypeHandle).GetGenericArguments () [index];
+			return tbuilder.RuntimeResolve ().GetGenericArguments () [index];
+		}
 
 		[ComVisible (true)]
 		public override bool IsSubclassOf (Type c)

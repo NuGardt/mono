@@ -38,6 +38,8 @@ using System.Net;
 using System.Linq;
 using System.IO;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.System.Net.Http
 {
 	[TestFixture]
@@ -150,28 +152,50 @@ namespace MonoTests.System.Net.Http
 			}
 		}
 
-		const int WaitTimeout = 5000;
-
-		string TestHost, LocalServer;
-		int port;
-
-		[SetUp]
-		public void SetupFixture ()
+		class ThrowOnlyProxy : IWebProxy
 		{
-			if (Environment.OSVersion.Platform == PlatformID.Win32NT) {
-				port = 810;
-			} else {
-				port = 8810;
+			public ICredentials Credentials {
+				get {
+					throw new NotImplementedException ();
+				}
+
+				set {
+					throw new NotImplementedException ();
+				}
 			}
 
-			TestHost = "localhost:" + port;
-			LocalServer = string.Format ("http://{0}/", TestHost);
+			public Uri GetProxy (Uri destination)
+			{
+				throw new NotImplementedException ();
+			}
+
+			public bool IsBypassed (Uri host)
+			{
+				throw new NotImplementedException ();
+			}
+		}
+
+		const int WaitTimeout = 10000;
+
+		[Test]
+		public void Ctor ()
+		{
+			var client = new HttpClient ();
+			Assert.IsNull (client.BaseAddress, "#1");
+			Assert.IsNotNull (client.DefaultRequestHeaders, "#2");	// TODO: full check
+			Assert.AreEqual (int.MaxValue, client.MaxResponseContentBufferSize, "#3");
+			Assert.AreEqual (TimeSpan.FromSeconds (100), client.Timeout, "#4");
 		}
 
 		[Test]
-		public void Ctor_Default ()
+#if FEATURE_NO_BSD_SOCKETS
+#if !MONOTOUCH_WATCH			
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif		
+#endif
+		public void Ctor_HttpClientHandler ()
 		{
-			var client = new HttpClient ();
+			var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
 			Assert.IsNull (client.BaseAddress, "#1");
 			Assert.IsNotNull (client.DefaultRequestHeaders, "#2");	// TODO: full check
 			Assert.AreEqual (int.MaxValue, client.MaxResponseContentBufferSize, "#3");
@@ -240,16 +264,20 @@ namespace MonoTests.System.Net.Http
 
 
 		[Test]
+		[Ignore]
+#if FEATURE_NO_BSD_SOCKETS
+		// Using HttpClientHandler, which indirectly requires BSD sockets.
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void CancelRequestViaProxy ()
 		{
-			var handler = new HttpClientHandler {
-				Proxy = new WebProxy ("192.168.10.25:8888/"), // proxy that doesn't exist
-				UseProxy = true,
-				AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-			};
+			var handler = HttpClientTestHelpers.CreateHttpClientHandler ();
+			handler.Proxy = new WebProxy ("192.168.10.25:8888/"); // proxy that doesn't exist
+			handler.UseProxy = true;
+			handler.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
 
 			var httpClient = new HttpClient (handler) {
-				BaseAddress = new Uri ("https://google.com"),
+				BaseAddress = new Uri ("https://www.example.com"),
 				Timeout = TimeSpan.FromMilliseconds (1)
 			};
 
@@ -263,7 +291,7 @@ namespace MonoTests.System.Net.Http
 				httpClient.PostAsync (restRequest.RequestUri, restRequest.Content).Wait (WaitTimeout);
 				Assert.Fail ("#1");
 			} catch (AggregateException e) {
-				Assert.IsTrue (e.InnerException is TaskCanceledException, "#2");
+				Assert.That (e.InnerException, Is.InstanceOf<TaskCanceledException> (), $"#2: {e}");
 			}
 		}
 
@@ -295,6 +323,40 @@ namespace MonoTests.System.Net.Http
 				Assert.Fail ("#2");
 			} catch (ArgumentOutOfRangeException) {
 			}
+
+			try {
+				client.Timeout = TimeSpan.Zero;
+				Assert.Fail ("#3");
+			} catch (ArgumentOutOfRangeException) {
+			}
+
+			try {
+				client.Timeout = TimeSpan.FromMilliseconds (int.MaxValue + 1L);
+				Assert.Fail ("#3");
+			} catch (ArgumentOutOfRangeException) {
+			}
+		}
+
+		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		[Category ("InetAccess")]
+		public void Proxy_Disabled ()
+		{
+			var pp = WebRequest.DefaultWebProxy;
+
+			try {
+				WebRequest.DefaultWebProxy = new ThrowOnlyProxy ();
+
+				var request = HttpClientTestHelpers.CreateHttpClientHandler ();
+				request.UseProxy = false;
+
+				var client = new HttpClient (request);
+				Assert.IsTrue (client.GetAsync ("http://www.example.com").Wait (5000), "needs internet access");
+			} finally {
+				WebRequest.DefaultWebProxy = pp;
+			}
 		}
 
 		[Test]
@@ -303,7 +365,7 @@ namespace MonoTests.System.Net.Http
 			var mh = new HttpMessageHandlerMock ();
 
 			var client = new HttpClient (mh);
-			client.BaseAddress = new Uri ("http://xamarin.com");
+			client.BaseAddress = new Uri ("http://www.example.com");
 			var request = new HttpRequestMessage ();
 			var response = new HttpResponseMessage ();
 
@@ -316,7 +378,7 @@ namespace MonoTests.System.Net.Http
 			Assert.AreEqual (response, client.SendAsync (request).Result, "#1");
 		}
 
-		[Test]
+		[Test]		
 		public void Send_BaseAddress ()
 		{
 			var mh = new HttpMessageHandlerMock ();
@@ -340,9 +402,9 @@ namespace MonoTests.System.Net.Http
 			var mh = new HttpMessageHandlerMock ();
 
 			var client = new HttpClient (mh);
-			client.DefaultRequestHeaders.Referrer = new Uri ("http://google.com");
+			client.DefaultRequestHeaders.Referrer = new Uri ("http://www.example.com");
 
-			var request = new HttpRequestMessage (HttpMethod.Get, "http://xamarin.com");
+			var request = new HttpRequestMessage (HttpMethod.Get, "http://www.example.org");
 			var response = new HttpResponseMessage ();
 
 			mh.OnSend = l => {
@@ -355,10 +417,14 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_Default ()
 		{
 			bool? failed = null;
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_Default/");
+			AddListenerContext (listener, l => {
 				try {
 					var request = l.Request;
 	
@@ -367,7 +433,7 @@ namespace MonoTests.System.Net.Http
 					Assert.IsNull (request.ContentType, "#3");
 					Assert.AreEqual (0, request.Cookies.Count, "#4");
 					Assert.IsFalse (request.HasEntityBody, "#5");
-					Assert.AreEqual (TestHost, request.Headers["Host"], "#6b");
+					Assert.AreEqual ($"localhost:{port}", request.Headers["Host"], "#6b");
 					Assert.AreEqual ("GET", request.HttpMethod, "#7");
 					Assert.IsFalse (request.IsAuthenticated, "#8");
 					Assert.IsTrue (request.IsLocal, "#9");
@@ -386,8 +452,8 @@ namespace MonoTests.System.Net.Http
 			});
 
 			try {
-				var client = new HttpClient ();
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_Default/");
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
 				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
@@ -399,11 +465,15 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_Version_1_0 ()
 		{
 			bool? failed = null;
 			
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_Version_1_0/");
+			AddListenerContext (listener, l => {
 				try {
 					var request = l.Request;
 	
@@ -413,7 +483,7 @@ namespace MonoTests.System.Net.Http
 					Assert.AreEqual (0, request.Cookies.Count, "#4");
 					Assert.IsFalse (request.HasEntityBody, "#5");
 					Assert.AreEqual (1, request.Headers.Count, "#6");
-					Assert.AreEqual (TestHost, request.Headers["Host"], "#6a");
+					Assert.AreEqual ($"localhost:{port}", request.Headers["Host"], "#6a");
 					Assert.AreEqual ("GET", request.HttpMethod, "#7");
 					Assert.IsFalse (request.IsAuthenticated, "#8");
 					Assert.IsTrue (request.IsLocal, "#9");
@@ -432,8 +502,8 @@ namespace MonoTests.System.Net.Http
 			});
 
 			try {
-				var client = new HttpClient ();
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_Version_1_0/");
 				request.Version = HttpVersion.Version10;
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
@@ -446,11 +516,15 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_ClientHandlerSettings ()
 		{
 			bool? failed = null;
 			
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_ClientHandlerSettings/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				
 				try {
@@ -461,7 +535,7 @@ namespace MonoTests.System.Net.Http
 					Assert.AreEqual (new Cookie ("mycookie", "vv"), request.Cookies[0], "#4a");
 					Assert.IsFalse (request.HasEntityBody, "#5");
 					Assert.AreEqual (4, request.Headers.Count, "#6");
-					Assert.AreEqual (TestHost, request.Headers["Host"], "#6a");
+					Assert.AreEqual ($"localhost:{port}", request.Headers["Host"], "#6a");
 					Assert.AreEqual ("gzip", request.Headers["Accept-Encoding"], "#6b");
 					Assert.AreEqual ("mycookie=vv", request.Headers["Cookie"], "#6c");
 					Assert.AreEqual ("GET", request.HttpMethod, "#7");
@@ -482,20 +556,20 @@ namespace MonoTests.System.Net.Http
 			});
 
 			try {
-				var chandler = new HttpClientHandler ();
+				var chandler = HttpClientTestHelpers.CreateHttpClientHandler ();
 				chandler.AllowAutoRedirect = true;
 				chandler.AutomaticDecompression = DecompressionMethods.GZip;
 				chandler.MaxAutomaticRedirections = 33;
 				chandler.MaxRequestContentBufferSize = 5555;
 				chandler.PreAuthenticate = true;
-				chandler.CookieContainer.Add (new Uri (LocalServer), new Cookie ( "mycookie", "vv"));
+				chandler.CookieContainer.Add (new Uri ($"http://localhost:{port}/Send_Complete_ClientHandlerSettings/"), new Cookie ( "mycookie", "vv"));
 				chandler.UseCookies = true;
 				chandler.UseDefaultCredentials = true;
 				chandler.Proxy = new WebProxy ("ee");
 				chandler.UseProxy = true;
 
 				var client = new HttpClient (chandler);
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_ClientHandlerSettings/");
 				request.Version = HttpVersion.Version10;
 				request.Headers.Add ("Keep-Alive", "false");
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
@@ -510,11 +584,15 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_CustomHeaders ()
 		{
 			bool? failed = null;
 			
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_CustomHeaders/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				try {
 					Assert.AreEqual ("vv", request.Headers["aa"], "#1");
@@ -537,8 +615,9 @@ namespace MonoTests.System.Net.Http
 			});
 
 			try {
-				var client = new HttpClient ();
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var handler = HttpClientTestHelpers.CreateHttpClientHandler ();
+				var client = new HttpClient (handler);
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_CustomHeaders/");
 				Assert.IsTrue (request.Headers.TryAddWithoutValidation ("aa", "vv"), "#0");
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
@@ -565,7 +644,10 @@ namespace MonoTests.System.Net.Http
 				Assert.AreEqual ("w3.org", response.Headers.Location.OriginalString, "#107");
 
 				Assert.AreEqual ("test description", response.ReasonPhrase, "#110");
-				Assert.AreEqual (HttpVersion.Version11, response.Version, "#111");
+				if (HttpClientTestHelpers.IsSocketsHandler (handler))
+					Assert.AreEqual (HttpVersion.Version10, response.Version, "#111");
+				else
+					Assert.AreEqual (HttpVersion.Version11, response.Version, "#111");
 				
 				Assert.AreEqual (false, failed, "#112");
 			} finally {
@@ -574,11 +656,15 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_CustomHeaders_SpecialSeparators ()
 		{
 			bool? failed = null;
 
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_CustomHeaders_SpecialSeparators/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 
 				try {
@@ -590,11 +676,11 @@ namespace MonoTests.System.Net.Http
 			});
 
 			try {
-				var client = new HttpClient ();
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
 
 				client.DefaultRequestHeaders.Add("User-Agent", "MLK Android Phone 1.1.9");
 
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_CustomHeaders_SpecialSeparators/");
 
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
@@ -608,32 +694,35 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_CustomHeaders_Host ()
 		{
-			bool? failed = null;
-			var listener = CreateListener (l => {
+			Exception error = null;
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_CustomHeaders_Host/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 
 				try {
 					Assert.AreEqual ("customhost", request.Headers["Host"], "#1");
-					failed = false;
-				} catch {
-					failed = true;
+				} catch (Exception ex) {
+					error = ex;
 				}
 			});
 
 			try {
-				var client = new HttpClient ();
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
 
 				client.DefaultRequestHeaders.Add("Host", "customhost");
 
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_CustomHeaders_Host/");
 
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
 				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
 				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
-				Assert.AreEqual (false, failed, "#102");
+				Assert.IsNull (error, "#102");
 			} finally {
 				listener.Abort ();
 				listener.Close ();
@@ -641,54 +730,30 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
-		public void Send_Transfer_Encoding_Chunked ()
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void Send_Transfer_Encoding_Chunked_Needs_Content ()
 		{
+			if (!HttpClientTestHelpers.UsingSocketsHandler)
+				Assert.Ignore ("Requires SocketsHttpHandler");
+
 			bool? failed = null;
 
-			var listener = CreateListener (l => {
-				var request = l.Request;
-
-				try {
-					Assert.AreEqual (1, request.Headers.Count, "#1");
-					failed = false;
-				} catch {
-					failed = true;
-				}
-			});
-
-			try {
-				var client = new HttpClient ();
-				client.DefaultRequestHeaders.TransferEncodingChunked = true;
-
-				client.GetAsync (LocalServer).Wait ();
-
-				Assert.AreEqual (false, failed, "#102");
-			} finally {
-				listener.Abort ();
-				listener.Close ();
-			}
-		}
-
-		[Test]
-		public void Send_Transfer_Encoding_Custom ()
-		{
-			bool? failed = null;
-
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Transfer_Encoding_Chunked_Needs_Content/");
+			AddListenerContext (listener, l => {
 				failed = true;
 			});
 
 			try {
-				var client = new HttpClient ();
-				client.DefaultRequestHeaders.TransferEncoding.Add (new TransferCodingHeaderValue ("chunked2"));
-
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
-
 				try {
-					client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Wait ();
-					Assert.Fail ("#1");
+					var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+					client.DefaultRequestHeaders.TransferEncodingChunked = true;
+					client.GetAsync ($"http://localhost:{port}/Send_Transfer_Encoding_Chunked_Needs_Content/").Wait ();
+					// fails with
+					// 'Transfer-Encoding: chunked' header can not be used when content object is not specified.
 				} catch (AggregateException e) {
-					Assert.AreEqual (typeof (ProtocolViolationException), e.InnerException.GetType (), "#2");
+					Assert.AreEqual (typeof (HttpRequestException), e.InnerException.GetType (), "#2");
 				}
 				Assert.IsNull (failed, "#102");
 			} finally {
@@ -698,17 +763,60 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void Send_Transfer_Encoding_Chunked ()
+		{
+			if (HttpClientTestHelpers.UsingSocketsHandler)
+				Assert.Ignore ("Requires LegacyHttpClient");
+
+			bool? failed = null;
+
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Transfer_Encoding_Chunked/");
+			AddListenerContext (listener, l => {
+				var request = l.Request;
+
+				try {
+					Assert.AreEqual (2, request.Headers.Count, "#1");
+					Assert.AreEqual ("keep-alive", request.Headers ["Connection"], "#2");
+					failed = false;
+				} catch (Exception ex){
+					Console.WriteLine (ex);
+					Console.WriteLine (String.Join ("#", l.Request.Headers.AllKeys));
+					failed = true;
+				}
+			});
+
+			try {
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				client.DefaultRequestHeaders.TransferEncodingChunked = true;
+
+				client.GetAsync ($"http://localhost:{port}/Send_Transfer_Encoding_Chunked/").Wait ();
+
+				Assert.AreEqual (false, failed, "#102");
+			} finally {
+				listener.Abort ();
+				listener.Close ();
+			}
+		}
+
+		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_Content ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_Content/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				l.Response.OutputStream.WriteByte (55);
 				l.Response.OutputStream.WriteByte (75);
 			});
 
 			try {
-				var client = new HttpClient ();
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_Content/");
 				Assert.IsTrue (request.Headers.TryAddWithoutValidation ("aa", "vv"), "#0");
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
@@ -725,18 +833,22 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_Content_MaxResponseContentBufferSize ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_Content_MaxResponseContentBufferSize/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				var b = new byte[4000];
 				l.Response.OutputStream.Write (b, 0, b.Length);
 			});
 
 			try {
-				var client = new HttpClient ();
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
 				client.MaxResponseContentBufferSize = 1000;
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_Content_MaxResponseContentBufferSize/");
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
 				Assert.AreEqual (4000, response.Content.ReadAsStringAsync ().Result.Length, "#100");
@@ -747,24 +859,28 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_Content_MaxResponseContentBufferSize_Error ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_Content_MaxResponseContentBufferSize_Error/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				var b = new byte[4000];
 				l.Response.OutputStream.Write (b, 0, b.Length);
 			});
 
 			try {
-				var client = new HttpClient ();
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
 				client.MaxResponseContentBufferSize = 1000;
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_Content_MaxResponseContentBufferSize_Error/");
 
 				try {
 					client.SendAsync (request, HttpCompletionOption.ResponseContentRead).Wait (WaitTimeout);
 					Assert.Fail ("#2");
 				} catch (AggregateException e) {
-					Assert.IsTrue (e.InnerException is HttpRequestException, "#3");
+					Assert.That (e.InnerException, Is.InstanceOf<HttpRequestException> (), $"#3: {e}");
 				}
 
 			} finally {
@@ -773,48 +889,87 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
-		public void Send_Complete_NoContent ()
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void Send_Complete_NoContent_Post ()
 		{
-			foreach (var method in new HttpMethod[] { HttpMethod.Post, HttpMethod.Put, HttpMethod.Delete }) {
-				bool? failed = null;
-				var listener = CreateListener (l => {
-					try {
-						var request = l.Request;
+			Send_Complete_NoContent (HttpMethod.Post);
+		}
 
-						Assert.AreEqual (2, request.Headers.Count, "#1");
-						Assert.AreEqual ("0", request.Headers ["Content-Length"], "#1b");
-						Assert.AreEqual (method.Method, request.HttpMethod, "#2");
-						failed = false;
-					} catch {
-						failed = true;
-					}
-				});
+		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void Send_Complete_NoContent_Put ()
+		{
+			Send_Complete_NoContent (HttpMethod.Put);
+		}
 
+		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void Send_Complete_NoContent_Delete ()
+		{
+			Send_Complete_NoContent (HttpMethod.Delete);
+		}
+
+		void Send_Complete_NoContent (HttpMethod method)
+		{
+			bool? failed = null;
+			var handler = HttpClientTestHelpers.CreateHttpClientHandler ();
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_NoContent/");
+			AddListenerContext (listener, l => {
 				try {
-					var client = new HttpClient ();
-					var request = new HttpRequestMessage (method, LocalServer);
-					var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
+					var request = l.Request;
 
-					Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
-					Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
-					Assert.AreEqual (false, failed, "#102");
-				} finally {
-					listener.Close ();
+					if (HttpClientTestHelpers.IsSocketsHandler (handler)) {
+						Assert.AreEqual (2, request.Headers.Count, "#1");
+						Assert.IsNull (request.Headers["Connection"], "#1c");
+					} else {
+						Assert.AreEqual (3, request.Headers.Count, "#1");
+						Assert.AreEqual ("keep-alive", request.Headers["Connection"], "#1c");
+					}
+					Assert.AreEqual ("0", request.Headers ["Content-Length"], "#1b");
+					Assert.AreEqual (method.Method, request.HttpMethod, "#2");
+					failed = false;
+				} catch (Exception ex){
+					Console.WriteLine (ex);
+					Console.WriteLine (String.Join ("#", l.Request.Headers.AllKeys));
+					
+					failed = true;
 				}
+			});
+
+			try {
+				var client = new HttpClient (handler);
+				var request = new HttpRequestMessage (method, $"http://localhost:{port}/Send_Complete_NoContent/");
+				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
+
+				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
+				Assert.AreEqual (HttpStatusCode.OK, response.StatusCode, "#101");
+				Assert.AreEqual (false, failed, "#102");
+			} finally {
+				listener.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Complete_Error ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Complete_Error/");
+			AddListenerContext (listener, l => {
 				var response = l.Response;
 				response.StatusCode = 500;
 			});
 
 			try {
-				var client = new HttpClient ();
-				var request = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				var request = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Complete_Error/");
 				var response = client.SendAsync (request, HttpCompletionOption.ResponseHeadersRead).Result;
 
 				Assert.AreEqual ("", response.Content.ReadAsStringAsync ().Result, "#100");
@@ -825,16 +980,20 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Content_Get ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Content_Get/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				l.Response.OutputStream.WriteByte (72);
 			});
 
 			try {
-				var client = new HttpClient ();
-				var r = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				var r = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Content_Get/");
 				var response = client.SendAsync (r).Result;
 
 				Assert.AreEqual ("H", response.Content.ReadAsStringAsync ().Result);
@@ -844,9 +1003,13 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Content_BomEncoding ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Content_BomEncoding/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 
 				var str = l.Response.OutputStream;
@@ -857,8 +1020,8 @@ namespace MonoTests.System.Net.Http
 			});
 
 			try {
-				var client = new HttpClient ();
-				var r = new HttpRequestMessage (HttpMethod.Get, LocalServer);
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				var r = new HttpRequestMessage (HttpMethod.Get, $"http://localhost:{port}/Send_Content_BomEncoding/");
 				var response = client.SendAsync (r).Result;
 
 				Assert.AreEqual ("G", response.Content.ReadAsStringAsync ().Result);
@@ -868,10 +1031,14 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Content_Put ()
 		{
 			bool passed = false;
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Content_Put/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				passed = 7 == request.ContentLength64;
 				passed &= request.ContentType == "text/plain; charset=utf-8";
@@ -879,8 +1046,8 @@ namespace MonoTests.System.Net.Http
 			});
 
 			try {
-				var client = new HttpClient ();
-				var r = new HttpRequestMessage (HttpMethod.Put, LocalServer);
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				var r = new HttpRequestMessage (HttpMethod.Put, $"http://localhost:{port}/Send_Content_Put/");
 				r.Content = new StringContent ("my text");
 				var response = client.SendAsync (r).Result;
 
@@ -893,18 +1060,26 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Send_Content_Put_CustomStream ()
 		{
 			bool passed = false;
-			var listener = CreateListener (l => {
+			var handler = HttpClientTestHelpers.CreateHttpClientHandler ();
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Send_Content_Put_CustomStream/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
-				passed = 44 == request.ContentLength64;
+				if (HttpClientTestHelpers.IsSocketsHandler (handler))
+					passed = -1 == request.ContentLength64;
+				else
+					passed = 44 == request.ContentLength64;
 				passed &= request.ContentType == null;
 			});
 
 			try {
-				var client = new HttpClient ();
-				var r = new HttpRequestMessage (HttpMethod.Put, LocalServer);
+				var client = new HttpClient (handler);
+				var r = new HttpRequestMessage (HttpMethod.Put, $"http://localhost:{port}/Send_Content_Put_CustomStream/");
 				r.Content = new StreamContent (new CustomStream ());
 				var response = client.SendAsync (r).Result;
 
@@ -936,9 +1111,14 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+#if !MONOTOUCH_WATCH			
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif		
+#endif
 		public void Send_Invalid ()
 		{
-			var client = new HttpClient ();
+			var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
 			try {
 				client.SendAsync (null).Wait (WaitTimeout);
 				Assert.Fail ("#1");
@@ -994,7 +1174,116 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void Post_TransferEncodingChunked ()
+		{
+			bool? failed = null;
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Post_TransferEncodingChunked/");
+			AddListenerContext (listener, l => {
+				try {
+					var request = l.Request;
+
+					Assert.IsNull (request.AcceptTypes, "#1");
+					Assert.AreEqual (-1, request.ContentLength64, "#2");
+					Assert.IsNull (request.ContentType, "#3");
+					Assert.AreEqual (0, request.Cookies.Count, "#4");
+					Assert.IsTrue (request.HasEntityBody, "#5");
+					Assert.AreEqual ($"localhost:{port}", request.Headers ["Host"], "#6b");
+					Assert.AreEqual ("POST", request.HttpMethod, "#7");
+					Assert.IsFalse (request.IsAuthenticated, "#8");
+					Assert.IsTrue (request.IsLocal, "#9");
+					Assert.IsFalse (request.IsSecureConnection, "#10");
+					Assert.IsFalse (request.IsWebSocketRequest, "#11");
+					Assert.IsTrue (request.KeepAlive, "#12");
+					Assert.AreEqual (HttpVersion.Version11, request.ProtocolVersion, "#13");
+					Assert.IsNull (request.ServiceName, "#14");
+					Assert.IsNull (request.UrlReferrer, "#15");
+					Assert.IsNull (request.UserAgent, "#16");
+					Assert.IsNull (request.UserLanguages, "#17");
+					Assert.AreEqual ("chunked", request.Headers ["Transfer-Encoding"], "#18");
+					Assert.IsNull (request.Headers ["Content-Length"], "#19");
+					failed = false;
+				} catch (Exception e) {
+					failed = true;
+					Console.WriteLine (e);
+				}
+			});
+
+			try {
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+
+				client.DefaultRequestHeaders.TransferEncodingChunked = true;
+
+				var imageContent = new StreamContent (new MemoryStream ());
+
+				var response = client.PostAsync ($"http://localhost:{port}/Post_TransferEncodingChunked/", imageContent).Result;
+
+				Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, "#101");
+				Assert.AreEqual(false, failed, "#102");
+			} finally {
+				listener.Close ();
+			}
+		}
+
+		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void Post_StreamCaching ()
+		{
+			bool? failed = null;
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/Post_StreamCaching/");
+			AddListenerContext (listener, l => {
+				try {
+					var request = l.Request;
+
+					Assert.IsNull (request.AcceptTypes, "#1");
+					Assert.AreEqual (0, request.ContentLength64, "#2");
+					Assert.IsNull (request.ContentType, "#3");
+					Assert.AreEqual (0, request.Cookies.Count, "#4");
+					Assert.IsFalse (request.HasEntityBody, "#5");
+					Assert.AreEqual ($"localhost:{port}", request.Headers ["Host"], "#6b");
+					Assert.AreEqual ("POST", request.HttpMethod, "#7");
+					Assert.IsFalse (request.IsAuthenticated, "#8");
+					Assert.IsTrue (request.IsLocal, "#9");
+					Assert.IsFalse (request.IsSecureConnection, "#10");
+					Assert.IsFalse (request.IsWebSocketRequest, "#11");
+					Assert.IsTrue (request.KeepAlive, "#12");
+					Assert.AreEqual (HttpVersion.Version11, request.ProtocolVersion, "#13");
+					Assert.IsNull (request.ServiceName, "#14");
+					Assert.IsNull (request.UrlReferrer, "#15");
+					Assert.IsNull (request.UserAgent, "#16");
+					Assert.IsNull (request.UserLanguages, "#17");
+					Assert.IsNull (request.Headers ["Transfer-Encoding"], "#18");
+					Assert.AreEqual ("0", request.Headers ["Content-Length"], "#19");
+					failed = false;
+				} catch (Exception e) {
+					failed = true;
+					Console.WriteLine (e);
+				}
+			});
+
+			try {
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+
+				var imageContent = new StreamContent (new MemoryStream ());
+
+				var response = client.PostAsync ($"http://localhost:{port}/Post_StreamCaching/", imageContent).Result;
+
+				Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, "#101");
+				Assert.AreEqual(false, failed, "#102");
+			} finally {
+				listener.Close ();
+			}
+		}
+
+		[Test]
 		[Category ("MobileNotWorking")] // Missing encoding
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void GetString_Many ()
 		{
 			Action<HttpListenerContext> context = (HttpListenerContext l) => {
@@ -1007,13 +1296,14 @@ namespace MonoTests.System.Net.Http
 				response.OutputStream.WriteByte (0x6f);
 			};
 
-			var listener = CreateListener (context); // creates a default request handler
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/GetString_Many/");
+			AddListenerContext (listener, context);  // creates a default request handler
 			AddListenerContext (listener, context);  // add another request handler for the second request
 
 			try {
-				var client = new HttpClient ();
-				var t1 = client.GetStringAsync (LocalServer);
-				var t2 = client.GetStringAsync (LocalServer);
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
+				var t1 = client.GetStringAsync ($"http://localhost:{port}/GetString_Many/");
+				var t2 = client.GetStringAsync ($"http://localhost:{port}/GetString_Many/");
 				Assert.IsTrue (Task.WaitAll (new [] { t1, t2 }, WaitTimeout));
 				Assert.AreEqual ("hello", t1.Result, "#1");
 				Assert.AreEqual ("hello", t2.Result, "#2");
@@ -1024,21 +1314,25 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void GetByteArray_ServerError ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/GetByteArray_ServerError/");
+			AddListenerContext (listener, l => {
 				var response = l.Response;
 				response.StatusCode = 500;
 				l.Response.OutputStream.WriteByte (72);
 			});
 
 			try {
-				var client = new HttpClient ();
+				var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ();
 				try {
-					client.GetByteArrayAsync (LocalServer).Wait (WaitTimeout);
+					client.GetByteArrayAsync ($"http://localhost:{port}/GetByteArray_ServerError/").Wait (WaitTimeout);
 					Assert.Fail ("#1");
 				} catch (AggregateException e) {
-					Assert.IsTrue (e.InnerException is HttpRequestException , "#2");
+					Assert.That (e.InnerException, Is.InstanceOf<HttpRequestException> (), $"#2: {e}");
 				}
 			} finally {
 				listener.Close ();
@@ -1046,9 +1340,13 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void DisallowAutoRedirect ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/DisallowAutoRedirect/");
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				var response = l.Response;
 				
@@ -1057,15 +1355,15 @@ namespace MonoTests.System.Net.Http
 			});
 
 			try {
-				var chandler = new HttpClientHandler ();
+				var chandler = HttpClientTestHelpers.CreateHttpClientHandler ();
 				chandler.AllowAutoRedirect = false;
 				var client = new HttpClient (chandler);
 
 				try {
-					client.GetStringAsync (LocalServer).Wait (WaitTimeout);
+					client.GetStringAsync ($"http://localhost:{port}/DisallowAutoRedirect/").Wait (WaitTimeout);
 					Assert.Fail ("#1");
 				} catch (AggregateException e) {
-					Assert.IsTrue (e.InnerException is HttpRequestException, "#2");
+					Assert.That (e.InnerException, Is.InstanceOf<HttpRequestException> (), $"#2: {e}");
 				}
 			} finally {
 				listener.Abort ();
@@ -1074,17 +1372,23 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void RequestUriAfterRedirect ()
 		{
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/RequestUriAfterRedirect/");
+			var listener2 = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int redirectPort, "/RequestUriAfterRedirect/");
+
+			AddListenerContext (listener, l => {
 				var request = l.Request;
 				var response = l.Response;
 
 				response.StatusCode = (int)HttpStatusCode.Moved;
-				response.RedirectLocation = "http://localhost:8811/";
+				response.RedirectLocation = $"http://localhost:{redirectPort}/RequestUriAfterRedirect/";
 			});
 
-			var listener2 = CreateListener (l => {
+			AddListenerContext (listener2, l => {
 				var response = l.Response;
 
 				response.StatusCode = (int)HttpStatusCode.OK;
@@ -1093,17 +1397,17 @@ namespace MonoTests.System.Net.Http
 				response.OutputStream.WriteByte (0x6c);
 				response.OutputStream.WriteByte (0x6c);
 				response.OutputStream.WriteByte (0x6f);
-			}, 8811);
+			});
 
 			try {
-				var chandler = new HttpClientHandler ();
+				var chandler = HttpClientTestHelpers.CreateHttpClientHandler ();
 				chandler.AllowAutoRedirect = true;
 				var client = new HttpClient (chandler);
 
-				var r = client.GetAsync (LocalServer);
+				var r = client.GetAsync ($"http://localhost:{port}/RequestUriAfterRedirect/");
 				Assert.IsTrue (r.Wait (WaitTimeout), "#1");
 				var resp = r.Result;
-				Assert.AreEqual ("http://localhost:8811/", resp.RequestMessage.RequestUri.AbsoluteUri, "#2");
+				Assert.AreEqual ($"http://localhost:{redirectPort}/RequestUriAfterRedirect/", resp.RequestMessage.RequestUri.AbsoluteUri, "#2");
 				Assert.AreEqual ("hello", resp.Content.ReadAsStringAsync ().Result, "#3");
 			} finally {
 				listener.Abort ();
@@ -1114,23 +1418,27 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		/*
 		 * Properties may only be modified before sending the first request.
 		 */
 		public void ModifyHandlerAfterFirstRequest ()
 		{
-			var chandler = new HttpClientHandler ();
+			var chandler = HttpClientTestHelpers.CreateHttpClientHandler ();
 			chandler.AllowAutoRedirect = true;
 			var client = new HttpClient (chandler, true);
 
-			var listener = CreateListener (l => {
+			var listener = NetworkHelpers.CreateAndStartHttpListener("http://*:", out int port, "/ModifyHandlerAfterFirstRequest/");
+			AddListenerContext (listener, l => {
 				var response = l.Response;
 				response.StatusCode = 200;
 				response.OutputStream.WriteByte (55);
 			});
 
 			try {
-				client.GetStringAsync (LocalServer).Wait (WaitTimeout);
+				client.GetStringAsync ($"http://localhost:{port}/ModifyHandlerAfterFirstRequest/").Wait (WaitTimeout);
 				try {
 					chandler.AllowAutoRedirect = false;
 					Assert.Fail ("#1");
@@ -1144,6 +1452,10 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		// Using HttpClientHandler, which indirectly requires BSD sockets.
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		/*
 		 * However, this policy is not enforced for custom handlers and there
 		 * is also no way a derived class could tell its HttpClientHandler parent
@@ -1165,22 +1477,29 @@ namespace MonoTests.System.Net.Http
 			ch.AllowAutoRedirect = false;
 		}
 
-		HttpListener CreateListener (Action<HttpListenerContext> contextAssert)
+#if !FEATURE_NO_BSD_SOCKETS
+		[Test]
+		// https://github.com/mono/mono/issues/7355
+		public void WildcardConnect ()
 		{
-			return CreateListener (contextAssert, port);
+			if (HttpClientTestHelpers.UsingSocketsHandler)
+				Assert.Ignore ("Throws System.NullReferenceException");
+
+			try {
+				using (var client = HttpClientTestHelpers.CreateHttpClientWithHttpClientHandler ()) {
+					client.GetAsync ("http://255.255.255.255").Wait (WaitTimeout);
+				}
+			} catch (AggregateException e) {
+				Assert.That (e.InnerException, Is.InstanceOf<HttpRequestException> (), "#1");
+				var rex = (HttpRequestException)e.InnerException;
+				Assert.That (rex.InnerException, Is.InstanceOf<WebException> (), "#2");
+				var wex = (WebException)rex.InnerException;
+				Assert.That (wex.Status, Is.EqualTo (WebExceptionStatus.ConnectFailure), "#3");
+			}
 		}
+#endif
 
-		HttpListener CreateListener (Action<HttpListenerContext> contextAssert, int port)
-		{
-			var l = new HttpListener ();
-			l.Prefixes.Add (string.Format ("http://+:{0}/", port));
-			l.Start ();
-			AddListenerContext(l, contextAssert);
-
-			return l;
-		}
-
-		HttpListener AddListenerContext (HttpListener l, Action<HttpListenerContext> contextAssert)
+		void AddListenerContext (HttpListener l, Action<HttpListenerContext> contextAssert)
 		{
 			l.BeginGetContext (ar => {
 				var ctx = l.EndGetContext (ar);
@@ -1192,8 +1511,6 @@ namespace MonoTests.System.Net.Http
 					ctx.Response.Close ();
 				}
 			}, null);
-
-			return l;
 		}
 	}
 }

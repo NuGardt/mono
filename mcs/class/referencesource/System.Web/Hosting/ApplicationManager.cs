@@ -9,7 +9,9 @@ namespace System.Web.Hosting {
     using System;
     using System.Collections;
     using System.Collections.Generic;
+    using System.Collections.Specialized;
     using System.Configuration;
+    using System.Configuration.Provider;
     using System.Diagnostics.CodeAnalysis;
     using System.Globalization;
     using System.IO;
@@ -59,6 +61,7 @@ namespace System.Web.Hosting {
 
         private const string _clrQuirkAppSettingsAppContextPrefix = "AppContext.SetSwitch:";
         private const string _regexMatchTimeoutKey = "REGEX_DEFAULT_MATCH_TIMEOUT";
+        private const string _configBuildersIgnoreLoadFailuresSwitch = "ConfigurationBuilders.IgnoreLoadFailure";   // Keep in sync with System.Configuration
         private static readonly StrongName _mwiV1StrongName = GetMicrosoftWebInfrastructureV1StrongName();
 
         private static Object _applicationManagerStaticLock = new Object();
@@ -82,11 +85,11 @@ namespace System.Web.Hosting {
         // delegate OnRespondToPing
         private WaitCallback _onRespondToPingWaitCallback;
 
+        // flag indicates whether any fatal exception has been recorded
+        private bool _fatalExceptionRecorded = false;
+
         // single instance of app manager
         private static ApplicationManager _theAppManager;
-
-        // single instance of cache manager
-        private static CacheManager _cm;
 
         // store fatal exception to assist debugging
         private static Exception _fatalException = null;
@@ -102,55 +105,19 @@ namespace System.Web.Hosting {
             AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(OnUnhandledException);
         }
 
-        private void InitCacheManager(long privateBytesLimit) {
-            if (_cm == null) {
-                lock (_applicationManagerStaticLock) {
-                    if (_cm == null && !_shutdownInProgress) {
-                        _cm = new CacheManager(this, privateBytesLimit);
-                    }
-                }
-            }
-        }
-
-        private void DisposeCacheManager() {
-            if (_cm != null) {
-                lock (_applicationManagerStaticLock) {
-                    if (_cm != null) {
-                        _cm.Dispose();
-                        _cm = null;
-                    }
-                }
-            }
-        }
-
-        // Each cache must update the total with the difference between it's current size and it's previous size.
-        // To reduce cross-domain costs, this also returns the updated total size.
-        internal long GetUpdatedTotalCacheSize(long sizeUpdate) {
-            CacheManager cm = _cm;
-            return (cm != null) ? cm.GetUpdatedTotalCacheSize(sizeUpdate) : 0;
-        }
-
-        internal long TrimCaches(int percent) {
-            long trimmedOrExpired = 0;
-            Dictionary<string, LockableAppDomainContext> apps = CloneAppDomainsCollection();
-            foreach (LockableAppDomainContext ac in apps.Values) {
-                lock (ac) {
-                    HostingEnvironment env = ac.HostEnv;
-                    if (_shutdownInProgress) {
-                        break;
-                    }
-                    if (env == null) {
-                        continue;
-                    }
-                    trimmedOrExpired += env.TrimCache(percent);
-                }
-            }
-            return trimmedOrExpired;
-        }
-
         internal bool ShutdownInProgress {
             get {
                 return _shutdownInProgress;
+            }
+        }
+
+        private bool FatalExceptionRecorded
+        {
+            get {
+                return _fatalExceptionRecorded;
+            }
+            set {
+                _fatalExceptionRecorded = value;
             }
         }
 
@@ -168,7 +135,7 @@ namespace System.Web.Hosting {
             }
         }
 
-        private static void OnUnhandledException(Object sender, UnhandledExceptionEventArgs eventArgs) {
+        internal static void OnUnhandledException(Object sender, UnhandledExceptionEventArgs eventArgs) {
             // if the CLR is not terminating, ignore the notification
             if (!eventArgs.IsTerminating) {
                 return;
@@ -183,6 +150,15 @@ namespace System.Web.Hosting {
             if (appDomain == null) {
                 return;
             }
+
+            // If any fatal exception was recorded in applicaiton AppDomains,
+            // we wouldn't record exceptions in the default AppDomain. 
+            var appManager = GetApplicationManager();
+            if (AppDomain.CurrentDomain.IsDefaultAppDomain() && appManager.FatalExceptionRecorded) {
+                return;
+            }
+
+            appManager.FatalExceptionRecorded = true;
 
             RecordFatalException(appDomain, exception);
         }
@@ -446,6 +422,10 @@ namespace System.Web.Hosting {
             return GetAppDomain(appID);
         }
 
+        internal AppDomain GetDefaultAppDomain() {
+            return AppDomain.CurrentDomain;
+        }
+
         [SuppressMessage("Microsoft.Security", "CA2122:DoNotIndirectlyExposeMethodsWithLinkDemands", Justification = "This isn't a dangerous method.")]
         private string CreateSimpleAppID(IApplicationHost appHost) {
             if (appHost == null) {
@@ -542,8 +522,6 @@ namespace System.Web.Hosting {
         public void ShutdownAll() {
             _shutdownInProgress = true;
             Dictionary <string, LockableAppDomainContext> oldTable = null;
-
-            DisposeCacheManager();
 
             lock (this) {
                 oldTable = _appDomains;
@@ -747,13 +725,8 @@ namespace System.Web.Hosting {
         // communication with hosting environments
         //
 
-        internal void HostingEnvironmentActivated(long privateBytesLimit) {
+        internal void HostingEnvironmentActivated() {
             int count = Interlocked.Increment(ref _activeHostingEnvCount);
-            
-            // initialize CacheManager once, without blocking
-            if (count == 1) {
-                InitCacheManager(privateBytesLimit);
-            }
         }
 
         internal void HostingEnvironmentShutdownComplete(String appId, IApplicationHost appHost) {
@@ -969,6 +942,8 @@ namespace System.Web.Hosting {
                 bool requireHostExecutionContextManager = false;
                 bool requireHostSecurityManager = false;
 
+                AppDomain.CurrentDomain.SetData(_configBuildersIgnoreLoadFailuresSwitch, true);
+
                 uncTokenConfig = appHost.GetConfigToken();
                 if (uncTokenConfig != IntPtr.Zero) {
                     ictxConfig = new ImpersonationContext(uncTokenConfig);
@@ -999,7 +974,7 @@ namespace System.Web.Hosting {
                         //Hosted by IIS, we already have an IISMap.
                         if (appHost is ISAPIApplicationHost) {
                             string cacheKey = System.Web.Caching.CacheInternal.PrefixMapPath + siteID + virtualPath.VirtualPathString;
-                            MapPathCacheInfo cacheInfo = (MapPathCacheInfo)HttpRuntime.CacheInternal.Remove(cacheKey);
+                            MapPathCacheInfo cacheInfo = (MapPathCacheInfo)HttpRuntime.Cache.InternalCache.Remove(cacheKey);
                             appConfig = WebConfigurationManager.OpenWebConfiguration(appSegment, siteID);
                         }
                         // For non-IIS hosting scenarios, we need to get config map from application host in a generic way.
@@ -1092,6 +1067,25 @@ namespace System.Web.Hosting {
                                     hostingParameters = new HostingEnvironmentParameters();
                                 }
                                 hostingParameters.FcnSkipReadAndCacheDacls = true;
+                            }
+                        }
+
+                        // Allow apps to use their own CacheStoreProvider implementations
+                        CacheSection cacheConfig = (CacheSection)appConfig.GetSection("system.web/caching/cache");
+                        if (cacheConfig != null && cacheConfig.DefaultProvider != null && !String.IsNullOrWhiteSpace(cacheConfig.DefaultProvider)) {
+                            ProviderSettingsCollection cacheProviders = cacheConfig.Providers;
+                            if (cacheProviders == null || cacheProviders.Count < 1) {
+                                throw new ProviderException(SR.GetString(SR.Def_provider_not_found));
+                            }
+
+                            ProviderSettings cacheProviderSettings = cacheProviders[cacheConfig.DefaultProvider];
+                            if (cacheProviderSettings == null) {
+                                throw new ProviderException(SR.GetString(SR.Def_provider_not_found));
+                            } else {
+                                NameValueCollection settings = cacheProviderSettings.Parameters;
+                                settings["name"] = cacheProviderSettings.Name;
+                                settings["type"] = cacheProviderSettings.Type;
+                                appDomainAdditionalData[".defaultObjectCacheProvider"] = settings;
                             }
                         }
 

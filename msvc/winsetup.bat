@@ -1,17 +1,23 @@
 @echo off
-cd ..
-if exist config.h if not exist cygconfig.h copy config.h cygconfig.h
-if exist eglib\config.h if not exist eglib\cygconfig.h copy eglib\config.h eglib\cygconfig.h
-copy winconfig.h config.h
-copy eglib\winconfig.h eglib\config.h
-%windir%\system32\WindowsPowerShell\v1.0\powershell.exe -Command "(Get-Content config.h) -replace '#MONO_VERSION#', (Select-String -path configure.ac -pattern 'AC_INIT\(mono, \[(.*)\]').Matches[0].Groups[1].Value | Set-Content config.h"
-goto end
-:error
-echo fatal error: the VSDepenancies directory was not found in the "mono" directory
-echo error: you must download and unzip that file
-exit /b 100
-goto end
-:ok
-echo OK
-:end
-exit /b 0
+setlocal
+
+set BUILD_RESULT=1
+
+:: Get path for current running script.
+set RUN_WINSETUP_SCRIPT_PATH=%~dp0
+
+:: Setup VS msbuild environment.
+call %RUN_WINSETUP_SCRIPT_PATH%setup-vs-msbuild-env.bat
+
+call "msbuild.exe" /t:RunWinConfigSetup %RUN_WINSETUP_SCRIPT_PATH%mono.winconfig.targets && (
+    set BUILD_RESULT=0
+) || (
+    set BUILD_RESULT=1
+    if not %ERRORLEVEL% == 0 (
+        set BUILD_RESULT=%ERRORLEVEL%
+    )
+)
+
+exit /b %BUILD_RESULT%
+
+@echo on

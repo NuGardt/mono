@@ -36,6 +36,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions {
 
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_ListInit {
 
 		public class Foo {
@@ -126,7 +127,6 @@ namespace MonoTests.System.Linq.Expressions {
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void CompileListOfStringsInit ()
 		{
 			var add = typeof (List<string>).GetMethod ("Add");
@@ -146,7 +146,6 @@ namespace MonoTests.System.Linq.Expressions {
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		[Category ("NotDotNet")]
 		public void CompileArrayListOfStringsInit ()
 		{

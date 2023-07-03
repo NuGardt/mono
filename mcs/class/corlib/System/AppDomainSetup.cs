@@ -31,11 +31,13 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System.Globalization;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Security.Permissions;
 using System.Runtime.Serialization.Formatters.Binary;
 
 using System.Runtime.Hosting;
@@ -47,7 +49,7 @@ namespace System
 	[ClassInterface (ClassInterfaceType.None)]
 	[ComVisible (true)]
 	[StructLayout (LayoutKind.Sequential)]
-#if NET_2_1
+#if MOBILE
 	public sealed class AppDomainSetup
 #else
 	public sealed class AppDomainSetup : IAppDomainSetup
@@ -90,6 +92,10 @@ namespace System
 
 		byte [] serialized_non_primitives;
 
+		string manager_assembly;
+		string manager_type;
+		string [] partial_visible_assemblies;
+
 		public AppDomainSetup ()
 		{
 		}
@@ -117,6 +123,9 @@ namespace System
 			domain_initializer_args = setup.domain_initializer_args;
 			disallow_appbase_probe = setup.disallow_appbase_probe;
 			configuration_bytes = setup.configuration_bytes;
+			manager_assembly = setup.manager_assembly;
+			manager_type = setup.manager_type;
+			partial_visible_assemblies = setup.partial_visible_assemblies;
 		}
 
 		public AppDomainSetup (ActivationArguments activationArguments)
@@ -134,17 +143,31 @@ namespace System
 			if (appBase == null)
 				return null;
 
-			int len = appBase.Length;
-			if (len >= 8 && appBase.ToLower ().StartsWith ("file://")) {
-				appBase = appBase.Substring (7);
+			if (appBase.StartsWith ("file://", StringComparison.OrdinalIgnoreCase)) {
+				appBase = new Mono.Security.Uri (appBase).LocalPath;
 				if (Path.DirectorySeparatorChar != '/')
 					appBase = appBase.Replace ('/', Path.DirectorySeparatorChar);
-				if (Environment.IsRunningOnWindows) {
-					// Under Windows prepend "//" to indicate it's a local file
-					appBase = "//" + appBase;
+			}
+			appBase = Path.GetFullPath (appBase);
+
+			if (Path.DirectorySeparatorChar != '/') {
+				bool isExtendedPath = appBase.StartsWith (@"\\?\", StringComparison.Ordinal);
+				if (appBase.IndexOf (':', isExtendedPath ? 6 : 2) != -1) {
+					throw new NotSupportedException ("The given path's format is not supported.");
 				}
-			} else {
-				appBase = Path.GetFullPath (appBase);
+			}
+
+			// validate the path
+			string dir = Path.GetDirectoryName (appBase);
+			if ((dir != null) && (dir.LastIndexOfAny (Path.GetInvalidPathChars ()) >= 0)) {
+				string msg = String.Format (Locale.GetText ("Invalid path characters in path: '{0}'"), appBase);
+				throw new ArgumentException (msg, "appBase");
+			}
+
+			string fname = Path.GetFileName (appBase);
+			if ((fname != null) && (fname.LastIndexOfAny (Path.GetInvalidFileNameChars ()) >= 0)) {
+				string msg = String.Format (Locale.GetText ("Invalid filename characters in path: '{0}'"), appBase);
+				throw new ArgumentException (msg, "appBase");
 			}
 
 			return appBase;
@@ -238,6 +261,31 @@ namespace System
 #else
 				loader_optimization = value;
 #endif
+			}
+		}
+
+		// AppDomainManagerAssembly, ManagerType, and PartialTrustVisibleAssemblies 
+		// don't really do anything within Mono, but will help with refsrc compat. 
+		public string AppDomainManagerAssembly {
+			get { return manager_assembly; }
+			set { manager_assembly = value; }
+		}
+
+		public string AppDomainManagerType {
+			get { return manager_type; }
+			set { manager_type = value; }
+		}
+
+		public string [] PartialTrustVisibleAssemblies {
+			get { return partial_visible_assemblies; }
+			set {
+				if (value != null) {
+					partial_visible_assemblies = (string [])value.Clone();
+					Array.Sort<string> (partial_visible_assemblies, StringComparer.OrdinalIgnoreCase);
+				}
+				else {
+					partial_visible_assemblies = null;
+				}
 			}
 		}
 

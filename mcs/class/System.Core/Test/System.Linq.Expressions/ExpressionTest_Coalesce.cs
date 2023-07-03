@@ -29,6 +29,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions
 {
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_Coalesce
 	{
 		[Test]
@@ -87,7 +88,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void CoalesceNullableInt ()
 		{
 			var a = Expression.Parameter (typeof (int?), "a");
@@ -116,7 +116,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void CoalesceNullableToNonNullable ()
 		{
 			var a = Expression.Parameter (typeof (int?), "a");
@@ -134,7 +133,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		[Category ("NotDotNet")] // https://connect.microsoft.com/VisualStudio/feedback/ViewFeedback.aspx?FeedbackID=349822
 		public void CoalesceUserDefinedConversion ()
 		{
@@ -166,9 +164,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		// #12987
-		[Category ("MobileNotWorking")]
-		[Category ("NotWorkingInterpreter")]
 		public void CoalesceNullableSlotIntoInteger ()
 		{
 			var s = Expression.Parameter (typeof (Slot?), "s");

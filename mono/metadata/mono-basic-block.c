@@ -1,5 +1,6 @@
-/*
- * mono-basic-block.c: Routines for parsing basic blocks from the IL stream
+/**
+ * \file
+ * Routines for parsing basic blocks from the IL stream
  *
  * Authors:
  *   Rodrigo Kumpera (rkumpera@novell.com)
@@ -240,7 +241,7 @@ bb_split (MonoSimpleBasicBlock *first, MonoSimpleBasicBlock *hint, MonoSimpleBas
 {
 	MonoSimpleBasicBlock *res, *bb = first;
 
-	mono_error_init (error);
+	error_init (error);
 
 	if (bb_idx_is_contained (hint, target)) {
 		first = hint;
@@ -323,6 +324,7 @@ mono_opcode_has_static_branch (int opcode)
 	case MONO_CEE_THROW:
 	case MONO_CEE_RETHROW:
 	case MONO_CEE_ENDFINALLY:
+	case MONO_CEE_MONO_RETHROW:
 		return TRUE;
 	}
 	return FALSE;
@@ -333,12 +335,13 @@ static void
 bb_formation_il_pass (const unsigned char *start, const unsigned char *end, MonoSimpleBasicBlock *bb, MonoSimpleBasicBlock **root, MonoMethod *method, MonoError *error)
 {
 	unsigned const char *ip = start;
-	int value, size;
+	MonoOpcodeEnum value;
+	int size;
 	guint cli_addr, offset;
 	MonoSimpleBasicBlock *branch, *next, *current;
 	const MonoOpcode *opcode;
 
-	mono_error_init (error);
+	error_init (error);
 
 	current = bb;
 
@@ -469,7 +472,7 @@ bb_formation_eh_pass (MonoMethodHeader *header, MonoSimpleBasicBlock *bb, MonoSi
 	int i;
 	int end = header->code_size;
 
-	mono_error_init (error);
+	error_init (error);
 
 	/*We must split at all points to verify for targets in the middle of an instruction*/
 	for (i = 0; i < header->num_clauses; ++i) {
@@ -527,7 +530,7 @@ mono_basic_block_split (MonoMethod *method, MonoError *error, MonoMethodHeader *
 	MonoSimpleBasicBlock *bb, *root;
 	const unsigned char *start, *end;
 
-	mono_error_init (error);
+	error_init (error);
 
 	start = header->code;
 	end = start + header->code_size;
@@ -540,11 +543,11 @@ mono_basic_block_split (MonoMethod *method, MonoError *error, MonoMethodHeader *
 
 	root = bb;
 	bb_formation_il_pass (start, end, bb, &root, method, error);
-	if (!mono_error_ok (error))
+	if (!is_ok (error))
 		goto fail;
 	
 	bb_formation_eh_pass (header, bb, &root, method, error);
-	if (!mono_error_ok (error))
+	if (!is_ok (error))
 		goto fail;
 
 	bb_liveness (bb);
@@ -567,7 +570,7 @@ fail:
  * Value is the opcode number. 
 */
 int
-mono_opcode_value_and_size (const unsigned char **ip, const unsigned char *end, int *value)
+mono_opcode_value_and_size (const unsigned char **ip, const unsigned char *end, MonoOpcodeEnum *value)
 {
 	const unsigned char *start = *ip, *p;
 	int i = *value = mono_opcode_value (ip, end);
@@ -610,7 +613,7 @@ mono_opcode_value_and_size (const unsigned char **ip, const unsigned char *end, 
 		entries = read32 (p + 1);
 		if (entries >= (0xFFFFFFFFU / 4))
 			return -1;
-		size = 4 + 4 * entries;
+		size = 5 + 4 * entries;
 		break;
 	}
 	default:
@@ -631,7 +634,7 @@ mono_opcode_value_and_size (const unsigned char **ip, const unsigned char *end, 
 int
 mono_opcode_size (const unsigned char *ip, const unsigned char *end)
 {
-	int tmp;
+	MonoOpcodeEnum tmp;
 	return mono_opcode_value_and_size (&ip, end, &tmp);
 }
 

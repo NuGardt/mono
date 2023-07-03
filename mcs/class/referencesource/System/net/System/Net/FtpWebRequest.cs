@@ -239,6 +239,8 @@ namespace System.Net {
 
         private static readonly GeneralAsyncDelegate m_AsyncCallback = new GeneralAsyncDelegate(AsyncCallbackWrapper);
         private static readonly CreateConnectionDelegate m_CreateConnectionCallback = new CreateConnectionDelegate(CreateFtpConnection);
+        
+        // [SuppressMessage("Microsoft.Security", "CS002:SecretInNextLine", Justification="Anonymous FTP credential in production code.")]
         private static readonly NetworkCredential DefaultFtpNetworkCredential = new NetworkCredential("anonymous", "anonymous@", String.Empty);
         private static readonly int s_DefaultTimeout = WebRequest.DefaultTimeout;
         private static readonly TimerThread.Queue s_DefaultTimerQueue = TimerThread.GetOrCreateQueue(s_DefaultTimeout);
@@ -1320,7 +1322,7 @@ namespace System.Net {
             }
         }
 
-        // Return null only on [....] (if we're on the [....] thread).  Otherwise throw if no context is available.
+        // Return null only on Sync (if we're on the Sync thread).  Otherwise throw if no context is available.
         //
         // 
 
@@ -1331,7 +1333,7 @@ namespace System.Net {
             else if (m_WriteAsyncResult != null)
                 return m_WriteAsyncResult;
 
-            // [....].
+            // Sync.
             GlobalLog.ThreadContract(ThreadKinds.User | ThreadKinds.Sync, "FtpWebRequest#" + ValidationHelper.HashString(this) + "::GetWritingContext");
             return null;
         }
@@ -1339,7 +1341,7 @@ namespace System.Net {
         //
         //    Provides an abstract way of having Async code callback into the request (saves a delegate)
         //
-        //    ATTN this method is also called on [....] path when either command or data stream gets closed
+        //    ATTN this method is also called on sync path when either command or data stream gets closed
         //    Consider: Revisit the design of ftp streams
         //
         internal override void RequestCallback(object obj)
@@ -1350,7 +1352,7 @@ namespace System.Net {
                 SyncRequestCallback(obj);
         }
         //
-        // Only executed for [....] requests when the pipline is completed
+        // Only executed for Sync requests when the pipline is completed
         //
         private void SyncRequestCallback(object obj)
         {
@@ -1389,7 +1391,7 @@ namespace System.Net {
                         isRevalidatedOrRetried =!m_CacheDone &&
                                                 (CacheProtocol.ProtocolStatus == CacheValidationStatus.Continue || CacheProtocol.ProtocolStatus == CacheValidationStatus.RetryResponseFromServer);
 
-                        // This is for [....] Upload commands that do not get chance hit GetResponse loop
+                        // This is for sync Upload commands that do not get chance hit GetResponse loop
                         if (m_MethodInfo.IsUpload)
                         {
                             CheckCacheRetrieveOnResponse();

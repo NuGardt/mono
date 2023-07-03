@@ -7,7 +7,7 @@
 **
 ** Class:  Contract
 ** 
-** <OWNER>[....],mbarnett</OWNER>
+** <OWNER>Microsoft,mbarnett</OWNER>
 **
 ** Purpose: The contract class allows for expressing preconditions,
 ** postconditions, and object invariants about methods in source
@@ -28,7 +28,9 @@
 #elif BARTOK_RUNTIME
 
 #else // CLR
+#if !MONO
 #define FEATURE_UNTRUSTED_CALLERS
+#endif
 #define FEATURE_RELIABILITY_CONTRACTS
 #define FEATURE_SERIALIZATION
 #endif

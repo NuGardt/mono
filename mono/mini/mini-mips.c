@@ -1,5 +1,6 @@
-/*
- * mini-mips.c: MIPS backend for the Mono code generator
+/**
+ * \file
+ * MIPS backend for the Mono code generator
  *
  * Authors:
  *   Mark Mason (mason@broadcom.com)
@@ -19,14 +20,17 @@
 #include <mono/metadata/appdomain.h>
 #include <mono/metadata/debug-helpers.h>
 #include <mono/utils/mono-mmap.h>
-#include <mono/utils/mono-hwcap-mips.h>
+#include <mono/utils/mono-hwcap.h>
+#include <mono/utils/unlocked.h>
 
 #include <mono/arch/mips/mips-codegen.h>
 
 #include "mini-mips.h"
 #include "cpu-mips.h"
-#include "trace.h"
 #include "ir-emit.h"
+#include "aot-runtime.h"
+#include "mini-runtime.h"
+#include "mono/utils/mono-tls-inline.h"
 
 #define SAVE_FP_REGS		0
 
@@ -61,11 +65,6 @@ enum {
 #define mono_mini_arch_unlock() mono_os_mutex_unlock (&mini_arch_mutex)
 static mono_mutex_t mini_arch_mutex;
 
-int mono_exc_esp_offset = 0;
-static int tls_mode = TLS_MODE_DETECT;
-static int lmf_pthread_key = -1;
-static int monothread_key = -1;
-
 /* Whenever the host is little-endian */
 static int little_endian;
 /* Index of ms word/register */
@@ -97,23 +96,6 @@ static gpointer bp_trigger_page;
 		code = mips_emit_exc_by_name (code, exc_name);	\
 		cfg->bb_exit->max_offset += 16;				\
 	} while (0) 
-
-
-#define emit_linuxthreads_tls(code,dreg,key) do {\
-		int off1, off2;	\
-		off1 = offsets_from_pthread_key ((key), &off2);	\
-		g_assert_not_reached ();		\
-		ppc_lwz ((code), (dreg), off1, ppc_r2);	\
-		ppc_lwz ((code), (dreg), off2, (dreg));	\
-	} while (0);
-
-
-#define emit_tls_access(code,dreg,key) do {	\
-		switch (tls_mode) {	\
-		case TLS_MODE_LTHREADS: emit_linuxthreads_tls(code,dreg,key); break;	\
-		default: g_assert_not_reached ();	\
-		}	\
-	} while (0)
 
 #define MONO_EMIT_NEW_LOAD_R8(cfg,dr,addr) do { \
 		MonoInst *inst;				   \
@@ -171,7 +153,7 @@ typedef struct {
 	guint8  size    : 4; /* 1, 2, 4, 8, or regs used by ArgStructByVal */
 } ArgInfo;
 
-typedef struct {
+struct CallInfo {
 	int nargs;
 	int gr;
 	int fr;
@@ -184,10 +166,11 @@ typedef struct {
 	ArgInfo ret;
 	ArgInfo sig_cookie;
 	ArgInfo args [1];
-} CallInfo;
+};
 
 void patch_lui_addiu(guint32 *ip, guint32 val);
-guint8 *mono_arch_emit_epilog_sub (MonoCompile *cfg, guint8 *code);
+static
+guint8 *mono_arch_emit_epilog_sub (MonoCompile *cfg);
 guint8 *mips_emit_cond_branch (MonoCompile *cfg, guint8 *code, int op, MonoInst *ins);
 void mips_adjust_stackframe(MonoCompile *cfg);
 void mono_arch_emit_this_vret_args (MonoCompile *cfg, MonoCallInst *inst, int this_reg, int this_type, int vt_reg);
@@ -210,7 +193,7 @@ mono_arch_flush_register_windows (void)
 }
 
 gboolean 
-mono_arch_is_inst_imm (gint64 imm)
+mono_arch_is_inst_imm (int opcode, int imm_opcode, gint64 imm)
 {
 	return TRUE;
 }
@@ -223,15 +206,14 @@ mips_emit_exc_by_name(guint8 *code, const char *name)
 
 	exc_class = mono_class_load_from_name (mono_defaults.corlib, "System", name);
 
-	mips_load_const (code, mips_a0, exc_class->type_token);
+	mips_load_const (code, mips_a0, m_class_get_type_token (exc_class));
 	addr = mono_get_throw_corlib_exception ();
 	mips_call (code, mips_t9, addr);
 	return code;
 }
 
-
 guint8 *
-mips_emit_load_const(guint8 *code, int dreg, mgreg_t v)
+mips_emit_load_const (guint8 *code, int dreg, target_mgreg_t v)
 {
 	if (mips_is_imm16 (v))
 		mips_addiu (code, dreg, mips_zero, ((guint32)v) & 0xffff);
@@ -409,17 +391,6 @@ mips_patch (guint32 *code, guint32 target)
 	}
 }
 
-#if 0
-static int
-offsets_from_pthread_key (guint32 key, int *offset2)
-{
-	int idx1 = key / 32;
-	int idx2 = key % 32;
-	*offset2 = idx2 * sizeof (gpointer);
-	return 284 + idx1 * sizeof (gpointer);
-}
-#endif
-
 static void mono_arch_compute_omit_fp (MonoCompile *cfg);
 
 const char*
@@ -503,14 +474,14 @@ mono_arch_get_argument_info (MonoMethodSignature *csig, int param_count, MonoJit
 	int offset = 0;
 
 	if (MONO_TYPE_ISSTRUCT (csig->ret)) { 
-		frame_size += sizeof (gpointer);
+		frame_size += sizeof (target_mgreg_t);
 		offset += 4;
 	}
 
 	arg_info [0].offset = offset;
 
 	if (csig->hasthis) {
-		frame_size += sizeof (gpointer);
+		frame_size += sizeof (target_mgreg_t);
 		offset += 4;
 	}
 
@@ -542,7 +513,7 @@ mono_arch_get_argument_info (MonoMethodSignature *csig, int param_count, MonoJit
 /* The delegate object plus 3 params */
 #define MAX_ARCH_DELEGATE_PARAMS (4 - 1)
 
-static gpointer
+static guint8*
 get_delegate_invoke_impl (MonoTrampInfo **info, gboolean has_target, gboolean param_count)
 {
 	guint8 *code, *start;
@@ -559,6 +530,7 @@ get_delegate_invoke_impl (MonoTrampInfo **info, gboolean has_target, gboolean pa
 		g_assert ((code - start) <= 16);
 
 		mono_arch_flush_icache (start, 16);
+		MONO_PROFILER_RAISE (jit_code_buffer, (start, code - start, MONO_PROFILER_CODE_BUFFER_DELEGATE_INVOKE, NULL));
 	} else {
 		int size, i;
 
@@ -576,6 +548,7 @@ get_delegate_invoke_impl (MonoTrampInfo **info, gboolean has_target, gboolean pa
 		g_assert ((code - start) <= size);
 
 		mono_arch_flush_icache (start, size);
+		MONO_PROFILER_RAISE (jit_code_buffer, (start, code - start, MONO_PROFILER_CODE_BUFFER_DELEGATE_INVOKE, NULL));
 	}
 
 	if (has_target) {
@@ -630,7 +603,7 @@ mono_arch_get_delegate_invoke_impl (MonoMethodSignature *sig, gboolean has_targe
 			return cached;
 		}
 
-		if (mono_aot_only) {
+		if (mono_ee_features.use_aot_trampolines) {
 			start = mono_aot_get_trampoline ("delegate_invoke_impl_has_target");
 		} else {
 			MonoTrampInfo *info;
@@ -657,7 +630,7 @@ mono_arch_get_delegate_invoke_impl (MonoMethodSignature *sig, gboolean has_targe
 			return code;
 		}
 
-		if (mono_aot_only) {
+		if (mono_ee_features.use_aot_trampolines) {
 			char *name = g_strdup_printf ("delegate_invoke_impl_target_%d", sig->param_count);
 			start = mono_aot_get_trampoline (name);
 			g_free (name);
@@ -681,7 +654,7 @@ mono_arch_get_delegate_virtual_invoke_impl (MonoMethodSignature *sig, MonoMethod
 }
 
 gpointer
-mono_arch_get_this_arg_from_call (mgreg_t *regs, guint8 *code)
+mono_arch_get_this_arg_from_call (host_mgreg_t *regs, guint8 *code)
 {
 	g_assert(regs);
 	return (gpointer)regs [mips_a0];
@@ -714,8 +687,8 @@ mono_arch_init (void)
 {
 	mono_os_mutex_init_recursive (&mini_arch_mutex);
 
-	ss_trigger_page = mono_valloc (NULL, mono_pagesize (), MONO_MMAP_READ|MONO_MMAP_32BIT);
-	bp_trigger_page = mono_valloc (NULL, mono_pagesize (), MONO_MMAP_READ|MONO_MMAP_32BIT);
+	ss_trigger_page = mono_valloc (NULL, mono_pagesize (), MONO_MMAP_READ, MONO_MEM_ACCOUNT_OTHER);
+	bp_trigger_page = mono_valloc (NULL, mono_pagesize (), MONO_MMAP_READ, MONO_MEM_ACCOUNT_OTHER);
 	mono_mprotect (bp_trigger_page, mono_pagesize (), 0);
 }
 
@@ -726,6 +699,12 @@ void
 mono_arch_cleanup (void)
 {
 	mono_os_mutex_destroy (&mini_arch_mutex);
+}
+
+gboolean
+mono_arch_have_fast_tls (void)
+{
+	return FALSE;
 }
 
 /*
@@ -739,19 +718,6 @@ mono_arch_cpu_optimizations (guint32 *exclude_mask)
 	/* no mips-specific optimizations yet */
 	*exclude_mask = 0;
 	return opts;
-}
-
-/*
- * This function test for all SIMD functions supported.
- *
- * Returns a bitmask corresponding to all supported versions.
- *
- */
-guint32
-mono_arch_cpu_enumerate_simd_versions (void)
-{
-	/* SIMD is currently unimplemented */
-	return 0;
 }
 
 GList *
@@ -1138,7 +1104,6 @@ get_call_info (MonoMemPool *mp, MonoMethodSignature *sig)
 		DEBUG(printf("param %d: ", i));
 		simpletype = mini_get_underlying_type (sig->params [i]);
 		switch (simpletype->type) {
-		case MONO_TYPE_BOOLEAN:
 		case MONO_TYPE_I1:
 		case MONO_TYPE_U1:
 			DEBUG(printf("1 byte\n"));
@@ -1146,7 +1111,6 @@ get_call_info (MonoMemPool *mp, MonoMethodSignature *sig)
 			add_int32_arg (cinfo, &cinfo->args[n]);
 			n++;
 			break;
-		case MONO_TYPE_CHAR:
 		case MONO_TYPE_I2:
 		case MONO_TYPE_U2:
 			DEBUG(printf("2 bytes\n"));
@@ -1165,18 +1129,14 @@ get_call_info (MonoMemPool *mp, MonoMethodSignature *sig)
 		case MONO_TYPE_U:
 		case MONO_TYPE_PTR:
 		case MONO_TYPE_FNPTR:
-		case MONO_TYPE_CLASS:
 		case MONO_TYPE_OBJECT:
-		case MONO_TYPE_STRING:
-		case MONO_TYPE_SZARRAY:
-		case MONO_TYPE_ARRAY:
-			cinfo->args [n].size = sizeof (gpointer);
+			cinfo->args [n].size = sizeof (target_mgreg_t);
 			add_int32_arg (cinfo, &cinfo->args[n]);
 			n++;
 			break;
 		case MONO_TYPE_GENERICINST:
 			if (!mono_type_generic_inst_is_valuetype (simpletype)) {
-				cinfo->args [n].size = sizeof (gpointer);
+				cinfo->args [n].size = sizeof (target_mgreg_t);
 				add_int32_arg (cinfo, &cinfo->args[n]);
 				n++;
 				break;
@@ -1192,10 +1152,10 @@ get_call_info (MonoMemPool *mp, MonoMethodSignature *sig)
 			MonoClass *klass;
 
 			if (simpletype->type == MONO_TYPE_TYPEDBYREF) {
-				size = sizeof (MonoTypedRef);
-				alignment = sizeof (gpointer);
+				size = MONO_ABI_SIZEOF (MonoTypedRef);
+				alignment = sizeof (target_mgreg_t);
 			} else {
-				klass = mono_class_from_mono_type (sig->params [i]);
+				klass = mono_class_from_mono_type_internal (sig->params [i]);
 				if (is_pinvoke)
 					size = mono_class_native_size (klass, NULL);
 				else
@@ -1220,7 +1180,7 @@ get_call_info (MonoMemPool *mp, MonoMethodSignature *sig)
 				  mono_class_native_size (sig->params [i]->data.klass, NULL),
 				  cinfo->stack_size, alignment);
 #endif
-			nwords = (size + sizeof (gpointer) -1 ) / sizeof (gpointer);
+			nwords = (size + sizeof (target_mgreg_t) -1 ) / sizeof (target_mgreg_t);
 			g_assert (cinfo->args [n].size == 0);
 			g_assert (cinfo->args [n].vtsize == 0);
 			for (j = 0; j < nwords; ++j) {
@@ -1285,23 +1245,17 @@ get_call_info (MonoMemPool *mp, MonoMethodSignature *sig)
 	{
 		simpletype = mini_get_underlying_type (sig->ret);
 		switch (simpletype->type) {
-		case MONO_TYPE_BOOLEAN:
 		case MONO_TYPE_I1:
 		case MONO_TYPE_U1:
 		case MONO_TYPE_I2:
 		case MONO_TYPE_U2:
-		case MONO_TYPE_CHAR:
 		case MONO_TYPE_I4:
 		case MONO_TYPE_U4:
 		case MONO_TYPE_I:
 		case MONO_TYPE_U:
 		case MONO_TYPE_PTR:
 		case MONO_TYPE_FNPTR:
-		case MONO_TYPE_CLASS:
 		case MONO_TYPE_OBJECT:
-		case MONO_TYPE_SZARRAY:
-		case MONO_TYPE_ARRAY:
-		case MONO_TYPE_STRING:
 			cinfo->ret.reg = mips_v0;
 			break;
 		case MONO_TYPE_U8:
@@ -1348,8 +1302,7 @@ debug_omit_fp (void)
 
 /**
  * mono_arch_compute_omit_fp:
- *
- *   Determine whenever the frame pointer can be eliminated.
+ * Determine whether the frame pointer can be eliminated.
  */
 static void
 mono_arch_compute_omit_fp (MonoCompile *cfg)
@@ -1364,7 +1317,7 @@ mono_arch_compute_omit_fp (MonoCompile *cfg)
 
 	header = cfg->header;
 
-	sig = mono_method_signature (cfg->method);
+	sig = mono_method_signature_internal (cfg->method);
 
 	if (!cfg->arch.cinfo)
 		cfg->arch.cinfo = get_call_info (cfg->mempool, sig);
@@ -1387,9 +1340,6 @@ mono_arch_compute_omit_fp (MonoCompile *cfg)
 	if (header->num_clauses)
 		cfg->arch.omit_fp = FALSE;
 	if (!sig->pinvoke && (sig->call_convention == MONO_CALL_VARARG))
-		cfg->arch.omit_fp = FALSE;
-	if ((mono_jit_trace_calls != NULL && mono_trace_eval (cfg->method)) ||
-		(cfg->prof_options & MONO_PROFILE_ENTER_LEAVE))
 		cfg->arch.omit_fp = FALSE;
 	/*
 	 * On MIPS, fp points to the bottom of the frame, so it can be eliminated even if
@@ -1429,7 +1379,7 @@ mono_arch_allocate_vars (MonoCompile *cfg)
 #endif
 	CallInfo *cinfo;
 
-	sig = mono_method_signature (cfg->method);
+	sig = mono_method_signature_internal (cfg->method);
 
 	if (!cfg->arch.cinfo)
 		cfg->arch.cinfo = get_call_info (cfg->mempool, sig);
@@ -1440,22 +1390,18 @@ mono_arch_allocate_vars (MonoCompile *cfg)
 	/* spill down, we'll fix it in a separate pass */
 	// cfg->flags |= MONO_CFG_HAS_SPILLUP;
 
-	/* allow room for the vararg method args: void* and long/double */
-	if (mono_jit_trace_calls != NULL && mono_trace_eval (cfg->method))
-		cfg->param_area = MAX (cfg->param_area, sizeof (gpointer)*8);
-
 	/* this is bug #60332: remove when #59509 is fixed, so no weird vararg 
 	 * call convs needs to be handled this way.
 	 */
 	if (cfg->flags & MONO_CFG_HAS_VARARGS)
-		cfg->param_area = MAX (cfg->param_area, sizeof (gpointer)*8);
+		cfg->param_area = MAX (cfg->param_area, sizeof (target_mgreg_t)*8);
 
 	/* gtk-sharp and other broken code will dllimport vararg functions even with
 	 * non-varargs signatures. Since there is little hope people will get this right
 	 * we assume they won't.
 	 */
 	if (cfg->method->wrapper_type == MONO_WRAPPER_MANAGED_TO_NATIVE)
-		cfg->param_area = MAX (cfg->param_area, sizeof (gpointer)*8);
+		cfg->param_area = MAX (cfg->param_area, sizeof (target_mgreg_t)*8);
 
 	/* a0-a3 always present */
 	cfg->param_area = MAX (cfg->param_area, MIPS_STACK_PARAM_OFFSET);
@@ -1492,10 +1438,6 @@ mono_arch_allocate_vars (MonoCompile *cfg)
 	/* Space for outgoing parameters, including a0-a3 */
 	offset += cfg->param_area;
 
-	/* allow room to save the return value (if it's a struct) */
-	if (mono_jit_trace_calls != NULL && mono_trace_eval (cfg->method))
-		offset += 8;
-
 	/* Now handle the local variables */
 
 	curinst = cfg->locals_start;
@@ -1508,7 +1450,7 @@ mono_arch_allocate_vars (MonoCompile *cfg)
 		 * pinvoke wrappers when they call functions returning structure
 		 */
 		if (inst->backend.is_pinvoke && MONO_TYPE_ISSTRUCT (inst->inst_vtype) && inst->inst_vtype->type != MONO_TYPE_TYPEDBYREF)
-			size = mono_class_native_size (mono_class_from_mono_type (inst->inst_vtype), (unsigned int *) &align);
+			size = mono_class_native_size (mono_class_from_mono_type_internal (inst->inst_vtype), (unsigned int *) &align);
 		else
 			size = mono_type_size (inst->inst_vtype, &align);
 
@@ -1568,7 +1510,7 @@ mono_arch_allocate_vars (MonoCompile *cfg)
 
 #if _MIPS_SIM == _ABIO32
 	/* Now add space for saving the ra */
-	offset += SIZEOF_VOID_P;
+	offset += TARGET_SIZEOF_VOID_P;
 
 	/* change sign? */
 	offset = (offset + MIPS_STACK_ALIGNMENT - 1) & ~(MIPS_STACK_ALIGNMENT - 1);
@@ -1597,7 +1539,7 @@ mono_arch_allocate_vars (MonoCompile *cfg)
 			MonoType *arg_type;
 		 
 			if (sig->hasthis && (i == 0))
-				arg_type = &mono_defaults.object_class->byval_arg;
+				arg_type = mono_get_object_type ();
 			else
 				arg_type = sig->params [i - sig->hasthis];
 
@@ -1631,7 +1573,7 @@ mono_arch_allocate_vars (MonoCompile *cfg)
 	}
 #if _MIPS_SIM == _ABIN32
 	/* Now add space for saving the ra */
-	offset += SIZEOF_VOID_P;
+	offset += TARGET_SIZEOF_VOID_P;
 
 	/* change sign? */
 	offset = (offset + MIPS_STACK_ALIGNMENT - 1) & ~(MIPS_STACK_ALIGNMENT - 1);
@@ -1645,10 +1587,10 @@ mono_arch_create_vars (MonoCompile *cfg)
 {
 	MonoMethodSignature *sig;
 
-	sig = mono_method_signature (cfg->method);
+	sig = mono_method_signature_internal (cfg->method);
 
 	if (MONO_TYPE_ISSTRUCT (sig->ret)) {
-		cfg->vret_addr = mono_compile_create_var (cfg, &mono_defaults.int_class->byval_arg, OP_ARG);
+		cfg->vret_addr = mono_compile_create_var (cfg, mono_get_int_type (), OP_ARG);
 		if (G_UNLIKELY (cfg->verbose_level > 1)) {
 			printf ("vret_addr = ");
 			mono_print_ins (cfg->vret_addr);
@@ -1673,7 +1615,7 @@ emit_sig_cookie (MonoCompile *cfg, MonoCallInst *call, CallInfo *cinfo)
 	MonoMethodSignature *tmp_sig;
 	MonoInst *sig_arg;
 
-	if (call->tail_call)
+	if (MONO_IS_TAILCALL_OPCODE (call))
 		NOT_IMPLEMENTED;
 
 	/* FIXME: Add support for signature tokens to AOT */
@@ -1721,7 +1663,7 @@ mono_arch_emit_call (MonoCompile *cfg, MonoCallInst *call)
 		if (i >= sig->hasthis)
 			t = sig->params [i - sig->hasthis];
 		else
-			t = &mono_defaults.int_class->byval_arg;
+			t = mono_get_int_type ();
 		t = mini_get_underlying_type (t);
 
 		if ((sig->call_convention == MONO_CALL_VARARG) && (i == sig->sentinelpos)) {
@@ -1918,7 +1860,7 @@ mono_arch_emit_outarg_vt (MonoCompile *cfg, MonoInst *ins, MonoInst *src)
 			soffset += SIZEOF_REGISTER;
 		}
 		if (ovf_size != 0) {
-			mini_emit_memcpy (cfg, mips_sp, doffset, src->dreg, soffset, ovf_size * sizeof (gpointer), 0);
+			mini_emit_memcpy (cfg, mips_sp, doffset, src->dreg, soffset, ovf_size * sizeof (target_mgreg_t), TARGET_SIZEOF_VOID_P);
 		}
 	} else if (ainfo->storage == ArgInFReg) {
 		int tmpr = mono_alloc_freg (cfg);
@@ -1931,22 +1873,22 @@ mono_arch_emit_outarg_vt (MonoCompile *cfg, MonoInst *ins, MonoInst *src)
 		MONO_EMIT_NEW_UNALU (cfg, OP_FMOVE, dreg, tmpr);
 		mono_call_inst_add_outarg_reg (cfg, call, dreg, ainfo->reg, TRUE);
 	} else {
-		MonoInst *vtcopy = mono_compile_create_var (cfg, &src->klass->byval_arg, OP_LOCAL);
+		MonoInst *vtcopy = mono_compile_create_var (cfg, m_class_get_byval_arg (src->klass), OP_LOCAL);
 		MonoInst *load;
 		guint32 size;
 
 		/* FIXME: alignment? */
 		if (call->signature->pinvoke) {
-			size = mono_type_native_stack_size (&src->klass->byval_arg, NULL);
+			size = mono_type_native_stack_size (m_class_get_byval_arg (src->klass), NULL);
 			vtcopy->backend.is_pinvoke = 1;
 		} else {
-			size = mini_type_stack_size (&src->klass->byval_arg, NULL);
+			size = mini_type_stack_size (m_class_get_byval_arg (src->klass), NULL);
 		}
 		if (size > 0)
 			g_assert (ovf_size > 0);
 
 		EMIT_NEW_VARLOADA (cfg, load, vtcopy, vtcopy->inst_vtype);
-		mini_emit_memcpy (cfg, load->dreg, 0, src->dreg, 0, size, 0);
+		mini_emit_memcpy (cfg, load->dreg, 0, src->dreg, 0, size, TARGET_SIZEOF_VOID_P);
 
 		if (ainfo->offset)
 			MONO_EMIT_NEW_STORE_MEMBASE (cfg, OP_STORE_MEMBASE_REG, mips_at, ainfo->offset, load->dreg);
@@ -1958,7 +1900,7 @@ mono_arch_emit_outarg_vt (MonoCompile *cfg, MonoInst *ins, MonoInst *src)
 void
 mono_arch_emit_setret (MonoCompile *cfg, MonoMethod *method, MonoInst *val)
 {
-	MonoType *ret = mini_get_underlying_type (mono_method_signature (method)->ret);
+	MonoType *ret = mini_get_underlying_type (mono_method_signature_internal (method)->ret);
 
 	if (!ret->byref) {
 #if (SIZEOF_REGISTER == 4)
@@ -2175,12 +2117,6 @@ mono_arch_decompose_long_opts (MonoCompile *cfg, MonoInst *ins)
 	int tmp5 = -1;
 
 	switch (ins->opcode) {
-#if 0
-	case OP_LCOMPARE:
-	case OP_LCOMPARE_IMM:
-		mono_print_ins (ins);
-		g_assert_not_reached ();
-#endif
 	case OP_LADD:
 		tmp1 = mono_alloc_ireg (cfg);
 		MONO_EMIT_NEW_BIALU (cfg, OP_IADD, ins->dreg+1, ins->sreg1+1, ins->sreg2+1);
@@ -2192,9 +2128,9 @@ mono_arch_decompose_long_opts (MonoCompile *cfg, MonoInst *ins)
 
 	case OP_LADD_IMM:
 		tmp1 = mono_alloc_ireg (cfg);
-		MONO_EMIT_NEW_BIALU_IMM (cfg, OP_IADD_IMM, ins->dreg+1, ins->sreg1+1, ins->inst_ls_word);
+		MONO_EMIT_NEW_BIALU_IMM (cfg, OP_IADD_IMM, ins->dreg+1, ins->sreg1+1, ins_get_l_low (ins));
 		MONO_EMIT_NEW_BIALU (cfg, OP_MIPS_SLTU, tmp1, ins->dreg+1, ins->sreg1+1);
-		MONO_EMIT_NEW_BIALU_IMM (cfg, OP_IADD_IMM, ins->dreg+2, ins->sreg1+2, ins->inst_ms_word);
+		MONO_EMIT_NEW_BIALU_IMM (cfg, OP_IADD_IMM, ins->dreg+2, ins->sreg1+2, ins_get_l_high (ins));
 		MONO_EMIT_NEW_BIALU (cfg, OP_IADD, ins->dreg+2, ins->dreg+2, tmp1);
 		NULLIFY_INS(ins);
 		break;
@@ -2210,23 +2146,12 @@ mono_arch_decompose_long_opts (MonoCompile *cfg, MonoInst *ins)
 
 	case OP_LSUB_IMM:
 		tmp1 = mono_alloc_ireg (cfg);
-		MONO_EMIT_NEW_BIALU_IMM (cfg, OP_ISUB_IMM, ins->dreg+1, ins->sreg1+1, ins->inst_ls_word);
+		MONO_EMIT_NEW_BIALU_IMM (cfg, OP_ISUB_IMM, ins->dreg+1, ins->sreg1+1, ins_get_l_low (ins));
 		MONO_EMIT_NEW_BIALU (cfg, OP_MIPS_SLTU, tmp1, ins->sreg1+1, ins->dreg+1);
-		MONO_EMIT_NEW_BIALU_IMM (cfg, OP_ISUB_IMM, ins->dreg+2, ins->sreg1+2, ins->inst_ms_word);
+		MONO_EMIT_NEW_BIALU_IMM (cfg, OP_ISUB_IMM, ins->dreg+2, ins->sreg1+2, ins_get_l_high (ins));
 		MONO_EMIT_NEW_BIALU (cfg, OP_ISUB, ins->dreg+2, ins->dreg+2, tmp1);
 		NULLIFY_INS(ins);
 		break;
-
-	case OP_LMUL:
-	case OP_LDIV:
-	case OP_LDIV_UN:
-	case OP_LREM:
-	case OP_LREM_UN:
-	case OP_LSHL:
-	case OP_LSHR:
-	case OP_LSHR_UN:
-		mono_print_ins (ins);
-		g_assert_not_reached ();
 
 	case OP_LNEG:
 		tmp1 = mono_alloc_ireg (cfg);
@@ -2236,27 +2161,6 @@ mono_arch_decompose_long_opts (MonoCompile *cfg, MonoInst *ins)
 		MONO_EMIT_NEW_BIALU (cfg, OP_ISUB, ins->dreg+2, ins->dreg+2, tmp1);
 		NULLIFY_INS(ins);
 		break;
-
-#if 0
-	case OP_LNOT:
-#endif
-#if 0
-	case OP_LCONV_TO_I1:
-	case OP_LCONV_TO_I2:
-	case OP_LCONV_TO_I4:
-	case OP_LCONV_TO_I8:
-	case OP_LCONV_TO_R4:
-	case OP_LCONV_TO_R8:
-	case OP_LCONV_TO_U4:
-	case OP_LCONV_TO_U8:
-	case OP_LCONV_TO_U2:
-	case OP_LCONV_TO_U1:
-	case OP_LCONV_TO_I:
-	case OP_LCONV_TO_OVF_I:
-	case OP_LCONV_TO_OVF_U:
-#endif
-		mono_print_ins (ins);
-		g_assert_not_reached ();
 
 	case OP_LADD_OVF:
 		tmp1 = mono_alloc_ireg (cfg);
@@ -2310,11 +2214,6 @@ mono_arch_decompose_long_opts (MonoCompile *cfg, MonoInst *ins)
 		NULLIFY_INS(ins);
 		break;
 
-	case OP_LMUL_OVF:
-	case OP_LMUL_OVF_UN:
-		mono_print_ins (ins);
-		g_assert_not_reached ();
-
 	case OP_LSUB_OVF:
 		tmp1 = mono_alloc_ireg (cfg);
 		tmp2 = mono_alloc_ireg (cfg);
@@ -2361,60 +2260,6 @@ mono_arch_decompose_long_opts (MonoCompile *cfg, MonoInst *ins)
 		MONO_EMIT_NEW_COMPARE_EXC (cfg, NE_UN, tmp2, mips_zero, "OverflowException");
 		NULLIFY_INS(ins);
 		break;
-#if 0
-	case OP_LCONV_TO_OVF_I1_UN:
-	case OP_LCONV_TO_OVF_I2_UN:
-	case OP_LCONV_TO_OVF_I4_UN:
-	case OP_LCONV_TO_OVF_I8_UN:
-	case OP_LCONV_TO_OVF_U1_UN:
-	case OP_LCONV_TO_OVF_U2_UN:
-	case OP_LCONV_TO_OVF_U4_UN:
-	case OP_LCONV_TO_OVF_U8_UN:
-	case OP_LCONV_TO_OVF_I_UN:
-	case OP_LCONV_TO_OVF_U_UN:
-	case OP_LCONV_TO_OVF_I1:
-	case OP_LCONV_TO_OVF_U1:
-	case OP_LCONV_TO_OVF_I2:
-	case OP_LCONV_TO_OVF_U2:
-	case OP_LCONV_TO_OVF_I4:
-	case OP_LCONV_TO_OVF_U4:
-	case OP_LCONV_TO_OVF_I8:
-	case OP_LCONV_TO_OVF_U8:
-#endif
-	case OP_LCEQ:
-	case OP_LCGT:
-	case OP_LCGT_UN:
-	case OP_LCLT:
-	case OP_LCLT_UN:
-#if 0
-	case OP_LCONV_TO_R_UN:
-	case OP_LCONV_TO_U:
-#endif
-	case OP_LMUL_IMM:
-	case OP_LSHL_IMM:
-	case OP_LSHR_IMM:
-	case OP_LSHR_UN_IMM:
-	case OP_LDIV_IMM:
-	case OP_LDIV_UN_IMM:
-	case OP_LREM_IMM:
-	case OP_LREM_UN_IMM:
-	case OP_LBEQ:
-	case OP_LBGE:
-	case OP_LBGT:
-	case OP_LBLE:
-	case OP_LBLT:
-	case OP_LBNE_UN:
-	case OP_LBGE_UN:
-	case OP_LBGT_UN:
-	case OP_LBLE_UN:
-	case OP_LBLT_UN:
-		mono_print_ins (ins);
-		g_assert_not_reached ();
-#if 0
-	case OP_LCONV_TO_R8_2:
-	case OP_LCONV_TO_R4_2:
-	case OP_LCONV_TO_R_UN_2:
-#endif
 	case OP_LCONV_TO_OVF_I4_2:
 		tmp1 = mono_alloc_ireg (cfg);
 
@@ -2424,14 +2269,6 @@ mono_arch_decompose_long_opts (MonoCompile *cfg, MonoInst *ins)
 		MONO_EMIT_NEW_UNALU (cfg, OP_MOVE, ins->dreg, ins->sreg1);
 		NULLIFY_INS(ins);
 		break;
-
-	case OP_LMIN_UN:
-	case OP_LMAX_UN:
-	case OP_LMIN:
-	case OP_LMAX:
-		mono_print_ins (ins);
-		g_assert_not_reached ();
-
 	default:
 		break;
 	}
@@ -3202,7 +3039,7 @@ emit_float_to_int (MonoCompile *cfg, guchar *code, int dreg, int sreg, int size,
  * emit_load_volatile_arguments:
  *
  * Load volatile arguments from the stack to the original input registers.
- * Required before a tail call.
+ * Required before a tailcall.
  */
 static guint8 *
 emit_load_volatile_arguments(MonoCompile *cfg, guint8 *code)
@@ -3213,7 +3050,7 @@ emit_load_volatile_arguments(MonoCompile *cfg, guint8 *code)
 	CallInfo *cinfo;
 	int i;
 
-	sig = mono_method_signature (method);
+	sig = mono_method_signature_internal (method);
 
 	if (!cfg->arch.cinfo)
 		cfg->arch.cinfo = get_call_info (cfg->mempool, sig);
@@ -3280,7 +3117,7 @@ emit_load_volatile_arguments(MonoCompile *cfg, guint8 *code)
 				int doffset = inst->inst_offset;
 
 				g_assert (mips_is_imm16 (inst->inst_offset));
-				g_assert (mips_is_imm16 (inst->inst_offset + ainfo->size * sizeof (gpointer)));
+				g_assert (mips_is_imm16 (inst->inst_offset + ainfo->size * sizeof (target_mgreg_t)));
 				for (i = 0; i < ainfo->size; ++i) {
 					mips_lw (code, ainfo->reg + i, inst->inst_basereg, doffset);
 					doffset += SIZEOF_REGISTER;
@@ -3345,10 +3182,8 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 {
 	MonoInst *ins;
 	MonoCallInst *call;
-	guint offset;
 	guint8 *code = cfg->native_code + cfg->code_len;
 	MonoInst *last_ins = NULL;
-	guint last_offset = 0;
 	int max_len, cpos;
 	int ins_cnt = 0;
 
@@ -3359,31 +3194,12 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 
 	cpos = bb->max_offset;
 
-#if 0
-	if (cfg->prof_options & MONO_PROFILE_COVERAGE) {
-		MonoCoverageInfo *cov = mono_get_coverage_info (cfg->method);
-		g_assert (!mono_compile_aot);
-		cpos += 20;
-		if (bb->cil_code)
-			cov->data [bb->dfn].iloffset = bb->cil_code - cfg->cil_code;
-		/* this is not thread save, but good enough */
-		/* fixme: howto handle overflows? */
-		mips_load_const (code, mips_at, &cov->data [bb->dfn].count);
-		mips_lw (code, mips_temp, mips_at, 0);
-		mips_addiu (code, mips_temp, mips_temp, 1);
-		mips_sw (code, mips_temp, mips_at, 0);
-	}
-#endif
 	MONO_BB_FOR_EACH_INS (bb, ins) {
-		offset = code - cfg->native_code;
+		const guint offset = code - cfg->native_code;
+		set_code_cursor (cfg, code);
+		max_len = ins_get_size (ins->opcode);
+		code = realloc_code (cfg, max_len);
 
-		max_len = ((guint8 *)ins_get_spec (ins->opcode))[MONO_INST_LEN];
-
-		if (offset > (cfg->code_size - max_len - 16)) {
-			cfg->code_size *= 2;
-			cfg->native_code = g_realloc (cfg->native_code, cfg->code_size);
-			code = cfg->native_code + offset;
-		}
 		mono_debug_record_line_number (cfg, ins, offset);
 		if (cfg->verbose_level > 2) {
 			g_print ("    @ 0x%x\t", offset);
@@ -3396,7 +3212,10 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 		case OP_RELAXED_NOP:
 		case OP_NOP:
 		case OP_DUMMY_USE:
-		case OP_DUMMY_STORE:
+		case OP_DUMMY_ICONST:
+		case OP_DUMMY_I8CONST:
+		case OP_DUMMY_R8CONST:
+		case OP_DUMMY_R4CONST:
 		case OP_NOT_REACHED:
 		case OP_NOT_NULL:
 			break;
@@ -3423,12 +3242,6 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			mips_nop (code);
 			break;
 		}
-		case OP_TLS_GET:
-			g_assert_not_reached();
-#if 0
-			emit_tls_access (code, ins->dreg, ins->inst_offset);
-#endif
-			break;
 		case OP_BIGMUL:
 			mips_mult (code, ins->sreg1, ins->sreg2);
 			mips_mflo (code, ins->dreg);
@@ -3613,8 +3426,7 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			 * So instead of emitting a trap, we emit a call a C function and place a 
 			 * breakpoint there.
 			 */
-			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_INTERNAL_METHOD, 
-								 (gpointer)"mono_break");
+			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID, GUINT_TO_POINTER (MONO_JIT_ICALL_mono_break));
 			mips_load (code, mips_t9, 0x1f1f1f1f);
 			mips_jalr (code, mips_t9, mips_ra);
 			mips_nop (code);
@@ -3941,21 +3753,6 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			}
 #endif
 			break;
-		case OP_JMP:
-			code = emit_load_volatile_arguments(cfg, code);
-
-			/*
-			 * Pop our stack, then jump to specified method (tail-call)
-			 * Keep in sync with mono_arch_emit_epilog
-			 */
-			code = mono_arch_emit_epilog_sub (cfg, code);
-
-			mono_add_patch_info (cfg, (guint8*) code - cfg->native_code,
-					     MONO_PATCH_INFO_METHOD_JUMP, ins->inst_p0);
-			mips_load (code, mips_t9, 0);
-			mips_jr (code, mips_t9);
-			mips_nop (code);
-			break;
 		case OP_CHECK_THIS:
 			/* ensure ins->sreg1 is not NULL */
 			mips_lw (code, mips_zero, ins->sreg1, 0);
@@ -3992,12 +3789,11 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			case OP_VCALL2:
 			case OP_VOIDCALL:
 			case OP_CALL:
+				mono_call_add_patch_info (cfg, call, offset);
 				if (ins->flags & MONO_INST_HAS_METHOD) {
-					mono_add_patch_info (cfg, offset, MONO_PATCH_INFO_METHOD, call->method);
 					mips_load (code, mips_t9, call->method);
 				}
 				else {
-					mono_add_patch_info (cfg, offset, MONO_PATCH_INFO_ABS, call->fptr);
 					mips_load (code, mips_t9, call->fptr);
 				}
 				mips_jalr (code, mips_t9, mips_ra);
@@ -4138,7 +3934,8 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			mips_jalr (code, mips_t9, mips_ra);
 			mips_nop (code);
 			/*FIXME should it be before the NOP or not? Does MIPS has a delay slot like sparc?*/
-			mono_cfg_add_try_hole (cfg, ins->inst_eh_block, code, bb);
+			for (GList *tmp = ins->inst_eh_blocks; tmp != bb->clause_holes; tmp = tmp->prev)
+				mono_cfg_add_try_hole (cfg, ((MonoLeaveClause *) tmp->data)->clause, code, bb);
 			break;
 		case OP_LABEL:
 			ins->inst_c0 = code - cfg->native_code;
@@ -4164,12 +3961,8 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			int i;
 
 			max_len += 4 * GPOINTER_TO_INT (ins->klass);
-			if (offset > (cfg->code_size - max_len - 16)) {
-				cfg->code_size += max_len;
-				cfg->code_size *= 2;
-				cfg->native_code = g_realloc (cfg->native_code, cfg->code_size);
-				code = cfg->native_code + offset;
-			}
+			code = realloc_code (cfg, max_len);
+
 			g_assert (ins->sreg1 != -1);
 			mips_sll (code, mips_at, ins->sreg1, 2);
 			if (1 || !(cfg->flags & MONO_CFG_HAS_CALLS))
@@ -4641,6 +4434,18 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			mono_add_patch_info (cfg, offset, (MonoJumpInfoType)ins->inst_c1, ins->inst_p0);
 			mips_load (code, ins->dreg, 0x0f0f0f0f);
 			break;
+		case OP_LIVERANGE_START: {
+			if (cfg->verbose_level > 1)
+				printf ("R%d START=0x%x\n", MONO_VARINFO (cfg, ins->inst_c0)->vreg, (int)(code - cfg->native_code));
+			MONO_VARINFO (cfg, ins->inst_c0)->live_range_start = code - cfg->native_code;
+			break;
+		}
+		case OP_LIVERANGE_END: {
+			if (cfg->verbose_level > 1)
+				printf ("R%d END=0x%x\n", MONO_VARINFO (cfg, ins->inst_c0)->vreg, (int)(code - cfg->native_code));
+			MONO_VARINFO (cfg, ins->inst_c0)->live_range_end = code - cfg->native_code;
+			break;
+		}
 		case OP_GC_SAFE_POINT:
 			break;
 
@@ -4659,10 +4464,9 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 		cpos += max_len;
 
 		last_ins = ins;
-		last_offset = offset;
 	}
 
-	cfg->code_len = code - cfg->native_code;
+	set_code_cursor (cfg, code);
 }
 
 void
@@ -4671,10 +4475,11 @@ mono_arch_register_lowlevel_calls (void)
 }
 
 void
-mono_arch_patch_code (MonoCompile *cfg, MonoMethod *method, MonoDomain *domain, guint8 *code, MonoJumpInfo *ji, gboolean run_cctors)
+mono_arch_patch_code (MonoCompile *cfg, MonoMethod *method, MonoDomain *domain, guint8 *code, MonoJumpInfo *ji, gboolean run_cctors, MonoError *error)
 {
 	MonoJumpInfo *patch_info;
-	MonoError error;
+
+	error_init (error);
 
 	for (patch_info = ji; patch_info; patch_info = patch_info->next) {
 		unsigned char *ip = patch_info->ip.i + code;
@@ -4708,8 +4513,9 @@ mono_arch_patch_code (MonoCompile *cfg, MonoMethod *method, MonoDomain *domain, 
 		case MONO_PATCH_INFO_R4:
 		case MONO_PATCH_INFO_R8:
 			/* from OP_AOTCONST : lui + addiu */
-			target = mono_resolve_patch_target (method, domain, code, patch_info, run_cctors, &error);
-			mono_error_raise_exception (&error); /* FIXME: don't raise here */
+			target = mono_resolve_patch_target (method, domain, code, patch_info, run_cctors, error);
+			return_if_nok (error);
+
 			patch_lui_addiu ((guint32 *)(void *)ip, (guint32)target);
 			continue;
 #if 0
@@ -4722,69 +4528,13 @@ mono_arch_patch_code (MonoCompile *cfg, MonoMethod *method, MonoDomain *domain, 
 			/* everything is dealt with at epilog output time */
 			continue;
 		default:
-			target = mono_resolve_patch_target (method, domain, code, patch_info, run_cctors, &error);
-			mono_error_raise_exception (&error); /* FIXME: don't raise here */
+			target = mono_resolve_patch_target (method, domain, code, patch_info, run_cctors, error);
+			return_if_nok (error);
+
 			mips_patch ((guint32 *)(void *)ip, (guint32)target);
 			break;
 		}
 	}
-}
-
-/*
- * Allow tracing to work with this interface (with an optional argument)
- *
- * This code is expected to be inserted just after the 'real' prolog code,
- * and before the first basic block.  We need to allocate a 2nd, temporary
- * stack frame so that we can preserve f12-f15 as well as a0-a3.
- */
-
-void*
-mono_arch_instrument_prolog (MonoCompile *cfg, void *func, void *p, gboolean enable_arguments)
-{
-	guchar *code = p;
-	int offset = cfg->arch.tracing_offset;
-
-	mips_nop (code);
-	mips_nop (code);
-	mips_nop (code);
-
-	MIPS_SW (code, mips_a0, mips_sp, offset + 0*SIZEOF_REGISTER);
-	MIPS_SW (code, mips_a1, mips_sp, offset + 1*SIZEOF_REGISTER);
-	MIPS_SW (code, mips_a2, mips_sp, offset + 2*SIZEOF_REGISTER);
-	MIPS_SW (code, mips_a3, mips_sp, offset + 3*SIZEOF_REGISTER);
-#if _MIPS_SIM == _ABIN32
-	NOT_IMPLEMENTED;
-	/* FIXME: Need a separate region for these */
-	MIPS_SW (code, mips_a4, mips_sp, offset + 4*SIZEOF_REGISTER);
-	MIPS_SW (code, mips_a5, mips_sp, offset + 5*SIZEOF_REGISTER);
-	MIPS_SW (code, mips_a6, mips_sp, offset + 6*SIZEOF_REGISTER);
-	MIPS_SW (code, mips_a7, mips_sp, offset + 7*SIZEOF_REGISTER);
-	*/
-#endif
-
-	mips_load_const (code, mips_a0, cfg->method);
-	mips_addiu (code, mips_a1, mips_sp, offset);
-	mips_call (code, mips_t9, func);
-	mips_nop (code);
-
-	MIPS_LW (code, mips_a0, mips_sp, offset + 0*SIZEOF_REGISTER);
-	MIPS_LW (code, mips_a1, mips_sp, offset + 1*SIZEOF_REGISTER);
-	MIPS_LW (code, mips_a2, mips_sp, offset + 2*SIZEOF_REGISTER);
-	MIPS_LW (code, mips_a3, mips_sp, offset + 3*SIZEOF_REGISTER);
-#if _MIPS_SIM == _ABIN32
-	NOT_IMPLEMENTED;
-	/*
-	MIPS_LW (code, mips_a4, mips_sp, offset + 4*SIZEOF_REGISTER);
-	MIPS_LW (code, mips_a5, mips_sp, offset + 5*SIZEOF_REGISTER);
-	MIPS_LW (code, mips_a6, mips_sp, offset + 6*SIZEOF_REGISTER);
-	MIPS_LW (code, mips_a7, mips_sp, offset + 7*SIZEOF_REGISTER);
-	*/
-#endif
-
-	mips_nop (code);
-	mips_nop (code);
-	mips_nop (code);
-	return code;
 }
 
 void
@@ -4814,7 +4564,7 @@ mips_adjust_stackframe(MonoCompile *cfg)
 		g_print ("\tra_offset %d/0x%x delta %d/0x%x\n", ra_offset, ra_offset, delta, delta);
 	}
 
-	sig = mono_method_signature (cfg->method);
+	sig = mono_method_signature_internal (cfg->method);
 	if (sig && sig->ret && MONO_TYPE_ISSTRUCT (sig->ret)) {
 		cfg->vret_addr->inst_offset += delta;
 	}
@@ -4949,7 +4699,6 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 	int alloc2_size = 0;
 	guint8 *code;
 	CallInfo *cinfo;
-	int tracing = 0;
 	guint32 iregs_to_save = 0;
 #if SAVE_FP_REGS
 	guint32 fregs_to_save = 0;
@@ -4958,14 +4707,8 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 	guint32 lmf_offset = cfg->arch.lmf_offset;
 	int cfa_offset = 0;
 	MonoBasicBlock *bb;
-
-	if (mono_jit_trace_calls != NULL && mono_trace_eval (method))
-		tracing = 1;
-
-	if (tracing)
-		cfg->flags |= MONO_CFG_HAS_CALLS;
 	
-	sig = mono_method_signature (method);
+	sig = mono_method_signature_internal (method);
 	cfg->code_size = 768 + sig->param_count * 20;
 	code = cfg->native_code = g_malloc (cfg->code_size);
 
@@ -4977,11 +4720,8 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 		MonoInst *ins = bb->code;
 		bb->max_offset = max_offset;
 
-		if (cfg->prof_options & MONO_PROFILE_COVERAGE)
-			max_offset += 6; 
-
 		MONO_BB_FOR_EACH_INS (bb, ins)
-			max_offset += ((guint8 *)ins_get_spec (ins->opcode))[MONO_INST_LEN];
+			max_offset += ins_get_size (ins->opcode);
 	}
 	if (max_offset > 0xffff)
 		cfg->arch.long_branch = TRUE;
@@ -5245,7 +4985,7 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 				int doffset = inst->inst_offset;
 
 				g_assert (mips_is_imm16 (inst->inst_offset));
-				g_assert (mips_is_imm16 (inst->inst_offset + ainfo->size * sizeof (gpointer)));
+				g_assert (mips_is_imm16 (inst->inst_offset + ainfo->size * sizeof (target_mgreg_t)));
 				/* Push the argument registers into their stack slots */
 				for (i = 0; i < ainfo->size; ++i) {
 					g_assert (mips_is_imm16(doffset));
@@ -5255,7 +4995,7 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 			} else if (ainfo->storage == ArgStructByAddr) {
 				g_assert (mips_is_imm16 (inst->inst_offset));
 				/* FIXME: handle overrun! with struct sizes not multiple of 4 */
-				code = emit_memcpy (code, ainfo->vtsize * sizeof (gpointer), inst->inst_basereg, inst->inst_offset, ainfo->reg, 0);
+				code = emit_memcpy (code, ainfo->vtsize * sizeof (target_mgreg_t), inst->inst_basereg, inst->inst_offset, ainfo->reg, 0);
 			} else
 				g_assert_not_reached ();
 		}
@@ -5266,20 +5006,8 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 		mips_load_const (code, mips_at, MIPS_LMF_MAGIC1);
 		mips_sw (code, mips_at, mips_sp, lmf_offset + G_STRUCT_OFFSET(MonoLMF, magic));
 
-		if (lmf_pthread_key != -1) {
-			g_assert_not_reached();
-#if 0
-			emit_tls_access (code, mips_temp, lmf_pthread_key);
-#endif
-			if (G_STRUCT_OFFSET (MonoJitTlsData, lmf)) {
-				int offset = G_STRUCT_OFFSET (MonoJitTlsData, lmf);
-				g_assert (mips_is_imm16(offset));
-				mips_addiu (code, mips_a0, mips_temp, offset);
-			}
-		} else {
-			/* This can/will clobber the a0-a3 registers */
-			mips_call (code, mips_t9, (gpointer)mono_get_lmf_addr);
-		}
+		/* This can/will clobber the a0-a3 registers */
+		mips_call (code, mips_t9, (gpointer)mono_get_lmf_addr);
 
 		/* mips_v0 is the result from mono_get_lmf_addr () (MonoLMF **) */
 		g_assert (mips_is_imm16(lmf_offset + G_STRUCT_OFFSET(MonoLMF, lmf_addr)));
@@ -5320,140 +5048,17 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 			mono_emit_unwind_op_def_cfa_offset (cfg, code, cfa_offset);
 	}
 
-	if (tracing) {
-#if _MIPS_SIM == _ABIO32
-		cfg->arch.tracing_offset = cfg->stack_offset;
-#elif _MIPS_SIM == _ABIN32
-		/* no stack slots by default for argument regs, reserve a special block */
-		g_assert_not_reached ();
-#endif
-		code = mono_arch_instrument_prolog (cfg, mono_trace_enter_method, code, TRUE);
-	}
+	set_code_cursor (cfg, code);
 
-	cfg->code_len = code - cfg->native_code;
-	g_assert (cfg->code_len < cfg->code_size);
-
-	return code;
-}
-
-enum {
-	SAVE_NONE,
-	SAVE_STRUCT,
-	SAVE_ONE,
-	SAVE_TWO,
-	SAVE_FP
-};
-
-void*
-mono_arch_instrument_epilog_full (MonoCompile *cfg, void *func, void *p, gboolean enable_arguments, gboolean preserve_argument_registers)
-{
-	guchar *code = p;
-	int save_mode = SAVE_NONE;
-	int offset;
-	MonoMethod *method = cfg->method;
-	int rtype = mini_get_underlying_type (mono_method_signature (method)->ret)->type;
-	int save_offset = MIPS_STACK_PARAM_OFFSET;
-
-	g_assert ((save_offset & (MIPS_STACK_ALIGNMENT-1)) == 0);
-	
-	offset = code - cfg->native_code;
-	/* we need about 16 instructions */
-	if (offset > (cfg->code_size - 16 * 4)) {
-		cfg->code_size *= 2;
-		cfg->native_code = g_realloc (cfg->native_code, cfg->code_size);
-		code = cfg->native_code + offset;
-	}
-	mips_nop (code);
-	mips_nop (code);
-	switch (rtype) {
-	case MONO_TYPE_VOID:
-		/* special case string .ctor icall */
-		if (strcmp (".ctor", method->name) && method->klass == mono_defaults.string_class)
-			save_mode = SAVE_ONE;
-		else
-			save_mode = SAVE_NONE;
-		break;
-	case MONO_TYPE_R4:
-	case MONO_TYPE_R8:
-		save_mode = SAVE_FP;
-		break;
-	case MONO_TYPE_VALUETYPE:
-		save_mode = SAVE_STRUCT;
-		break;
-	case MONO_TYPE_I8:
-	case MONO_TYPE_U8:
-#if SIZEOF_REGISTER == 4
-		save_mode = SAVE_TWO;
-#elif SIZEOF_REGISTER == 8
-		save_mode = SAVE_ONE;
-#endif
-		break;
-	default:
-		save_mode = SAVE_ONE;
-		break;
-	}
-
-	mips_addiu (code, mips_sp, mips_sp, -32);
-	g_assert (mips_is_imm16(save_offset));
-	switch (save_mode) {
-	case SAVE_TWO:
-		mips_sw (code, mips_v0, mips_sp, save_offset);
-		g_assert (mips_is_imm16(save_offset + SIZEOF_REGISTER));
-		mips_sw (code, mips_v1, mips_sp, save_offset + SIZEOF_REGISTER);
-		if (enable_arguments) {
-			MIPS_MOVE (code, mips_a1, mips_v0);
-			MIPS_MOVE (code, mips_a2, mips_v1);
-		}
-		break;
-	case SAVE_ONE:
-		MIPS_SW (code, mips_v0, mips_sp, save_offset);
-		if (enable_arguments) {
-			MIPS_MOVE (code, mips_a1, mips_v0);
-		}
-		break;
-	case SAVE_FP:
-		mips_sdc1 (code, mips_f0, mips_sp, save_offset);
-		mips_ldc1 (code, mips_f12, mips_sp, save_offset);
-		mips_lw (code, mips_a0, mips_sp, save_offset);
-		g_assert (mips_is_imm16(save_offset + SIZEOF_REGISTER));
-		mips_lw (code, mips_a1, mips_sp, save_offset + SIZEOF_REGISTER);
-		break;
-	case SAVE_STRUCT:
-	case SAVE_NONE:
-	default:
-		break;
-	}
-	mips_load_const (code, mips_a0, cfg->method);
-	mips_call (code, mips_t9, func);
-
-	switch (save_mode) {
-	case SAVE_TWO:
-		mips_lw (code, mips_v0, mips_sp, save_offset);
-		g_assert (mips_is_imm16(save_offset + SIZEOF_REGISTER));
-		mips_lw (code, mips_v1, mips_sp, save_offset + SIZEOF_REGISTER);
-		break;
-	case SAVE_ONE:
-		MIPS_LW (code, mips_v0, mips_sp, save_offset);
-		break;
-	case SAVE_FP:
-		mips_ldc1 (code, mips_f0, mips_sp, save_offset);
-		break;
-	case SAVE_STRUCT:
-	case SAVE_NONE:
-	default:
-		break;
-	}
-	mips_addiu (code, mips_sp, mips_sp, 32);
-	mips_nop (code);
-	mips_nop (code);
 	return code;
 }
 
 guint8 *
-mono_arch_emit_epilog_sub (MonoCompile *cfg, guint8 *code)
+mono_arch_emit_epilog_sub (MonoCompile *cfg)
 {
+	guint8 *code = NULL;
 	MonoMethod *method = cfg->method;
-	int pos = 0, i;
+	int i;
 	int max_epilog_size = 16 + 20*4;
 	int alloc2_size = 0;
 	guint32 iregs_to_restore;
@@ -5463,32 +5068,11 @@ mono_arch_emit_epilog_sub (MonoCompile *cfg, guint8 *code)
 
 	if (cfg->method->save_lmf)
 		max_epilog_size += 128;
-	
-	if (mono_jit_trace_calls != NULL)
-		max_epilog_size += 50;
 
-	if (cfg->prof_options & MONO_PROFILE_ENTER_LEAVE)
-		max_epilog_size += 50;
+	realloc_code (cfg, max_epilog_size);
 
-	if (code)
-		pos = code - cfg->native_code;
-	while (cfg->code_len + max_epilog_size > (cfg->code_size - 16)) {
-		cfg->code_size *= 2;
-		cfg->native_code = g_realloc (cfg->native_code, cfg->code_size);
-		cfg->stat_code_reallocs++;
-	}
+	code = cfg->native_code + cfg->code_len;
 
-	/*
-	 * Keep in sync with OP_JMP
-	 */
-	if (code)
-		code = cfg->native_code + pos;
-	else
-		code = cfg->native_code + cfg->code_len;
-
-	if (mono_jit_trace_calls != NULL && mono_trace_eval (method)) {
-		code = mono_arch_instrument_epilog (cfg, mono_trace_leave_method, code, TRUE);
-	}
 	if (cfg->frame_reg != mips_sp) {
 		MIPS_MOVE (code, mips_sp, cfg->frame_reg);
 	}
@@ -5499,7 +5083,7 @@ mono_arch_emit_epilog_sub (MonoCompile *cfg, guint8 *code)
 		mips_load_const (code, mips_at, alloc2_size);
 		mips_addu (code, mips_sp, mips_sp, mips_at);
 	}
-	pos = cfg->arch.iregs_offset - alloc2_size;
+	int pos = cfg->arch.iregs_offset - alloc2_size;
 	iregs_to_restore = (cfg->used_int_regs & MONO_ARCH_CALLEE_SAVED_REGS);
 	if (iregs_to_restore) {
 		for (i = MONO_MAX_IREGS-1; i >= 0; --i) {
@@ -5559,25 +5143,20 @@ mono_arch_emit_epilog_sub (MonoCompile *cfg, guint8 *code)
 
 	/* Caller will emit either return or tail-call sequence */
 
-	cfg->code_len = code - cfg->native_code;
+	set_code_cursor (cfg, code);
 
-	g_assert (cfg->code_len < cfg->code_size);
 	return (code);
 }
 
 void
 mono_arch_emit_epilog (MonoCompile *cfg)
 {
-	guint8 *code;
-
-	code = mono_arch_emit_epilog_sub (cfg, NULL);
+	guint8 *code = mono_arch_emit_epilog_sub (cfg);
 
 	mips_jr (code, mips_ra);
 	mips_nop (code);
 
-	cfg->code_len = code - cfg->native_code;
-
-	g_assert (cfg->code_len < cfg->code_size);
+	set_code_cursor (cfg, code);
 }
 
 /* remove once throw_exception_by_name is eliminated */
@@ -5636,42 +5215,13 @@ mono_arch_emit_exceptions (MonoCompile *cfg)
 #endif
 	}
 
-	while (cfg->code_len + max_epilog_size > (cfg->code_size - 16)) {
-		cfg->code_size *= 2;
-		cfg->native_code = g_realloc (cfg->native_code, cfg->code_size);
-		cfg->stat_code_reallocs++;
-	}
-
-	code = cfg->native_code + cfg->code_len;
+	code = realloc_code (cfg, max_epilog_size);
 
 	/* add code to raise exceptions */
 	for (patch_info = cfg->patch_info; patch_info; patch_info = patch_info->next) {
 		switch (patch_info->type) {
 		case MONO_PATCH_INFO_EXC: {
-#if 0
-			//unsigned char *ip = patch_info->ip.i + cfg->native_code;
-
-			i = exception_id_by_name (patch_info->data.target);
-			g_assert (i >= 0 && i < MONO_EXC_INTRINS_NUM);
-			if (!exc_throw_pos [i]) {
-				guint32 addr;
-
-				exc_throw_pos [i] = code;
-				//g_print ("exc: writing stub at %p\n", code);
-				mips_load_const (code, mips_a0, patch_info->data.target);
-				addr = (guint32) mono_arch_get_throw_exception_by_name ();
-				mips_load_const (code, mips_t9, addr);
-				mips_jr (code, mips_t9);
-				mips_nop (code);
-			}
-			//g_print ("exc: patch %p to %p\n", ip, exc_throw_pos[i]);
-
-			/* Turn into a Relative patch, pointing at code stub */
-			patch_info->type = MONO_PATCH_INFO_METHOD_REL;
-			patch_info->data.offset = exc_throw_pos[i] - cfg->native_code;
-#else
 			g_assert_not_reached();
-#endif
 			break;
 		}
 		default:
@@ -5680,138 +5230,12 @@ mono_arch_emit_exceptions (MonoCompile *cfg)
 		}
 	}
 
-	cfg->code_len = code - cfg->native_code;
-
-	g_assert (cfg->code_len < cfg->code_size);
+	set_code_cursor (cfg, code);
 #endif
-}
-
-/*
- * Thread local storage support
- */
-static void
-setup_tls_access (void)
-{
-	guint32 ptk;
-	//guint32 *ins, *code;
-
-	if (tls_mode == TLS_MODE_FAILED)
-		return;
-
-	if (g_getenv ("MONO_NO_TLS")) {
-		tls_mode = TLS_MODE_FAILED;
-		return;
-	}
-
-	if (tls_mode == TLS_MODE_DETECT) {
-		/* XXX */
-		tls_mode = TLS_MODE_FAILED;
-		return;
-#if 0
-
-		ins = (guint32*)pthread_getspecific;
-		/* uncond branch to the real method */
-		if ((*ins >> 26) == 18) {
-			gint32 val;
-			val = (*ins & ~3) << 6;
-			val >>= 6;
-			if (*ins & 2) {
-				/* absolute */
-				ins = (guint32*)val;
-			} else {
-				ins = (guint32*) ((char*)ins + val);
-			}
-		}
-		code = &cmplwi_1023;
-		ppc_cmpli (code, 0, 0, ppc_r3, 1023);
-		code = &li_0x48;
-		ppc_li (code, ppc_r4, 0x48);
-		code = &blr_ins;
-		ppc_blr (code);
-		if (*ins == cmplwi_1023) {
-			int found_lwz_284 = 0;
-			for (ptk = 0; ptk < 20; ++ptk) {
-				++ins;
-				if (!*ins || *ins == blr_ins)
-					break;
-				if ((guint16)*ins == 284 && (*ins >> 26) == 32) {
-					found_lwz_284 = 1;
-					break;
-				}
-			}
-			if (!found_lwz_284) {
-				tls_mode = TLS_MODE_FAILED;
-				return;
-			}
-			tls_mode = TLS_MODE_LTHREADS;
-		} else if (*ins == li_0x48) {
-			++ins;
-			/* uncond branch to the real method */
-			if ((*ins >> 26) == 18) {
-				gint32 val;
-				val = (*ins & ~3) << 6;
-				val >>= 6;
-				if (*ins & 2) {
-					/* absolute */
-					ins = (guint32*)val;
-				} else {
-					ins = (guint32*) ((char*)ins + val);
-				}
-				code = &val;
-				ppc_li (code, ppc_r0, 0x7FF2);
-				if (ins [1] == val) {
-					/* Darwin on G4, implement */
-					tls_mode = TLS_MODE_FAILED;
-					return;
-				} else {
-					code = &val;
-					ppc_mfspr (code, ppc_r3, 104);
-					if (ins [1] != val) {
-						tls_mode = TLS_MODE_FAILED;
-						return;
-					}
-					tls_mode = TLS_MODE_DARWIN_G5;
-				}
-			} else {
-				tls_mode = TLS_MODE_FAILED;
-				return;
-			}
-		} else {
-			tls_mode = TLS_MODE_FAILED;
-			return;
-		}
-#endif
-	}
-	if (lmf_pthread_key == -1) {
-		ptk = mono_jit_tls_id;
-		if (ptk < 1024) {
-			/*g_print ("MonoLMF at: %d\n", ptk);*/
-			/*if (!try_offset_access (mono_get_lmf_addr (), ptk)) {
-				init_tls_failed = 1;
-				return;
-			}*/
-			lmf_pthread_key = ptk;
-		}
-	}
-	if (monothread_key == -1) {
-		ptk = mono_thread_get_tls_key ();
-		if (ptk < 1024) {
-			monothread_key = ptk;
-			/*g_print ("thread inited: %d\n", ptk);*/
-		} else {
-			/*g_print ("thread not inited yet %d\n", ptk);*/
-		}
-	}
 }
 
 void
 mono_arch_finish_init (void)
-{
-	setup_tls_access ();
-}
-
-void
-mono_arch_free_jit_tls_data (MonoJitTlsData *tls)
 {
 }
 
@@ -5859,13 +5283,7 @@ mono_arch_emit_inst_for_method (MonoCompile *cfg, MonoMethod *cmethod, MonoMetho
 	return NULL;
 }
 
-gboolean
-mono_arch_print_tree (MonoInst *tree, int arity)
-{
-	return 0;
-}
-
-mgreg_t
+host_mgreg_t
 mono_arch_context_get_int_reg (MonoContext *ctx, int reg)
 {
 	return ctx->sc_regs [reg];
@@ -5886,8 +5304,8 @@ mono_arch_context_get_int_reg (MonoContext *ctx, int reg)
  * LOCKING: called with the domain lock held
  */
 gpointer
-mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain, MonoIMTCheckItem **imt_entries, int count,
-	gpointer fail_tramp)
+mono_arch_build_imt_trampoline (MonoVTable *vtable, MonoDomain *domain, MonoIMTCheckItem **imt_entries, int count,
+								gpointer fail_tramp)
 {
 	int i;
 	int size = 0;
@@ -5925,9 +5343,10 @@ mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain, MonoIMTCheckI
 	/* the initial load of the vtable address */
 	size += MIPS_LOAD_SEQUENCE_LENGTH;
 	if (fail_tramp) {
-		code = mono_method_alloc_generic_virtual_thunk (domain, size);
+		code = mono_method_alloc_generic_virtual_trampoline (mono_domain_ambient_memory_manager (domain), size);
 	} else {
-		code = mono_domain_code_reserve (domain, size);
+		MonoMemoryManager *mem_manager = m_class_get_mem_manager (domain, vtable->klass);
+		code = mono_mem_manager_code_reserve (mem_manager, size);
 	}
 	start = code;
 
@@ -5950,7 +5369,7 @@ mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain, MonoIMTCheckI
 				}
 				else {
 					mips_lw (code, mips_t9, mips_t7,
-						(sizeof (gpointer) * item->value.vtable_slot));
+						(sizeof (target_mgreg_t) * item->value.vtable_slot));
 				}
 				mips_jr (code, mips_t9);
 				mips_nop (code);
@@ -5984,7 +5403,7 @@ mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain, MonoIMTCheckI
 					ppc_bc (code, PPC_BR_FALSE, PPC_BR_EQ, 0);
 #endif
 					mips_lw (code, mips_t9, mips_t7,
-						 (sizeof (gpointer) * item->value.vtable_slot));
+						 (sizeof (target_mgreg_t) * item->value.vtable_slot));
 					mips_jr (code, mips_t9);
 					mips_nop (code);
 
@@ -6013,9 +5432,10 @@ mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain, MonoIMTCheckI
 	}
 
 	if (!fail_tramp)
-		mono_stats.imt_thunks_size += code - start;
+		UnlockedAdd (&mono_stats.imt_trampolines_size, code - start);
 	g_assert (code - start <= size);
 	mono_arch_flush_icache (start, size);
+	MONO_PROFILER_RAISE (jit_code_buffer, (start, code - start, MONO_PROFILER_CODE_BUFFER_IMT_TRAMPOLINE, NULL));
 
 	mono_tramp_info_register (mono_tramp_info_create (NULL, start, code - start, NULL, NULL), domain);
 
@@ -6023,13 +5443,13 @@ mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain, MonoIMTCheckI
 }
 
 MonoMethod*
-mono_arch_find_imt_method (mgreg_t *regs, guint8 *code)
+mono_arch_find_imt_method (host_mgreg_t *regs, guint8 *code)
 {
 	return (MonoMethod*) regs [MONO_ARCH_IMT_REG];
 }
 
 MonoVTable*
-mono_arch_find_static_call_vtable (mgreg_t *regs, guint8 *code)
+mono_arch_find_static_call_vtable (host_mgreg_t *regs, guint8 *code)
 {
 	return (MonoVTable*) regs [MONO_ARCH_RGCTX_REG];
 }
@@ -6152,20 +5572,11 @@ mono_arch_skip_single_step (MonoContext *ctx)
  *
  *   See mini-amd64.c for docs.
  */
-gpointer
+SeqPointInfo*
 mono_arch_get_seq_point_info (MonoDomain *domain, guint8 *code)
 {
 	NOT_IMPLEMENTED;
 	return NULL;
-}
-
-void
-mono_arch_init_lmf_ext (MonoLMFExt *ext, gpointer prev_lmf)
-{
-	ext->lmf.previous_lmf = prev_lmf;
-	/* Mark that this is a MonoLMFExt */
-	ext->lmf.previous_lmf = (gpointer)(((gssize)ext->lmf.previous_lmf) | 2);
-	ext->lmf.iregs [mips_sp] = (gssize)ext;
 }
 
 #endif /* MONO_ARCH_SOFT_DEBUG_SUPPORTED */
@@ -6174,4 +5585,23 @@ gboolean
 mono_arch_opcode_supported (int opcode)
 {
 	return FALSE;
+}
+
+gboolean
+mono_arch_tailcall_supported (MonoCompile *cfg, MonoMethodSignature *caller_sig, MonoMethodSignature *callee_sig, gboolean virtual_)
+{
+	return FALSE;
+}
+
+gpointer
+mono_arch_load_function (MonoJitICallId jit_icall_id)
+{
+	return NULL;
+}
+
+GSList*
+mono_arch_get_cie_program (void)
+{
+	NOT_IMPLEMENTED;
+	return NULL;
 }

@@ -1,4 +1,5 @@
-/* 
+/**
+ * \file
  * Copyright 2004-2011 Novell, Inc (http://www.novell.com)
  * Copyright 2011 Xamarin, Inc (http://www.xamarin.com)
  * Licensed under the MIT license. See LICENSE file in the project root for full license information.
@@ -25,8 +26,9 @@
 	 * We had to fix a bug with include order in libgc, so only do
 	 * it if it is the included one.
 	 */
+#ifndef HOST_WIN32 // FIXME?
+#	if defined(MONO_KEYWORD_THREAD) && !defined(__powerpc__)
 	
-#	if defined(HAVE_KW_THREAD) && !defined(__powerpc__)
         /* The local alloc stuff is in pthread_support.c, but solaris uses solaris_threads.c */
         /* It is also disabled on solaris/x86 by libgc/configure.ac */
         /* 
@@ -37,8 +39,8 @@
 #		    define GC_REDIRECT_TO_LOCAL
 #       endif
 #	endif
+#endif // HOST_WIN32
 
-#	define GC_INSIDE_DLL
 #	include <gc.h>
 #	include <gc_typed.h>
 #	include <gc_mark.h>

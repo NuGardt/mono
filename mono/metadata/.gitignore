@@ -1,8 +1,5 @@
 /Makefile
 /Makefile.in
-/Makefile.am
-/pedump
-/pedump.exe
 /monosn
 /monodiet
 /.libs

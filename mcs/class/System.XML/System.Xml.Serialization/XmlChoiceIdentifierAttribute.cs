@@ -36,8 +36,7 @@ namespace System.Xml.Serialization
 	/// <summary>
 	/// Summary description for XmlChoiceIdentifierAttribute.
 	/// </summary>
-	[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field
-		 | AttributeTargets.Parameter | AttributeTargets.ReturnValue)]
+	[AttributeUsageAttribute(AttributeTargets.Field | AttributeTargets.Parameter | AttributeTargets.Property | AttributeTargets.ReturnValue, AllowMultiple=false)]
 	public class XmlChoiceIdentifierAttribute : Attribute
 	{
 		private string memberName;
@@ -60,7 +59,7 @@ namespace System.Xml.Serialization
 			set { memberName = value; }
 		}
 
-#if NET_2_1
+#if MOBILE
 		MemberInfo member;
 		// It is used only in 2.1 S.X.Serialization.dll in MS SDK.
 		internal MemberInfo MemberInfo {

@@ -105,10 +105,10 @@ namespace System
 
 			try {
 				ret = readlink (path, buf, buf.Length);
-			} catch (DllNotFoundException e) {
+			} catch (DllNotFoundException) {
 				readlinkNotFound = true;
 				return null;
-			} catch (EntryPointNotFoundException e) {
+			} catch (EntryPointNotFoundException) {
 				readlinkNotFound = true;
 				return null;
 			}
@@ -149,10 +149,14 @@ namespace System
 			return true;
 		}
 
-#if !MOBILE || MOBILE_STATIC
+#if (!MONODROID && !MONOTOUCH && !XAMMAC) || MOBILE_DESKTOP_HOST
+#if WASM
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		extern static void mono_timezone_get_local_name (ref string name);
+#endif
 		static TimeZoneInfo CreateLocal ()
 		{
-#if !MOBILE_STATIC
+#if WIN_PLATFORM
 			if (IsWindows && LocalZoneKey != null) {
 				string name = (string)LocalZoneKey.GetValue ("TimeZoneKeyName");
 				if (name == null)
@@ -160,9 +164,19 @@ namespace System
 				name = TrimSpecial (name);
 				if (name != null)
 					return TimeZoneInfo.FindSystemTimeZoneById (name);
+			} else if (IsWindows) {
+				return GetLocalTimeZoneInfoWinRTFallback ();
 			}
 #endif
-
+#if WASM
+			string localName = null;
+			mono_timezone_get_local_name (ref localName);
+			try {
+				return FindSystemTimeZoneByFileName (localName, Path.Combine (TimeZoneDirectory, localName));
+			} catch {
+				return Utc;
+			}
+#else		
 			var tz = Environment.GetEnvironmentVariable ("TZ");
 			if (tz != null) {
 				if (tz == String.Empty)
@@ -190,6 +204,7 @@ namespace System
 			}
 
 			return Utc;
+#endif			
 		}
 
 		static TimeZoneInfo FindSystemTimeZoneByIdCore (string id)
@@ -204,14 +219,20 @@ namespace System
 
 		static void GetSystemTimeZonesCore (List<TimeZoneInfo> systemTimeZones)
 		{
-#if !MOBILE_STATIC
+#if WIN_PLATFORM
 			if (TimeZoneKey != null) {
 				foreach (string id in TimeZoneKey.GetSubKeyNames ()) {
-					try {
-						systemTimeZones.Add (FindSystemTimeZoneById (id));
-					} catch {}
+					using (RegistryKey subkey = TimeZoneKey.OpenSubKey (id))
+					{
+						if (subkey == null || subkey.GetValue ("TZI") == null)
+							continue;
+					}
+					systemTimeZones.Add (FindSystemTimeZoneById (id));
 				}
 
+				return;
+			} else if (IsWindows) {
+				systemTimeZones.AddRange (GetSystemTimeZonesWinRTFallback ());
 				return;
 			}
 #endif
@@ -237,7 +258,7 @@ namespace System
 			throw new NotImplementedException ("This method is not implemented for this platform");
 #endif
 		}
-#endif
+#endif // !MONODROID && !MONOTOUCH && !XAMMAC && !WASM
 
 		string standardDisplayName;
 		public string StandardName {
@@ -258,11 +279,16 @@ namespace System
 			}
 		}
 #if LIBC
+#if WASM
+		const string DefaultTimeZoneDirectory = "/zoneinfo";
+#else		
+		const string DefaultTimeZoneDirectory = "/usr/share/zoneinfo";
+#endif
 		static string timeZoneDirectory;
 		static string TimeZoneDirectory {
 			get {
 				if (timeZoneDirectory == null)
-					timeZoneDirectory = "/usr/share/zoneinfo";
+					timeZoneDirectory = readlink (DefaultTimeZoneDirectory) ?? DefaultTimeZoneDirectory;
 				return timeZoneDirectory;
 			}
 			set {
@@ -273,7 +299,7 @@ namespace System
 #endif
 		private AdjustmentRule [] adjustmentRules;
 
-#if !NET_2_1 || MOBILE_STATIC
+#if (!MOBILE || !FULL_AOT_DESKTOP || WIN_PLATFORM) && !XAMMAC_4_5
 		/// <summary>
 		/// Determine whether windows of not (taken Stephane Delcroix's code)
 		/// </summary>
@@ -300,8 +326,8 @@ namespace System
 			
 			return str.Substring (Istart, Iend-Istart+1);
 		}
-		
-#if !MOBILE_STATIC
+
+#if !FULL_AOT_DESKTOP || WIN_PLATFORM
 		static RegistryKey timeZoneKey;
 		static RegistryKey TimeZoneKey {
 			get {
@@ -310,9 +336,13 @@ namespace System
 				if (!IsWindows)
 					return null;
 				
-				return timeZoneKey = Registry.LocalMachine.OpenSubKey (
-					"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones",
-					false);
+				try {
+					return timeZoneKey = Registry.LocalMachine.OpenSubKey (
+						"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones",
+						false);
+				} catch {
+					return null;
+				}
 			}
 		}
 		
@@ -325,12 +355,16 @@ namespace System
 				if (!IsWindows)
 					return null;
 				
-				return localZoneKey = Registry.LocalMachine.OpenSubKey (
-					"SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation", false);
+				try {
+					return localZoneKey = Registry.LocalMachine.OpenSubKey (
+						"SYSTEM\\CurrentControlSet\\Control\\TimeZoneInformation", false);
+				} catch {
+					return null;
+				}
 			}
 		}
 #endif
-#endif
+#endif // !MOBILE || !FULL_AOT_DESKTOP || WIN_PLATFORM
 
 		private static bool TryAddTicks (DateTime date, long ticks, out DateTime result, DateTimeKind kind = DateTimeKind.Unspecified)
 		{
@@ -412,7 +446,14 @@ namespace System
 
 		public static DateTime ConvertTimeBySystemTimeZoneId (DateTime dateTime, string sourceTimeZoneId, string destinationTimeZoneId)
 		{
-			return ConvertTime (dateTime, FindSystemTimeZoneById (sourceTimeZoneId), FindSystemTimeZoneById (destinationTimeZoneId));
+			TimeZoneInfo source_tz;
+			if (dateTime.Kind == DateTimeKind.Utc && sourceTimeZoneId == TimeZoneInfo.Utc.Id) {
+				source_tz = Utc;
+			} else {
+				source_tz = FindSystemTimeZoneById (sourceTimeZoneId);
+			}
+
+			return ConvertTime (dateTime, source_tz, FindSystemTimeZoneById (destinationTimeZoneId));
 		}
 
 		public static DateTimeOffset ConvertTimeBySystemTimeZoneId (DateTimeOffset dateTimeOffset, string destinationTimeZoneId)
@@ -531,7 +572,7 @@ namespace System
 			//FIXME: this method should check for cached values in systemTimeZones
 			if (id == null)
 				throw new ArgumentNullException ("id");
-#if !NET_2_1
+#if WIN_PLATFORM
 			if (TimeZoneKey != null)
 			{
 				if (id == "Coordinated Universal Time")
@@ -540,6 +581,8 @@ namespace System
 				if (key == null)
 					throw new TimeZoneNotFoundException ();
 				return FromRegistryKey(id, key);
+			} else if (IsWindows) {
+				return FindSystemTimeZoneByIdWinRTFallback (id);
 			}
 #endif
 			// Local requires special logic that already exists in the Local property (bug #326)
@@ -552,16 +595,22 @@ namespace System
 #if LIBC
 		private static TimeZoneInfo FindSystemTimeZoneByFileName (string id, string filepath)
 		{
-			if (!File.Exists (filepath))
-				throw new TimeZoneNotFoundException ();
-
-			using (FileStream stream = File.OpenRead (filepath)) {
+			FileStream stream = null;
+			try {
+				stream = File.OpenRead (filepath);	
+			} catch (Exception ex) {
+				throw new TimeZoneNotFoundException ("Couldn't read time zone file " + filepath, ex);
+			}
+			try {
 				return BuildFromStream (id, stream);
+			} finally {
+				if (stream != null)
+					stream.Dispose();
 			}
 		}
 #endif
 
-#if !NET_2_1
+#if WIN_PLATFORM
 		private static TimeZoneInfo FromRegistryKey (string id, RegistryKey key)
 		{
 			byte [] reg_tzi = (byte []) key.GetValue ("TZI");
@@ -596,7 +645,7 @@ namespace System
 			else
 				ParseRegTzi(adjustmentRules, 1, 9999, reg_tzi);
 
-			return CreateCustomTimeZone (id, baseUtcOffset, display_name, standard_name, daylight_name, ValidateRules (adjustmentRules).ToArray ());
+			return CreateCustomTimeZone (id, baseUtcOffset, display_name, standard_name, daylight_name, ValidateRules (adjustmentRules));
 		}
 
 		private static void ParseRegTzi (List<AdjustmentRule> adjustmentRules, int start_year, int end_year, byte [] buffer)
@@ -629,15 +678,13 @@ namespace System
 			DateTime start_timeofday = new DateTime (1, 1, 1, daylight_hour, daylight_minute, daylight_second, daylight_millisecond);
 			TransitionTime start_transition_time;
 
+			start_date = new DateTime (start_year, 1, 1);
 			if (daylight_year == 0) {
-				start_date = new DateTime (start_year, 1, 1);
 				start_transition_time = TransitionTime.CreateFloatingDateRule (
 					start_timeofday, daylight_month, daylight_day,
 					(DayOfWeek) daylight_dayofweek);
 			}
 			else {
-				start_date = new DateTime (daylight_year, daylight_month, daylight_day,
-					daylight_hour, daylight_minute, daylight_second, daylight_millisecond);
 				start_transition_time = TransitionTime.CreateFixedDateRule (
 					start_timeofday, daylight_month, daylight_day);
 			}
@@ -646,15 +693,13 @@ namespace System
 			DateTime end_timeofday = new DateTime (1, 1, 1, standard_hour, standard_minute, standard_second, standard_millisecond);
 			TransitionTime end_transition_time;
 
+			end_date = new DateTime (end_year, 12, 31);
 			if (standard_year == 0) {
-				end_date = new DateTime (end_year, 12, 31);
 				end_transition_time = TransitionTime.CreateFloatingDateRule (
 					end_timeofday, standard_month, standard_day,
 					(DayOfWeek) standard_dayofweek);
 			}
 			else {
-				end_date = new DateTime (standard_year, standard_month, standard_day,
-					standard_hour, standard_minute, standard_second, standard_millisecond);
 				end_transition_time = TransitionTime.CreateFixedDateRule (
 					end_timeofday, standard_month, standard_day);
 			}
@@ -741,7 +786,7 @@ namespace System
 			return GetUtcOffset (dateTimeOffset.UtcDateTime, out isDST);
 		}
 
-		private TimeSpan GetUtcOffset (DateTime dateTime, out bool isDST)
+		private TimeSpan GetUtcOffset (DateTime dateTime, out bool isDST, bool forOffset = false)
 		{
 			isDST = false;
 
@@ -753,7 +798,7 @@ namespace System
 				tz = TimeZoneInfo.Local;
 
 			bool isTzDst;
-			var tzOffset = GetUtcOffsetHelper (dateTime, tz, out isTzDst);
+			var tzOffset = GetUtcOffsetHelper (dateTime, tz, out isTzDst, forOffset);
 
 			if (tz == this) {
 				isDST = isTzDst;
@@ -764,11 +809,11 @@ namespace System
 			if (!TryAddTicks (dateTime, -tzOffset.Ticks, out utcDateTime, DateTimeKind.Utc))
 				return BaseUtcOffset;
 
-			return GetUtcOffsetHelper (utcDateTime, this, out isDST);
+			return GetUtcOffsetHelper (utcDateTime, this, out isDST, forOffset);
 		}
 
 		// This is an helper method used by the method above, do not use this on its own.
-		private static TimeSpan GetUtcOffsetHelper (DateTime dateTime, TimeZoneInfo tz, out bool isDST)
+		private static TimeSpan GetUtcOffsetHelper (DateTime dateTime, TimeZoneInfo tz, out bool isDST, bool forOffset = false)
 		{
 			if (dateTime.Kind == DateTimeKind.Local && tz != TimeZoneInfo.Local)
 				throw new Exception ();
@@ -779,7 +824,7 @@ namespace System
 				return TimeSpan.Zero;
 
 			TimeSpan offset;
-			if (tz.TryGetTransitionOffset(dateTime, out offset, out isDST))
+			if (tz.TryGetTransitionOffset(dateTime, out offset, out isDST, forOffset))
 				return offset;
 
 			if (dateTime.Kind == DateTimeKind.Utc) {
@@ -804,9 +849,18 @@ namespace System
 					return tz.BaseUtcOffset;
 			}
 
-			if (tzRule != null && tz.IsInDST (tzRule, stdUtcDateTime) && tz.IsInDST (tzRule, dstUtcDateTime)) {
-				isDST = true;
-				return tz.BaseUtcOffset + tzRule.DaylightDelta;
+			if (tzRule != null && tz.IsInDST (tzRule, dateTime)) {
+				// Replicate what .NET does when given a time which falls into the hour which is lost when
+				// DST starts. isDST should be false and the offset should be BaseUtcOffset without the
+				// DST delta while in that hour.
+				if (forOffset)
+					isDST = true;
+				if (tz.IsInDST (tzRule, dstUtcDateTime)) {
+					isDST = true;
+					return tz.BaseUtcOffset + tzRule.DaylightDelta;
+				} else {
+					return tz.BaseUtcOffset;
+				}
 			}
 
 			return tz.BaseUtcOffset;
@@ -854,7 +908,7 @@ namespace System
 			AdjustmentRule rule = GetApplicableRule (dateTime);
 			if (rule != null) {
 				DateTime tpoint = TransitionPoint (rule.DaylightTransitionEnd, dateTime.Year);
-				if (dateTime > tpoint - rule.DaylightDelta  && dateTime <= tpoint)
+				if (dateTime > tpoint - rule.DaylightDelta && dateTime <= tpoint)
 					return true;
 			}
 				
@@ -873,7 +927,7 @@ namespace System
 				return true;
 
 			// We might be in the dateTime previous year's DST period
-			return IsInDSTForYear (rule, dateTime, dateTime.Year - 1);
+			return dateTime.Year > 1 && IsInDSTForYear (rule, dateTime, dateTime.Year - 1);
 		}
 
 		bool IsInDSTForYear (AdjustmentRule rule, DateTime dateTime, int year)
@@ -882,9 +936,9 @@ namespace System
 			DateTime DST_end = TransitionPoint (rule.DaylightTransitionEnd, year + ((rule.DaylightTransitionStart.Month < rule.DaylightTransitionEnd.Month) ? 0 : 1));
 			if (dateTime.Kind == DateTimeKind.Utc) {
 				DST_start -= BaseUtcOffset;
-				DST_end -= (BaseUtcOffset + rule.DaylightDelta);
+				DST_end -= BaseUtcOffset;
 			}
-
+			DST_end -= rule.DaylightDelta;
 			return (dateTime >= DST_start && dateTime < DST_end);
 		}
 		
@@ -912,7 +966,21 @@ namespace System
 
 		public bool IsDaylightSavingTime (DateTimeOffset dateTimeOffset)
 		{
-			throw new NotImplementedException ();
+			var dateTime = dateTimeOffset.DateTime;
+			
+			if (dateTime.Kind == DateTimeKind.Local && IsInvalidTime (dateTime))
+				throw new ArgumentException ("dateTime is invalid and Kind is Local");
+
+			if (this == TimeZoneInfo.Utc)
+				return false;
+			
+			if (!SupportsDaylightSavingTime)
+				return false;
+
+			bool isDst;
+			GetUtcOffset (dateTime, out isDst, true);
+
+			return isDst;
 		}
 
 		internal DaylightTime GetDaylightChanges (int year)
@@ -951,12 +1019,17 @@ namespace System
 			} else {
 				AdjustmentRule first = null, last = null;
 
+				// Rule start/end dates are either very specific or very broad depending on the platform
+				//   2015-10-04..2016-04-03 - Rule for a time zone in southern hemisphere on non-Windows platforms
+				//   2016-03-27..2016-10-03 - Rule for a time zone in northern hemisphere on non-Windows platforms
+				//   0001-01-01..9999-12-31 - Rule for a time zone on Windows
+
 				foreach (var rule in GetAdjustmentRules ()) {
-					if (rule.DateStart.Year != year && rule.DateEnd.Year != year)
+					if (rule.DateStart.Year > year || rule.DateEnd.Year < year)
 						continue;
-					if (rule.DateStart.Year == year)
+					if (rule.DateStart.Year <= year && (first == null || rule.DateStart.Year > first.DateStart.Year))
 						first = rule;
-					if (rule.DateEnd.Year == year)
+					if (rule.DateEnd.Year >= year && (last == null || rule.DateEnd.Year < last.DateEnd.Year))
 						last = rule;
 				}
 
@@ -1144,7 +1217,7 @@ namespace System
 			return null;
 		}
 
-		private bool TryGetTransitionOffset (DateTime dateTime, out TimeSpan offset,out bool isDst)
+		private bool TryGetTransitionOffset (DateTime dateTime, out TimeSpan offset, out bool isDst, bool forOffset = false)
 		{
 			offset = BaseUtcOffset;
 			isDst = false;
@@ -1160,32 +1233,49 @@ namespace System
 					return false;
 			}
 
+			var isUtc = false;
 			if (dateTime.Kind != DateTimeKind.Utc) {
 				if (!TryAddTicks (date, -BaseUtcOffset.Ticks, out date, DateTimeKind.Utc))
 					return false;
+			} else
+				isUtc = true;
+
+
+			AdjustmentRule current = GetApplicableRule (date);
+			if (current != null) {
+				DateTime tStart = TransitionPoint (current.DaylightTransitionStart, date.Year);
+				DateTime tEnd = TransitionPoint (current.DaylightTransitionEnd, date.Year);
+				TryAddTicks (tStart, -BaseUtcOffset.Ticks, out tStart, DateTimeKind.Utc);
+				TryAddTicks (tEnd, -BaseUtcOffset.Ticks, out tEnd, DateTimeKind.Utc);
+				if ((date >= tStart) && (date <= tEnd)) {
+					if (forOffset)
+						isDst = true;
+					offset = baseUtcOffset; 
+					if (isUtc || (date >= new DateTime (tStart.Ticks + current.DaylightDelta.Ticks, DateTimeKind.Utc)))
+					{
+						offset += current.DaylightDelta;
+						isDst = true;
+					}
+
+					if (date >= new DateTime (tEnd.Ticks - current.DaylightDelta.Ticks, DateTimeKind.Utc))
+					{
+						offset = baseUtcOffset;
+						isDst = false;
+					}
+
+					return true;
+				}
 			}
-
-			for (var i =  transitions.Count - 1; i >= 0; i--) {
-				var pair = transitions [i];
-				DateTime ttime = pair.Key;
-				TimeType ttype = pair.Value;
-
-				if (ttime > date)
-					continue;
-
-				offset =  new TimeSpan (0, 0, ttype.Offset);
-				isDst = ttype.IsDst;
-
-				return true;
-			}
-
 			return false;
 		}
 
 		private static DateTime TransitionPoint (TransitionTime transition, int year)
 		{
-			if (transition.IsFixedDateRule)
-				return new DateTime (year, transition.Month, transition.Day) + transition.TimeOfDay.TimeOfDay;
+			if (transition.IsFixedDateRule) {
+				var daysInMonth = DateTime.DaysInMonth (year, transition.Month);
+				var transitionDay = transition.Day <= daysInMonth ? transition.Day : daysInMonth;
+				return new DateTime (year, transition.Month, transitionDay) + transition.TimeOfDay.TimeOfDay;
+			}
 
 			DayOfWeek first = (new DateTime (year, transition.Month, 1)).DayOfWeek;
 			int day = 1 + (transition.Week - 1) * 7 + (transition.DayOfWeek - first + 7) % 7;
@@ -1196,8 +1286,11 @@ namespace System
 			return new DateTime (year, transition.Month, day) + transition.TimeOfDay.TimeOfDay;
 		}
 
-		static List<AdjustmentRule> ValidateRules (List<AdjustmentRule> adjustmentRules)
+		static AdjustmentRule[] ValidateRules (List<AdjustmentRule> adjustmentRules)
 		{
+			if (adjustmentRules == null || adjustmentRules.Count == 0)
+				return null;
+
 			AdjustmentRule prev = null;
 			foreach (AdjustmentRule current in adjustmentRules.ToArray ()) {
 				if (prev != null && prev.DateEnd > current.DateStart) {
@@ -1205,7 +1298,7 @@ namespace System
 				}
 				prev = current;
 			}
-			return adjustmentRules;
+			return adjustmentRules.ToArray ();
 		}
 
 #if LIBC || MONOTOUCH
@@ -1221,8 +1314,10 @@ namespace System
 
 			try {
 				return ParseTZBuffer (id, buffer, length);
+			} catch (InvalidTimeZoneException) {
+				throw;
 			} catch (Exception e) {
-				throw new InvalidTimeZoneException (e.Message);
+				throw new InvalidTimeZoneException ("Time zone information file contains invalid data", e);
 			}
 		}
 
@@ -1279,7 +1374,7 @@ namespace System
 			if (time_types.Count == 0)
 				throw new InvalidTimeZoneException ();
 
-			if (time_types.Count == 1 && ((TimeType)time_types[0]).IsDst)
+			if (time_types.Count == 1 && time_types[0].IsDst)
 				throw new InvalidTimeZoneException ();
 
 			TimeSpan baseUtcOffset = new TimeSpan (0);
@@ -1360,20 +1455,20 @@ namespace System
 
 			TimeZoneInfo tz;
 			if (adjustmentRules.Count == 0 && !storeTransition) {
-				TimeType t = (TimeType)time_types [0];
 				if (standardDisplayName == null) {
+					var t = time_types [0];
 					standardDisplayName = t.Name;
 					baseUtcOffset = new TimeSpan (0, 0, t.Offset);
 				}
 				tz = CreateCustomTimeZone (id, baseUtcOffset, id, standardDisplayName);
 			} else {
-				tz = CreateCustomTimeZone (id, baseUtcOffset, id, standardDisplayName, daylightDisplayName, ValidateRules (adjustmentRules).ToArray ());
+				tz = CreateCustomTimeZone (id, baseUtcOffset, id, standardDisplayName, daylightDisplayName, ValidateRules (adjustmentRules));
 			}
 
 			if (storeTransition && transitions.Count > 0) {
 				tz.transitions = transitions;
-				tz.supportsDaylightSavingTime = true;
 			}
+			tz.supportsDaylightSavingTime = adjustmentRules.Count > 0;
 
 			return tz;
 		}
@@ -1405,6 +1500,20 @@ namespace System
 			var types = new Dictionary<int, TimeType> (count);
 			for (int i = 0; i < count; i++) {
 				int offset = ReadBigEndianInt32 (buffer, index + 6 * i);
+
+				//
+				// The official tz database contains timezone with GMT offsets
+				// not only in whole hours/minutes but in seconds. This happens for years
+				// before 1901. For example
+				//
+				// NAME		        GMTOFF   RULES	FORMAT	UNTIL
+				// Europe/Madrid	-0:14:44 -	LMT	1901 Jan  1  0:00s
+				//
+				// .NET as of 4.6.2 cannot handle that and uses hours/minutes only, so
+				// we remove seconds to not crash later
+				//
+				offset = (offset / 60) * 60;
+
 				byte is_dst = buffer [index + 6 * i + 4];
 				byte abbrev = buffer [index + 6 * i + 5];
 				types.Add (i, new TimeType (offset, (is_dst != 0), abbreviations [(int)abbrev]));
@@ -1452,7 +1561,7 @@ namespace System
 
 			if (zone.IsAmbiguousTime (time)) {
 				isAmbiguousLocalDst = true;
-				return baseOffset;
+//				return baseOffset;
 			}
 
 			return zone.GetUtcOffset (time, out isDaylightSavings);
@@ -1460,7 +1569,7 @@ namespace System
 #endregion
 	}
 
-	struct TimeType {
+	class TimeType {
 		public readonly int Offset;
 		public readonly bool IsDst;
 		public string Name;

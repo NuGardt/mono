@@ -5,7 +5,7 @@
 
 using System;
 using System.Reflection;
-#if !MONOTOUCH && !MOBILE_STATIC
+#if !MONOTOUCH && !FULL_AOT_RUNTIME
 using System.Reflection.Emit;
 #endif
 using System.Threading;
@@ -26,7 +26,7 @@ namespace MonoTests.System
 
 
 		[Test] //See bug #372406
-#if MONOTOUCH || MOBILE_STATIC
+#if MONOTOUCH || FULL_AOT_RUNTIME
 		[Category ("NotWorking")] // #10539
 #endif
 		public void CreateDelegate1_Method_Private_Instance ()
@@ -64,7 +64,7 @@ namespace MonoTests.System
 		}
 
 		[Test] // CreateDelegate (Type, MethodInfo)
-#if MONOTOUCH || MOBILE_STATIC
+#if MONOTOUCH || FULL_AOT_RUNTIME
 		[Category ("NotWorking")] // #14163
 #endif
 		public void CreateDelegate1_Method_Instance ()
@@ -912,6 +912,7 @@ namespace MonoTests.System
 		}
 
 		[Test]
+		[Category ("NotWasm")]
 		public void NullFirstArgumentOnStaticMethod ()
 		{
 			CallTarget call = (CallTarget) Delegate.CreateDelegate (
@@ -925,7 +926,7 @@ namespace MonoTests.System
 		}
 
 		[Test]
-#if MONOTOUCH || MOBILE_STATIC
+#if MONOTOUCH || FULL_AOT_RUNTIME
 		[Category ("NotWorking")] // #10539
 #endif
 		public void Virtual ()
@@ -956,7 +957,7 @@ namespace MonoTests.System
 		}
 
 		[Test]
-#if MONOTOUCH || MOBILE_STATIC
+#if MONOTOUCH || FULL_AOT_RUNTIME
 		[Category ("NotWorking")] // #14163
 #endif
 		public void NullTarget_Instance ()
@@ -1021,7 +1022,7 @@ namespace MonoTests.System
 		}
 
 		[Test] // #617161
-#if MONOTOUCH || MOBILE_STATIC
+#if MONOTOUCH || FULL_AOT_RUNTIME
 		[Category ("NotWorking")] // #10539
 #endif
 		public void ClosedOverNullReferenceStaticMethod ()
@@ -1045,7 +1046,7 @@ namespace MonoTests.System
 		}
 
 		[Test] // #475962
-#if MONOTOUCH || MOBILE_STATIC
+#if MONOTOUCH || FULL_AOT_RUNTIME
 		[Category ("NotWorking")] // #10539
 #endif
 		public void ClosedOverNullReferenceInstanceMethod ()
@@ -1079,7 +1080,7 @@ namespace MonoTests.System
 
 		delegate int ByRefDelegate (ref FooStruct s, int a, int b, int c, int d);
 
-#if MONOTOUCH || MOBILE_STATIC
+#if MONOTOUCH || FULL_AOT_RUNTIME
 		[Category ("NotWorking")]
 #endif
 		[Test]
@@ -1251,7 +1252,7 @@ namespace MonoTests.System
 			}
 		}
 	
-		delegate int IntNoArgs ();
+		public delegate int IntNoArgs ();
 
 		[Test]
 		public void CreateDelegateWithAbstractMethods ()
@@ -1279,7 +1280,7 @@ namespace MonoTests.System
 		{
 			string retarg (string s);
 		}
-#if !MONOTOUCH && !MOBILE_STATIC
+#if !MONOTOUCH && !FULL_AOT_RUNTIME
 		[Test]
 		public void CreateDelegateWithLdFtnAndAbstractMethod ()
 		{
@@ -1388,7 +1389,24 @@ namespace MonoTests.System
 			Assert.IsTrue (d (0, 0));
 		}
 
-#if !MONOTOUCH && !MOBILE_STATIC
+		[Test]
+		public void EnumBaseTypeConversion2 () {
+			Func<Enum22, int> dm = EnumArg;
+			var d = (Func<int, int>)Delegate.CreateDelegate (typeof (Func<int, int>), dm.Method);
+			Assert.AreEqual (1, d (1));
+		}
+
+		public enum Enum22 {
+			none,
+			one,
+			two
+		}
+
+		public static int EnumArg (Enum22 e) {
+			return (int)e;
+		}
+
+#if !MONOTOUCH && !FULL_AOT_RUNTIME
 		public static void DynInvokeWithClosedFirstArg (object a, object b)
 		{
 		}
@@ -1443,6 +1461,38 @@ namespace MonoTests.System
 			var del1 = new DoExecuteDelegate1 (b.DoExecute);
 			var del2 = new DoExecuteDelegate2 (b.DoExecute);
 			var del = Delegate.Remove (del1, del2);
+		}
+
+		[Test]
+		[ExpectedException (typeof (ArgumentException))]
+		public void CreateDelegateThrowsAnArgumentExceptionWhenCalledWithAnOpenGeneric()
+		{
+			var m = GetType().GetMethod("AnyGenericMethod");
+			Delegate.CreateDelegate(typeof(Action), this, m);
+		}
+
+		[Test]
+		public void ReflectedTypeInheritedVirtualMethod ()
+		{
+			var a = new DerivedClass ();
+
+			Action m = a.MyMethod;
+			Assert.AreEqual (typeof (BaseClass), m.Method.ReflectedType);
+		}
+
+		class BaseClass
+		{
+			public virtual void MyMethod() {
+				Console.WriteLine ("Base method");
+			}
+		}
+
+		class DerivedClass : BaseClass
+		{
+		}
+
+		public void AnyGenericMethod<T>()
+		{
 		}
 
 		static bool Int32D2 (int x, int y)

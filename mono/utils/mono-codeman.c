@@ -1,4 +1,13 @@
+/**
+ * \file
+ */
+
 #include "config.h"
+
+#if defined(TARGET_OSX)
+/* So we can use the declaration of pthread_jit_write_protect_np () */
+#define _DARWIN_C_SOURCE
+#endif
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -8,31 +17,28 @@
 #include <assert.h>
 #include <glib.h>
 
-/* For dlmalloc.h */
-#define USE_DL_PREFIX 1
-
 #include "mono-codeman.h"
 #include "mono-mmap.h"
 #include "mono-counters.h"
+#if _WIN32
+static void* mono_code_manager_heap;
+#else
+#define USE_DL_PREFIX 1
 #include "dlmalloc.h"
-#include <mono/io-layer/io-layer.h>
+#endif
 #include <mono/metadata/profiler-private.h>
 #ifdef HAVE_VALGRIND_MEMCHECK_H
 #include <valgrind/memcheck.h>
 #endif
 
-#if defined(__native_client_codegen__) && defined(__native_client__)
-#include <malloc.h>
-#include <nacl/nacl_dyncode.h>
-#include <mono/mini/mini.h>
-#endif
 #include <mono/utils/mono-os-mutex.h>
-
+#include <mono/utils/mono-tls.h>
 
 static uintptr_t code_memory_used = 0;
 static size_t dynamic_code_alloc_count;
 static size_t dynamic_code_bytes_count;
 static size_t dynamic_code_frees_count;
+static const MonoCodeManagerCallbacks *code_manager_callbacks;
 
 /*
  * AMD64 processors maintain icache coherency only for pages which are 
@@ -40,11 +46,15 @@ static size_t dynamic_code_frees_count;
  * malloc when using dynamic code managers. The system malloc can't do this so we use a 
  * slighly modified version of Doug Lea's Malloc package for this purpose:
  * http://g.oswego.edu/dl/html/malloc.html
+ *
+ * Or on Windows, HeapCreate (HEAP_CREATE_ENABLE_EXECUTE).
  */
 
 #define MIN_PAGES 16
 
-#if defined(__ia64__) || defined(__x86_64__) || defined (_WIN64)
+#if _WIN32 // These are the same.
+#define MIN_ALIGN MEMORY_ALLOCATION_ALIGNMENT
+#elif defined(__x86_64__)
 /*
  * We require 16 byte alignment on amd64 so the fp literals embedded in the code are 
  * properly aligned for SSE2.
@@ -52,16 +62,6 @@ static size_t dynamic_code_frees_count;
 #define MIN_ALIGN 16
 #else
 #define MIN_ALIGN 8
-#endif
-#ifdef __native_client_codegen__
-/* For Google Native Client, all targets of indirect control flow need to    */
-/* be aligned to bundle boundary. 16 bytes on ARM, 32 bytes on x86.
- * MIN_ALIGN was updated to force alignment for calls from
- * tramp-<arch>.c to mono_global_codeman_reserve()     */
-/* and mono_domain_code_reserve().                                           */
-#undef MIN_ALIGN
-#define MIN_ALIGN kNaClBundleSize
-
 #endif
 
 /* if a chunk has less than this amount of free space it's considered full */
@@ -74,167 +74,40 @@ static size_t dynamic_code_frees_count;
 #define ARCH_MAP_FLAGS 0
 #endif
 
-#define MONO_PROT_RWX (MONO_MMAP_READ|MONO_MMAP_WRITE|MONO_MMAP_EXEC)
+#define MONO_PROT_RWX (MONO_MMAP_READ|MONO_MMAP_WRITE|MONO_MMAP_EXEC|MONO_MMAP_JIT)
 
-typedef struct _CodeChunck CodeChunk;
+typedef struct _CodeChunk CodeChunk;
 
 enum {
 	CODE_FLAG_MMAP,
 	CODE_FLAG_MALLOC
 };
 
-struct _CodeChunck {
+struct _CodeChunk {
 	char *data;
+	CodeChunk *next;
 	int pos;
 	int size;
-	CodeChunk *next;
-	unsigned int flags: 8;
+	unsigned int reserved: 8;
 	/* this number of bytes is available to resolve addresses far in memory */
 	unsigned int bsize: 24;
 };
 
 struct _MonoCodeManager {
-	int dynamic;
-	int read_only;
 	CodeChunk *current;
 	CodeChunk *full;
 	CodeChunk *last;
-#if defined(__native_client_codegen__) && defined(__native_client__)
-	GHashTable *hash;
-#endif
+	int dynamic : 1;
+	int read_only : 1;
 };
 
 #define ALIGN_INT(val,alignment) (((val) + (alignment - 1)) & ~(alignment - 1))
-
-#if defined(__native_client_codegen__) && defined(__native_client__)
-/* End of text segment, set by linker. 
- * Dynamic text starts on the next allocated page.
- */
-extern char etext[];
-char *next_dynamic_code_addr = NULL;
-
-/*
- * This routine gets the next available bundle aligned
- * pointer in the dynamic code section.  It does not check
- * for the section end, this error will be caught in the
- * service runtime.
- */
-void*
-allocate_code(intptr_t increment)
-{
-	char *addr;
-	if (increment < 0) return NULL;
-	increment = increment & kNaClBundleMask ? (increment & ~kNaClBundleMask) + kNaClBundleSize : increment;
-	addr = next_dynamic_code_addr;
-	next_dynamic_code_addr += increment;
-	return addr;
-}
-
-int
-nacl_is_code_address (void *target)
-{
-	return (char *)target < next_dynamic_code_addr;
-}
-
-/* Fill code buffer with arch-specific NOPs. */
-void
-mono_nacl_fill_code_buffer (guint8 *data, int size);
-
-#ifndef USE_JUMP_TABLES
-const int kMaxPatchDepth = 32;
-__thread unsigned char **patch_source_base = NULL;
-__thread unsigned char **patch_dest_base = NULL;
-__thread int *patch_alloc_size = NULL;
-__thread int patch_current_depth = -1;
-__thread int allow_target_modification = 1;
-
-static void
-nacl_jit_check_init ()
-{
-	if (patch_source_base == NULL) {
-		patch_source_base = g_malloc (kMaxPatchDepth * sizeof(unsigned char *));
-		patch_dest_base = g_malloc (kMaxPatchDepth * sizeof(unsigned char *));
-		patch_alloc_size = g_malloc (kMaxPatchDepth * sizeof(int));
-	}
-}
-#endif
-
-void
-nacl_allow_target_modification (int val)
-{
-#ifndef USE_JUMP_TABLES
-        allow_target_modification = val;
-#endif /* USE_JUMP_TABLES */
-}
-
-/* Given a patch target, modify the target such that patching will work when
- * the code is copied to the data section.
- */
-void*
-nacl_modify_patch_target (unsigned char *target)
-{
-	/*
-	 * There's no need in patch tricks for jumptables,
-	 * as we always patch same jumptable.
-	 */
-#ifndef USE_JUMP_TABLES
-	/* This seems like a bit of an ugly way to do this but the advantage
-	 * is we don't have to worry about all the conditions in
-	 * mono_resolve_patch_target, and it can be used by all the bare uses
-	 * of <arch>_patch.
-	 */
-	unsigned char *sb;
-	unsigned char *db;
-
-	if (!allow_target_modification) return target;
-
-	nacl_jit_check_init ();
-	sb = patch_source_base[patch_current_depth];
-	db = patch_dest_base[patch_current_depth];
-
-	if (target >= sb && (target < sb + patch_alloc_size[patch_current_depth])) {
-		/* Do nothing.  target is in the section being generated.
-		 * no need to modify, the disp will be the same either way.
-		 */
-	} else {
-		int target_offset = target - db;
-		target = sb + target_offset;
-	}
-#endif
-	return target;
-}
-
-void*
-nacl_inverse_modify_patch_target (unsigned char *target)
-{
-	/*
-	 * There's no need in patch tricks for jumptables,
-	 * as we always patch same jumptable.
-	 */
-#ifndef USE_JUMP_TABLES
-	unsigned char *sb;
-	unsigned char *db;
-	int target_offset;
-
-	if (!allow_target_modification) return target;
-
-	nacl_jit_check_init ();
-	sb = patch_source_base[patch_current_depth];
-	db = patch_dest_base[patch_current_depth];
-
-	target_offset = target - sb;
-	target = db + target_offset;
-#endif
-	return target;
-}
-
-
-#endif /* __native_client_codegen && __native_client__ */
 
 #define VALLOC_FREELIST_SIZE 16
 
 static mono_mutex_t valloc_mutex;
 static GHashTable *valloc_freelists;
+static MonoNativeTlsKey write_level_tls_id;
 
 static void*
 codechunk_valloc (void *preferred, guint32 size)
@@ -254,13 +127,15 @@ codechunk_valloc (void *preferred, guint32 size)
 	freelist = (GSList *) g_hash_table_lookup (valloc_freelists, GUINT_TO_POINTER (size));
 	if (freelist) {
 		ptr = freelist->data;
+		mono_codeman_enable_write ();
 		memset (ptr, 0, size);
+		mono_codeman_disable_write ();
 		freelist = g_slist_delete_link (freelist, freelist);
 		g_hash_table_insert (valloc_freelists, GUINT_TO_POINTER (size), freelist);
 	} else {
-		ptr = mono_valloc (preferred, size, MONO_PROT_RWX | ARCH_MAP_FLAGS);
+		ptr = mono_valloc (preferred, size, MONO_PROT_RWX | ARCH_MAP_FLAGS, MONO_MEM_ACCOUNT_CODE);
 		if (!ptr && preferred)
-			ptr = mono_valloc (NULL, size, MONO_PROT_RWX | ARCH_MAP_FLAGS);
+			ptr = mono_valloc (NULL, size, MONO_PROT_RWX | ARCH_MAP_FLAGS, MONO_MEM_ACCOUNT_CODE);
 	}
 	mono_os_mutex_unlock (&valloc_mutex);
 	return ptr;
@@ -277,7 +152,7 @@ codechunk_vfree (void *ptr, guint32 size)
 		freelist = g_slist_prepend (freelist, ptr);
 		g_hash_table_insert (valloc_freelists, GUINT_TO_POINTER (size), freelist);
 	} else {
-		mono_vfree (ptr, size);
+		mono_vfree (ptr, size, MONO_MEM_ACCOUNT_CODE);
 	}
 	mono_os_mutex_unlock (&valloc_mutex);
 }		
@@ -296,7 +171,7 @@ codechunk_cleanup (void)
 		GSList *l;
 
 		for (l = freelist; l; l = l->next) {
-			mono_vfree (l->data, GPOINTER_TO_UINT (key));
+			mono_vfree (l->data, GPOINTER_TO_UINT (key), MONO_MEM_ACCOUNT_CODE);
 		}
 		g_slist_free (freelist);
 	}
@@ -309,12 +184,61 @@ mono_code_manager_init (void)
 	mono_counters_register ("Dynamic code allocs", MONO_COUNTER_JIT | MONO_COUNTER_ULONG, &dynamic_code_alloc_count);
 	mono_counters_register ("Dynamic code bytes", MONO_COUNTER_JIT | MONO_COUNTER_ULONG, &dynamic_code_bytes_count);
 	mono_counters_register ("Dynamic code frees", MONO_COUNTER_JIT | MONO_COUNTER_ULONG, &dynamic_code_frees_count);
+
+	mono_native_tls_alloc (&write_level_tls_id, NULL);
 }
 
 void
 mono_code_manager_cleanup (void)
 {
 	codechunk_cleanup ();
+}
+
+void
+mono_code_manager_install_callbacks (const MonoCodeManagerCallbacks* callbacks)
+{
+	code_manager_callbacks = callbacks;
+}
+
+static
+int
+mono_codeman_allocation_type (MonoCodeManager const *cman)
+{
+#ifdef FORCE_MALLOC
+	return CODE_FLAG_MALLOC;
+#else
+	return cman->dynamic ? CODE_FLAG_MALLOC : CODE_FLAG_MMAP;
+#endif
+}
+
+/**
+ * mono_code_manager_new_internal
+ *
+ * Returns: the new code manager
+ */
+static
+MonoCodeManager*
+mono_code_manager_new_internal (gboolean dynamic)
+{
+	MonoCodeManager* cman = g_new0 (MonoCodeManager, 1);
+	if (cman) {
+		cman->dynamic = dynamic;
+#if _WIN32
+		// It would seem the heap should live and die with the codemanager,
+		// but that was failing, so try a global.
+		if (mono_codeman_allocation_type (cman) == CODE_FLAG_MALLOC && !mono_code_manager_heap) {
+			// This heap is leaked, similar to dlmalloc state.
+			void* const heap = HeapCreate (HEAP_CREATE_ENABLE_EXECUTE, 0, 0);
+			if (heap && mono_atomic_cas_ptr (&mono_code_manager_heap, heap, NULL))
+				HeapDestroy (heap);
+			if (!mono_code_manager_heap) {
+				mono_code_manager_destroy (cman);
+				cman = 0;
+			}
+		}
+#endif
+	}
+	return cman;
 }
 
 /**
@@ -331,32 +255,7 @@ mono_code_manager_cleanup (void)
 MonoCodeManager* 
 mono_code_manager_new (void)
 {
-	MonoCodeManager *cman = (MonoCodeManager *) g_malloc0 (sizeof (MonoCodeManager));
-	if (!cman)
-		return NULL;
-#if defined(__native_client_codegen__) && defined(__native_client__)
-	if (next_dynamic_code_addr == NULL) {
-		const guint kPageMask = 0xFFFF; /* 64K pages */
-		next_dynamic_code_addr = (uintptr_t)(etext + kPageMask) & ~kPageMask;
-#if defined (__GLIBC__)
-		/* TODO: For now, just jump 64MB ahead to avoid dynamic libraries. */
-		next_dynamic_code_addr += (uintptr_t)0x4000000;
-#else
-		/* Workaround bug in service runtime, unable to allocate */
-		/* from the first page in the dynamic code section.    */
-		next_dynamic_code_addr += (uintptr_t)0x10000;
-#endif
-	}
-	cman->hash =  g_hash_table_new (NULL, NULL);
-# ifndef USE_JUMP_TABLES
-	if (patch_source_base == NULL) {
-		patch_source_base = g_malloc (kMaxPatchDepth * sizeof(unsigned char *));
-		patch_dest_base = g_malloc (kMaxPatchDepth * sizeof(unsigned char *));
-		patch_alloc_size = g_malloc (kMaxPatchDepth * sizeof(int));
-	}
-# endif
-#endif
-	return cman;
+	return mono_code_manager_new_internal (FALSE);
 }
 
 /**
@@ -371,14 +270,42 @@ mono_code_manager_new (void)
 MonoCodeManager* 
 mono_code_manager_new_dynamic (void)
 {
-	MonoCodeManager *cman = mono_code_manager_new ();
-	cman->dynamic = 1;
-	return cman;
+	return mono_code_manager_new_internal (TRUE);
 }
 
+static gpointer
+mono_codeman_malloc (gsize n)
+{
+#if _WIN32
+	void* const heap = mono_code_manager_heap;
+	g_assert (heap);
+	return HeapAlloc (heap, 0, n);
+#else
+	mono_codeman_enable_write ();
+	gpointer res = dlmemalign (MIN_ALIGN, n);
+	mono_codeman_disable_write ();
+	return res;
+#endif
+}
 
 static void
-free_chunklist (CodeChunk *chunk)
+mono_codeman_free (gpointer p)
+{
+	if (!p)
+		return;
+#if _WIN32
+	void* const heap = mono_code_manager_heap;
+	g_assert (heap);
+	HeapFree (heap, 0, p);
+#else
+	mono_codeman_enable_write ();
+	dlfree (p);
+	mono_codeman_disable_write ();
+#endif
+}
+
+static void
+free_chunklist (MonoCodeManager *cman, CodeChunk *chunk)
 {
 	CodeChunk *dead;
 	
@@ -391,44 +318,51 @@ free_chunklist (CodeChunk *chunk)
 #define valgrind_unregister(x)
 #endif
 
+	if (!chunk)
+		return;
+
+	const int flags = mono_codeman_allocation_type (cman);
+
 	for (; chunk; ) {
 		dead = chunk;
-		mono_profiler_code_chunk_destroy ((gpointer) dead->data);
+		MONO_PROFILER_RAISE (jit_chunk_destroyed, ((mono_byte *) dead->data));
+		if (code_manager_callbacks)
+			code_manager_callbacks->chunk_destroy (dead->data);
 		chunk = chunk->next;
-		if (dead->flags == CODE_FLAG_MMAP) {
+		if (flags == CODE_FLAG_MMAP) {
 			codechunk_vfree (dead->data, dead->size);
 			/* valgrind_unregister(dead->data); */
-		} else if (dead->flags == CODE_FLAG_MALLOC) {
-			dlfree (dead->data);
+		} else if (flags == CODE_FLAG_MALLOC) {
+			mono_codeman_free (dead->data);
 		}
 		code_memory_used -= dead->size;
-		free (dead);
+		g_free (dead);
 	}
 }
 
 /**
  * mono_code_manager_destroy:
- * @cman: a code manager
- *
- * Free all the memory associated with the code manager @cman.
+ * \param cman a code manager
+ * Free all the memory associated with the code manager \p cman.
  */
 void
 mono_code_manager_destroy (MonoCodeManager *cman)
 {
-	free_chunklist (cman->full);
-	free_chunklist (cman->current);
-	free (cman);
+	if (!cman)
+		return;
+	free_chunklist (cman, cman->full);
+	free_chunklist (cman, cman->current);
+	g_free (cman);
 }
 
 /**
  * mono_code_manager_invalidate:
- * @cman: a code manager
- *
+ * \param cman a code manager
  * Fill all the memory with an invalid native code value
  * so that any attempt to execute code allocated in the code
- * manager @cman will fail. This is used for debugging purposes.
+ * manager \p cman will fail. This is used for debugging purposes.
  */
-void             
+void
 mono_code_manager_invalidate (MonoCodeManager *cman)
 {
 	CodeChunk *chunk;
@@ -447,11 +381,10 @@ mono_code_manager_invalidate (MonoCodeManager *cman)
 
 /**
  * mono_code_manager_set_read_only:
- * @cman: a code manager
- *
+ * \param cman a code manager
  * Make the code manager read only, so further allocation requests cause an assert.
  */
-void             
+void
 mono_code_manager_set_read_only (MonoCodeManager *cman)
 {
 	cman->read_only = TRUE;
@@ -459,12 +392,11 @@ mono_code_manager_set_read_only (MonoCodeManager *cman)
 
 /**
  * mono_code_manager_foreach:
- * @cman: a code manager
- * @func: a callback function pointer
- * @user_data: additional data to pass to @func
- *
- * Invokes the callback @func for each different chunk of memory allocated
- * in the code manager @cman.
+ * \param cman a code manager
+ * \param func a callback function pointer
+ * \param user_data additional data to pass to \p func
+  * Invokes the callback \p func for each different chunk of memory allocated
+ * in the code manager \p cman.
  */
 void
 mono_code_manager_foreach (MonoCodeManager *cman, MonoCodeManagerFunc func, void *user_data)
@@ -480,7 +412,7 @@ mono_code_manager_foreach (MonoCodeManager *cman, MonoCodeManagerFunc func, void
 	}
 }
 
-/* BIND_ROOM is the divisor for the chunck of code size dedicated
+/* BIND_ROOM is the divisor for the chunk of code size dedicated
  * to binding branches (branches not reachable with the immediate displacement)
  * bind_size = size/BIND_ROOM;
  * we should reduce it and make MIN_PAGES bigger for such systems
@@ -493,25 +425,22 @@ mono_code_manager_foreach (MonoCodeManager *cman, MonoCodeManagerFunc func, void
 #endif
 
 static CodeChunk*
-new_codechunk (CodeChunk *last, int dynamic, int size)
+new_codechunk (MonoCodeManager *cman, int size)
 {
-	int minsize, flags = CODE_FLAG_MMAP;
+	CodeChunk * const last = cman->last;
+	int const dynamic = cman->dynamic;
 	int chunk_size, bsize = 0;
-	int pagesize;
 	CodeChunk *chunk;
 	void *ptr;
 
-#ifdef FORCE_MALLOC
-	flags = CODE_FLAG_MALLOC;
-#endif
-
-	pagesize = mono_pagesize ();
+	const int flags = mono_codeman_allocation_type (cman);
+	const int pagesize = mono_pagesize ();
+	const int valloc_granule = mono_valloc_granule ();
 
 	if (dynamic) {
 		chunk_size = size;
-		flags = CODE_FLAG_MALLOC;
 	} else {
-		minsize = pagesize * MIN_PAGES;
+		const int minsize = MAX (pagesize * MIN_PAGES, valloc_granule);
 		if (size < minsize)
 			chunk_size = minsize;
 		else {
@@ -521,8 +450,8 @@ new_codechunk (CodeChunk *last, int dynamic, int size)
 			size += MIN_ALIGN - 1;
 			size &= ~(MIN_ALIGN - 1);
 			chunk_size = size;
-			chunk_size += pagesize - 1;
-			chunk_size &= ~ (pagesize - 1);
+			chunk_size += valloc_granule - 1;
+			chunk_size &= ~ (valloc_granule - 1);
 		}
 	}
 #ifdef BIND_ROOM
@@ -538,14 +467,14 @@ new_codechunk (CodeChunk *last, int dynamic, int size)
 	if (chunk_size - size < bsize) {
 		chunk_size = size + bsize;
 		if (!dynamic) {
-			chunk_size += pagesize - 1;
-			chunk_size &= ~ (pagesize - 1);
+			chunk_size += valloc_granule - 1;
+			chunk_size &= ~ (valloc_granule - 1);
 		}
 	}
 #endif
 
 	if (flags == CODE_FLAG_MALLOC) {
-		ptr = dlmemalign (MIN_ALIGN, chunk_size + MIN_ALIGN - 1);
+		ptr = mono_codeman_malloc (chunk_size + MIN_ALIGN - 1);
 		if (!ptr)
 			return NULL;
 	} else {
@@ -559,28 +488,32 @@ new_codechunk (CodeChunk *last, int dynamic, int size)
 			return NULL;
 	}
 
-	if (flags == CODE_FLAG_MALLOC) {
 #ifdef BIND_ROOM
+	if (flags == CODE_FLAG_MALLOC) {
 		/* Make sure the thunks area is zeroed */
+		mono_codeman_enable_write ();
 		memset (ptr, 0, bsize);
-#endif
+		mono_codeman_disable_write ();
 	}
+#endif
 
-	chunk = (CodeChunk *) malloc (sizeof (CodeChunk));
+	chunk = (CodeChunk *) g_malloc (sizeof (CodeChunk));
 	if (!chunk) {
 		if (flags == CODE_FLAG_MALLOC)
-			dlfree (ptr);
+			mono_codeman_free (ptr);
 		else
-			mono_vfree (ptr, chunk_size);
+			mono_vfree (ptr, chunk_size, MONO_MEM_ACCOUNT_CODE);
 		return NULL;
 	}
 	chunk->next = NULL;
 	chunk->size = chunk_size;
 	chunk->data = (char *) ptr;
-	chunk->flags = flags;
+	chunk->reserved = 0;
 	chunk->pos = bsize;
 	chunk->bsize = bsize;
-	mono_profiler_code_chunk_new((gpointer) chunk->data, chunk->size);
+	if (code_manager_callbacks)
+		code_manager_callbacks->chunk_new (chunk->data, chunk->size);
+	MONO_PROFILER_RAISE (jit_chunk_created, ((mono_byte *) chunk->data, chunk->size));
 
 	code_memory_used += chunk_size;
 	mono_runtime_resource_check_limit (MONO_RESOURCE_JIT_CODE, code_memory_used);
@@ -589,19 +522,16 @@ new_codechunk (CodeChunk *last, int dynamic, int size)
 }
 
 /**
- * mono_code_manager_reserve:
- * @cman: a code manager
- * @size: size of memory to allocate
- * @alignment: power of two alignment value
- *
- * Allocates at least @size bytes of memory inside the code manager @cman.
- *
- * Returns: the pointer to the allocated memory or #NULL on failure
+ * mono_code_manager_reserve_align:
+ * \param cman a code manager
+ * \param size size of memory to allocate
+ * \param alignment power of two alignment value
+ * Allocates at least \p size bytes of memory inside the code manager \p cman.
+ * \returns the pointer to the allocated memory or NULL on failure
  */
 void*
 mono_code_manager_reserve_align (MonoCodeManager *cman, int size, int alignment)
 {
-#if !defined(__native_client__) || !defined(__native_client_codegen__)
 	CodeChunk *chunk, *prev;
 	void *ptr;
 	guint32 align_mask = alignment - 1;
@@ -619,7 +549,7 @@ mono_code_manager_reserve_align (MonoCodeManager *cman, int size, int alignment)
 	}
 
 	if (!cman->current) {
-		cman->current = new_codechunk (cman->last, cman->dynamic, size);
+		cman->current = new_codechunk (cman, size);
 		if (!cman->current)
 			return NULL;
 		cman->last = cman->current;
@@ -652,7 +582,7 @@ mono_code_manager_reserve_align (MonoCodeManager *cman, int size, int alignment)
 		cman->full = chunk;
 		break;
 	}
-	chunk = new_codechunk (cman->last, cman->dynamic, size);
+	chunk = new_codechunk (cman, size);
 	if (!chunk)
 		return NULL;
 	chunk->next = cman->current;
@@ -664,41 +594,14 @@ mono_code_manager_reserve_align (MonoCodeManager *cman, int size, int alignment)
 	ptr = (void*)((((uintptr_t)chunk->data + align_mask) & ~(uintptr_t)align_mask) + chunk->pos);
 	chunk->pos = ((char*)ptr - chunk->data) + size;
 	return ptr;
-#else
-	unsigned char *temp_ptr, *code_ptr;
-	/* Round up size to next bundle */
-	alignment = kNaClBundleSize;
-	size = (size + kNaClBundleSize) & (~kNaClBundleMask);
-	/* Allocate a temp buffer */
-	temp_ptr = memalign (alignment, size);
-	g_assert (((uintptr_t)temp_ptr & kNaClBundleMask) == 0);
-	/* Allocate code space from the service runtime */
-	code_ptr = allocate_code (size);
-	/* Insert pointer to code space in hash, keyed by buffer ptr */
-	g_hash_table_insert (cman->hash, temp_ptr, code_ptr);
-
-#ifndef USE_JUMP_TABLES
-	nacl_jit_check_init ();
-
-	patch_current_depth++;
-	patch_source_base[patch_current_depth] = temp_ptr;
-	patch_dest_base[patch_current_depth] = code_ptr;
-	patch_alloc_size[patch_current_depth] = size;
-	g_assert (patch_current_depth < kMaxPatchDepth);
-#endif
-
-	return temp_ptr;
-#endif
 }
 
 /**
  * mono_code_manager_reserve:
- * @cman: a code manager
- * @size: size of memory to allocate
- *
- * Allocates at least @size bytes of memory inside the code manager @cman.
- *
- * Returns: the pointer to the allocated memory or #NULL on failure
+ * \param cman a code manager
+ * \param size size of memory to allocate
+ * Allocates at least \p size bytes of memory inside the code manager \p cman.
+ * \returns the pointer to the allocated memory or NULL on failure
  */
 void*
 mono_code_manager_reserve (MonoCodeManager *cman, int size)
@@ -708,11 +611,10 @@ mono_code_manager_reserve (MonoCodeManager *cman, int size)
 
 /**
  * mono_code_manager_commit:
- * @cman: a code manager
- * @data: the pointer returned by mono_code_manager_reserve ()
- * @size: the size requested in the call to mono_code_manager_reserve ()
- * @newsize: the new size to reserve
- *
+ * \param cman a code manager
+ * \param data the pointer returned by mono_code_manager_reserve ()
+ * \param size the size requested in the call to mono_code_manager_reserve ()
+ * \param newsize the new size to reserve
  * If we reserved too much room for a method and we didn't allocate
  * already from the code manager, we can get back the excess allocation
  * for later use in the code manager.
@@ -720,61 +622,21 @@ mono_code_manager_reserve (MonoCodeManager *cman, int size)
 void
 mono_code_manager_commit (MonoCodeManager *cman, void *data, int size, int newsize)
 {
-#if !defined(__native_client__) || !defined(__native_client_codegen__)
 	g_assert (newsize <= size);
 
 	if (cman->current && (size != newsize) && (data == cman->current->data + cman->current->pos - size)) {
 		cman->current->pos -= size - newsize;
 	}
-#else
-	unsigned char *code;
-	int status;
-	g_assert (NACL_BUNDLE_ALIGN_UP(newsize) <= size);
-	code = g_hash_table_lookup (cman->hash, data);
-	g_assert (code != NULL);
-	mono_nacl_fill_code_buffer ((uint8_t*)data + newsize, size - newsize);
-	newsize = NACL_BUNDLE_ALIGN_UP(newsize);
-	g_assert ((GPOINTER_TO_UINT (data) & kNaClBundleMask) == 0);
-	g_assert ((newsize & kNaClBundleMask) == 0);
-	status = nacl_dyncode_create (code, data, newsize);
-	if (status != 0) {
-		unsigned char *codep;
-		fprintf(stderr, "Error creating Native Client dynamic code section attempted to be\n"
-		                "emitted at %p (hex dissasembly of code follows):\n", code);
-		for (codep = data; codep < data + newsize; codep++)
-			fprintf(stderr, "%02x ", *codep);
-		fprintf(stderr, "\n");
-		g_assert_not_reached ();
-	}
-	g_hash_table_remove (cman->hash, data);
-# ifndef USE_JUMP_TABLES
-	g_assert (data == patch_source_base[patch_current_depth]);
-	g_assert (code == patch_dest_base[patch_current_depth]);
-	patch_current_depth--;
-	g_assert (patch_current_depth >= -1);
-# endif
-	free (data);
-#endif
 }
-
-#if defined(__native_client_codegen__) && defined(__native_client__)
-void *
-nacl_code_manager_get_code_dest (MonoCodeManager *cman, void *data)
-{
-	return g_hash_table_lookup (cman->hash, data);
-}
-#endif
 
 /**
  * mono_code_manager_size:
- * @cman: a code manager
- * @used_size: pointer to an integer for the result
- *
+ * \param cman a code manager
+ * \param used_size pointer to an integer for the result
  * This function can be used to get statistics about a code manager:
- * the integer pointed to by @used_size will contain how much
- * memory is actually used inside the code managed @cman.
- *
- * Returns: the amount of memory allocated in @cman
+ * the integer pointed to by \p used_size will contain how much
+ * memory is actually used inside the code managed \p cman.
+ * \returns the amount of memory allocated in \p cman
  */
 int
 mono_code_manager_size (MonoCodeManager *cman, int *used_size)
@@ -795,26 +657,42 @@ mono_code_manager_size (MonoCodeManager *cman, int *used_size)
 	return size;
 }
 
-#ifdef __native_client_codegen__
-# if defined(TARGET_ARM)
-/* Fill empty space with UDF instruction used as halt on ARM. */
+/*
+ * mono_codeman_enable_write ():
+ *
+ *   Enable writing to code memory on the current thread on platforms that need it.
+ * Calls can be nested.
+ */
 void
-mono_nacl_fill_code_buffer (guint8 *data, int size)
+mono_codeman_enable_write (void)
 {
-        guint32* data32 = (guint32*)data;
-        int i;
-        g_assert(size % 4 == 0);
-        for (i = 0; i < size / 4; i++)
-                data32[i] = 0xE7FEDEFF;
-}
-# elif (defined(TARGET_X86) || defined(TARGET_AMD64))
-/* Fill empty space with HLT instruction */
-void
-mono_nacl_fill_code_buffer(guint8 *data, int size)
-{
-        memset (data, 0xf4, size);
-}
-# else
-#  error "Not ported"
-# endif
+#if defined(HAVE_PTHREAD_JIT_WRITE_PROTECT_NP) && defined(TARGET_OSX)
+	if (__builtin_available (macOS 11, *)) {
+		int level = GPOINTER_TO_INT (mono_native_tls_get_value (write_level_tls_id));
+		level ++;
+		mono_native_tls_set_value (write_level_tls_id, GINT_TO_POINTER (level));
+		pthread_jit_write_protect_np (0);
+	}
 #endif
+}
+
+/*
+ * mono_codeman_disable_write ():
+ *
+ *   Disable writing to code memory on the current thread on platforms that need it.
+ * Calls can be nested.
+ */
+void
+mono_codeman_disable_write (void)
+{
+#if defined(HAVE_PTHREAD_JIT_WRITE_PROTECT_NP) && defined(TARGET_OSX)
+	if (__builtin_available (macOS 11, *)) {
+		int level = GPOINTER_TO_INT (mono_native_tls_get_value (write_level_tls_id));
+		g_assert (level);
+		level --;
+		mono_native_tls_set_value (write_level_tls_id, GINT_TO_POINTER (level));
+		if (level == 0)
+			pthread_jit_write_protect_np (1);
+	}
+#endif
+}

@@ -5,7 +5,6 @@ using System.Net;
 using System.Diagnostics;
 using System.Collections;
 using System.Collections.Generic;
-using Mono.Cecil.Metadata;
 
 namespace Mono.Debugger.Soft
 {
@@ -110,6 +109,21 @@ namespace Mono.Debugger.Soft
 			}
 		}
 
+		public EventSet GetNextEventSet (int timeoutInMilliseconds) {
+			lock (queue_monitor) {
+				if (queue.Count == 0) {
+					if (!Monitor.Wait (queue_monitor, timeoutInMilliseconds)) {
+						return null;
+					}
+				}
+
+				current_es = null;
+				current_es_index = 0;
+
+				return (EventSet)queue.Dequeue ();
+			}
+		}
+
 		[Obsolete ("Use GetNextEventSet () instead")]
 		public T GetNextEvent<T> () where T : Event {
 			return GetNextEvent () as T;
@@ -136,7 +150,10 @@ namespace Mono.Debugger.Soft
 		}
 
 		public void Detach () {
+			// Notify the application that we are detaching
 			conn.VM_Dispose ();
+			// Close the connection. No further messages can be sent
+			// over the connection after this point.
 			conn.Close ();
 			notify_vm_event (EventType.VMDisconnect, SuspendPolicy.None, 0, 0, null, 0);
 		}
@@ -154,8 +171,7 @@ namespace Mono.Debugger.Soft
 
 		HashSet<ThreadMirror> threadsToInvalidate = new HashSet<ThreadMirror> ();
 		ThreadMirror[] threadCache;
-		object threadCacheLocker = new object ();
-
+		
 		void InvalidateThreadAndFrameCaches () {
 			lock (threadsToInvalidate) {
 				foreach (var thread in threadsToInvalidate)
@@ -183,7 +199,7 @@ namespace Mono.Debugger.Soft
 				var fetchingEvent = new ManualResetEvent (false);
 				vm.conn.VM_GetThreads ((threadsIds) => {
 					ids = threadsIds;
-					threadCache = threads = new ThreadMirror [threadsIds.Length];
+					threads = new ThreadMirror [threadsIds.Length];
 					fetchingEvent.Set ();
 				});
 				if (WaitHandle.WaitAny (new []{ vm.conn.DisconnectedEvent, fetchingEvent }) == 0) {
@@ -198,6 +214,8 @@ namespace Mono.Debugger.Soft
 				//if (threadCache != threads) {//While fetching threads threadCache was invalidated(thread was created/destoyed)
 				//	return GetThreads ();
 				//}
+				Thread.MemoryBarrier ();
+				threadCache = threads;
 				return threads;
 			} else {
 				return threads;
@@ -261,6 +279,13 @@ namespace Mono.Debugger.Soft
 
 		public ExceptionEventRequest CreateExceptionRequest (TypeMirror exc_type, bool caught, bool uncaught) {
 			return new ExceptionEventRequest (this, exc_type, caught, uncaught);
+		}
+
+		public ExceptionEventRequest CreateExceptionRequest (TypeMirror exc_type, bool caught, bool uncaught, bool everything_else) {
+			if (Version.AtLeast (2, 54))
+				return new ExceptionEventRequest (this, exc_type, caught, uncaught, true, everything_else);
+			else
+				return new ExceptionEventRequest (this, exc_type, caught, uncaught);
 		}
 
 		public AssemblyLoadEventRequest CreateAssemblyLoadRequest () {
@@ -347,7 +372,7 @@ namespace Mono.Debugger.Soft
 			case ErrorCode.NO_SEQ_POINT_AT_IL_OFFSET:
 				throw new ArgumentException ("Cannot set breakpoint on the specified IL offset.");
 			default:
-				throw new CommandException (args.ErrorCode);
+				throw new CommandException (args.ErrorCode, args.ErrorMessage);
 			}
 		}
 
@@ -522,43 +547,65 @@ namespace Mono.Debugger.Soft
 		Dictionary <long, ObjectMirror> objects;
 		object objects_lock = new object ();
 
-		internal T GetObject<T> (long id, long domain_id, long type_id) where T : ObjectMirror {
+		// Return a mirror if it exists
+		// Does not call into the debuggee
+		internal T TryGetObject<T> (long id) where T : ObjectMirror {
 			lock (objects_lock) {
 				if (objects == null)
 					objects = new Dictionary <long, ObjectMirror> ();
 				ObjectMirror obj;
-				if (!objects.TryGetValue (id, out obj)) {
-					/*
-					 * Obtain the domain/type of the object to determine the type of
-					 * object we need to create.
-					 */
-					if (domain_id == 0 || type_id == 0) {
-						if (conn.Version.AtLeast (2, 5)) {
-							var info = conn.Object_GetInfo (id);
-							domain_id = info.domain_id;
-							type_id = info.type_id;
-						} else {
-							if (domain_id == 0)
-								domain_id = conn.Object_GetDomain (id);
-							if (type_id == 0)
-								type_id = conn.Object_GetType (id);
-						}
-					}
-					AppDomainMirror d = GetDomain (domain_id);
-					TypeMirror t = GetType (type_id);
-
-					if (t.Assembly == d.Corlib && t.Namespace == "System.Threading" && t.Name == "Thread")
-						obj = new ThreadMirror (this, id, t, d);
-					else if (t.Assembly == d.Corlib && t.Namespace == "System" && t.Name == "String")
-						obj = new StringMirror (this, id, t, d);
-					else if (typeof (T) == typeof (ArrayMirror))
-						obj = new ArrayMirror (this, id, t, d);
-					else
-						obj = new ObjectMirror (this, id, t, d);
-					objects [id] = obj;
-				}
+				objects.TryGetValue (id, out obj);
 				return (T)obj;
 			}
+		}
+
+		internal T GetObject<T> (long id, long domain_id, long type_id) where T : ObjectMirror {
+			ObjectMirror obj = null;
+			lock (objects_lock) {
+				if (objects == null)
+					objects = new Dictionary <long, ObjectMirror> ();
+				objects.TryGetValue (id, out obj);
+			}
+
+			if (obj == null) {
+				/*
+				 * Obtain the domain/type of the object to determine the type of
+				 * object we need to create. Do this outside the lock.
+				 */
+				if (domain_id == 0 || type_id == 0) {
+					if (conn.Version.AtLeast (2, 5)) {
+						var info = conn.Object_GetInfo (id);
+						domain_id = info.domain_id;
+						type_id = info.type_id;
+					} else {
+						if (domain_id == 0)
+							domain_id = conn.Object_GetDomain (id);
+						if (type_id == 0)
+							type_id = conn.Object_GetType (id);
+					}
+				}
+				AppDomainMirror d = GetDomain (domain_id);
+				TypeMirror t = GetType (type_id);
+
+				if (t.Assembly == d.Corlib && t.Namespace == "System.Threading" && t.Name == "Thread")
+					obj = new ThreadMirror (this, id, t, d);
+				else if (t.Assembly == d.Corlib && t.Namespace == "System" && t.Name == "String")
+					obj = new StringMirror (this, id, t, d);
+				else if (typeof (T) == typeof (ArrayMirror))
+					obj = new ArrayMirror (this, id, t, d);
+				else
+					obj = new ObjectMirror (this, id, t, d);
+
+				// Publish
+				lock (objects_lock) {
+					ObjectMirror prev_obj;
+					if (objects.TryGetValue (id, out prev_obj))
+						obj = prev_obj;
+					else
+						objects [id] = obj;
+				}
+			}
+			return (T)obj;
 	    }
 
 		internal T GetObject<T> (long id) where T : ObjectMirror {
@@ -571,6 +618,10 @@ namespace Mono.Debugger.Soft
 
 		internal ThreadMirror GetThread (long id) {
 			return GetObject <ThreadMirror> (id);
+		}
+
+		internal ThreadMirror TryGetThread (long id) {
+			return TryGetObject <ThreadMirror> (id);
 		}
 
 		Dictionary <long, FieldInfoMirror> fields;
@@ -607,7 +658,9 @@ namespace Mono.Debugger.Soft
 
 		internal EventRequest GetRequest (int id) {
 			lock (requests_lock) {
-				return requests [id];
+				EventRequest obj;
+				requests.TryGetValue (id, out obj);
+				return obj;
 			}
 		}
 
@@ -616,8 +669,11 @@ namespace Mono.Debugger.Soft
 		}
 
 		internal Value DecodeValue (ValueImpl v, Dictionary<int, Value> parent_vtypes) {
-			if (v.Value != null)
+			if (v.Value != null) {
+				if (Version.AtLeast (2, 46) && (v.Type == ElementType.Ptr || v.Type == ElementType.FnPtr))
+					return new PointerValue(this, GetType(v.Klass), (long)v.Value);
 				return new PrimitiveValue (this, v.Value);
+			}
 
 			switch (v.Type) {
 			case ElementType.Void:
@@ -665,7 +721,7 @@ namespace Mono.Debugger.Soft
 			return res;
 		}
 
-		internal ValueImpl EncodeValue (Value v) {
+		internal ValueImpl EncodeValue (Value v, List<Value> duplicates = null) {
 			if (v is PrimitiveValue) {
 				object val = (v as PrimitiveValue).Value;
 				if (val == null)
@@ -675,16 +731,61 @@ namespace Mono.Debugger.Soft
 			} else if (v is ObjectMirror) {
 				return new ValueImpl { Type = ElementType.Object, Objid = (v as ObjectMirror).Id };
 			} else if (v is StructMirror) {
-				return new ValueImpl { Type = ElementType.ValueType, Klass = (v as StructMirror).Type.Id, Fields = EncodeValues ((v as StructMirror).Fields) };
+				if (duplicates == null)
+					duplicates = new List<Value> ();
+				if (duplicates.Contains (v))
+					return new ValueImpl { Type = (ElementType)ValueTypeId.VALUE_TYPE_ID_NULL, Objid = 0 };
+				duplicates.Add (v);
+
+				return new ValueImpl { Type = ElementType.ValueType, Klass = (v as StructMirror).Type.Id, Fields = EncodeFieldValues ((v as StructMirror).Fields, (v as StructMirror).Type.GetFields (), duplicates, 1) };
+			} else if (v is PointerValue) {
+				PointerValue val = (PointerValue)v;
+				return new ValueImpl { Type = ElementType.Ptr, Klass = val.Type.Id, Value = val.Address };
 			} else {
-				throw new NotSupportedException ();
+				throw new NotSupportedException ("Value of type " + v.GetType());
 			}
 		}
 
-		internal ValueImpl[] EncodeValues (IList<Value> values) {
+		internal ValueImpl EncodeValueFixedSize (Value v, List<Value> duplicates, int len_fixed_size) {
+			if (v is PrimitiveValue) {
+				object val = (v as PrimitiveValue).Value;
+				if (val == null)
+					return new ValueImpl { Type = (ElementType)ValueTypeId.VALUE_TYPE_ID_NULL, Objid = 0 };
+				else
+					return new ValueImpl { Value = val , FixedSize = len_fixed_size};
+			} else if (v is ObjectMirror) {
+				return new ValueImpl { Type = ElementType.Object, Objid = (v as ObjectMirror).Id };
+			} else if (v is StructMirror) {
+				if (duplicates == null)
+					duplicates = new List<Value> ();
+				if (duplicates.Contains (v))
+					return new ValueImpl { Type = (ElementType)ValueTypeId.VALUE_TYPE_ID_NULL, Objid = 0 };
+				duplicates.Add (v);
+
+				return new ValueImpl { Type = ElementType.ValueType, Klass = (v as StructMirror).Type.Id, Fields = EncodeFieldValues ((v as StructMirror).Fields, (v as StructMirror).Type.GetFields (), duplicates, len_fixed_size) };
+			} else if (v is PointerValue) {
+				PointerValue val = (PointerValue)v;
+				return new ValueImpl { Type = ElementType.Ptr, Klass = val.Type.Id, Value = val.Address };
+			} else {
+				throw new NotSupportedException ("Value of type " + v.GetType());
+			}
+		}
+
+		internal ValueImpl[] EncodeValues (IList<Value> values, List<Value> duplicates = null) {
 			ValueImpl[] res = new ValueImpl [values.Count];
 			for (int i = 0; i < values.Count; ++i)
-				res [i] = EncodeValue (values [i]);
+				res [i] = EncodeValue (values [i], duplicates);
+			return res;
+		}
+
+		internal ValueImpl[] EncodeFieldValues (IList<Value> values, FieldInfoMirror[] field_info, List<Value> duplicates, int fixedSize) {
+			ValueImpl[] res = new ValueImpl [values.Count];
+			for (int i = 0; i < values.Count; ++i) {
+				if (fixedSize > 1 || field_info [i].FixedSize > 1)
+					res [i] = EncodeValueFixedSize (values [i], duplicates, fixedSize > 1 ? fixedSize : field_info [i].FixedSize);
+				else
+					res [i] = EncodeValue (values [i], duplicates);
+			}
 			return res;
 		}
 
@@ -724,6 +825,11 @@ namespace Mono.Debugger.Soft
 					l.Add (new ThreadStartEvent (vm, req_id, id));
 					break;
 				case EventType.ThreadDeath:
+					// Avoid calling GetThread () since it might call into the debuggee
+					// and we can't do that in the event handler
+					var thread = vm.TryGetThread (id);
+					if (thread != null)
+						thread.InvalidateFrames ();
 					vm.InvalidateThreadCache ();
 					l.Add (new ThreadDeathEvent (vm, req_id, id));
 					break;
@@ -765,6 +871,9 @@ namespace Mono.Debugger.Soft
 				case EventType.UserLog:
 					l.Add (new UserLogEvent (vm, req_id, thread_id, ei.Level, ei.Category, ei.Message));
 					break;
+				case EventType.Crash:
+					l.Add (new CrashEvent (vm, req_id, thread_id, ei.Dump, ei.Hash));
+					break;
 				}
 			}
 			
@@ -779,12 +888,17 @@ namespace Mono.Debugger.Soft
 
 	public class CommandException : Exception {
 
-		internal CommandException (ErrorCode error_code) : base ("Debuggee returned error code " + error_code + ".") {
+		internal CommandException (ErrorCode error_code, string error_message) : base ("Debuggee returned error code " + error_code + (error_message == null || error_message.Length == 0 ? "." : " - " + error_message + ".")) {
 			ErrorCode = error_code;
+			ErrorMessage = error_message;
 		}
 
 		public ErrorCode ErrorCode {
 			get; set;
+		}
+
+		public string ErrorMessage {
+			get; internal set;
 		}
 	}
 

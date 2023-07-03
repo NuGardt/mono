@@ -1,6 +1,5 @@
 using System;
 using Mono.Debugger;
-using Mono.Cecil;
 
 namespace Mono.Debugger.Soft
 {
@@ -62,5 +61,22 @@ namespace Mono.Debugger.Soft
 		}
 
 		// FIXME: Add function to query the guid, check in Metadata
-    }
+
+		// Since protocol version 2.48
+		public string SourceLink {
+			get {
+				vm.CheckProtocolVersion (2, 48);
+				ReadInfo ();
+				return info.SourceLink;
+			}
+		}
+
+		// Apply a hot reload delta to the current module
+		// Since protocol version 2.60
+		public void ApplyChanges (ArrayMirror dmeta, ArrayMirror dIL, Value dPDB) {
+		    /* dPDB is Value because it can be ArrayMirror or PrimitiveValue (vm, null) */
+		    vm.CheckProtocolVersion (2, 60);
+		    vm.conn.Module_ApplyChanges (id, dmeta.Id, dIL.Id, dPDB.Id);
+		}
+	}
 }

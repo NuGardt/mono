@@ -27,7 +27,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Collections;
@@ -44,9 +44,6 @@ namespace System.Reflection.Emit
 	abstract partial class SymbolType
 	{
 		internal Type m_baseType;
-
-		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		static extern void create_unmanaged_type (Type type);
 
 		internal SymbolType (Type elementType)
 		{
@@ -121,7 +118,6 @@ namespace System.Reflection.Emit
 	
 		public override Type UnderlyingSystemType {
 			get {
-				create_unmanaged_type (this);
 				return this;
 			}
 		}
@@ -130,6 +126,11 @@ namespace System.Reflection.Emit
 			get {
 				return m_baseType.IsUserType;
 			}
+		}
+
+		// Called from the runtime to return the corresponding finished Type object
+		internal override Type RuntimeResolve () {
+			return InternalResolve ();
 		}
 	}
 
@@ -150,9 +151,17 @@ namespace System.Reflection.Emit
 
 		internal override Type InternalResolve ()
 		{
-			Type et = m_baseType.InternalResolve (); 
+			Type et = m_baseType.InternalResolve ();
 			if (rank == 0)
-				return et.MakeArrayType ();			
+				return et.MakeArrayType ();
+			return et.MakeArrayType (rank);
+		}
+
+		internal override Type RuntimeResolve ()
+		{
+			Type et = m_baseType.RuntimeResolve ();
+			if (rank == 0)
+				return et.MakeArrayType ();
 			return et.MakeArrayType (rank);
 		}
 

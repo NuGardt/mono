@@ -50,11 +50,17 @@ namespace System.Windows.Forms
 			SetStyle (ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint, true);
 			SetStyle (ControlStyles.ResizeRedraw, true);
 
+			SetTopLevel (true);
+
+			SuspendLayout ();
+			this.LayoutStyle = ToolStripLayoutStyle.Flow;
 			this.auto_close = true;
 			is_visible = false;
 			this.DefaultDropDownDirection = ToolStripDropDownDirection.Right;
 			this.GripStyle = ToolStripGripStyle.Hidden;
 			this.is_toplevel = true;
+			this.AutoSize = true;
+			ResumeLayout (false);
 		}
 		#endregion
 
@@ -369,6 +375,8 @@ namespace System.Windows.Forms
 			// Recursive hide all child dropdowns
 			foreach (ToolStripItem tsi in this.Items)
 				tsi.Dismiss (reason);
+
+			SetOwnerControl (null);
 			
 			this.OnClosed (new ToolStripDropDownClosedEventArgs (reason));
 		}
@@ -377,26 +385,36 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Never)]
 		public new void Show ()
 		{
-			Show (Location, DefaultDropDownDirection);
+			Show (Location);
+		}
+
+		public void Show (int x, int y)
+		{
+			Show (new Point (x, y));
 		}
 		
 		public void Show (Point screenLocation)
 		{
+			SetOwnerControl (null);
 			Show (screenLocation, DefaultDropDownDirection);
 		}
-		
+
+		public void Show (Control control, int x, int y)
+		{
+			Show (control, new Point (x, y));
+		}
+
 		public void Show (Control control, Point position)
+		{
+			Show (control, position, DefaultDropDownDirection);
+		}
+		
+		public void Show (Control control, Point position, ToolStripDropDownDirection direction)
 		{
 			if (control == null)
 				throw new ArgumentNullException ("control");
-			
-			XplatUI.SetOwner (Handle, control.Handle);
-			Show (control.PointToScreen (position), DefaultDropDownDirection);
-		}
-		
-		public void Show (int x, int y)
-		{
-			Show (new Point (x, y), DefaultDropDownDirection);
+			SetOwnerControl (control);
+			Show (control.PointToScreen (position), direction);
 		}
 		
 		public void Show (Point position, ToolStripDropDownDirection direction)
@@ -516,26 +534,17 @@ namespace System.Windows.Forms
 
 			this.OnOpened (EventArgs.Empty);
 		}
-		
-		public void Show (Control control, int x, int y)
-		{
-			if (control == null)
-				throw new ArgumentNullException ("control");
 
-			Show (control, new Point (x, y));
-		}
-		
-		public void Show (Control control, Point position, ToolStripDropDownDirection direction)
-		{
-			if (control == null)
-				throw new ArgumentNullException ("control");
-
-			XplatUI.SetOwner (Handle, control.Handle);
-			Show (control.PointToScreen (position), direction);
-		}
 		#endregion
 
 		#region Protected Methods
+
+		protected virtual void SetOwnerControl (Control ownerControl)
+		{
+			var ownerControlHandle = (ownerControl == null) ? IntPtr.Zero : ownerControl.Handle;
+			XplatUI.SetOwner (Handle, ownerControlHandle);
+		}
+
 		protected override AccessibleObject CreateAccessibilityInstance ()
 		{
 			return new ToolStripDropDownAccessibleObject (this);
@@ -548,7 +557,11 @@ namespace System.Windows.Forms
 
 		protected override LayoutSettings CreateLayoutSettings (ToolStripLayoutStyle style)
 		{
-			return base.CreateLayoutSettings (style);
+			LayoutSettings layout_settings = base.CreateLayoutSettings (style);
+			if (style == ToolStripLayoutStyle.Flow) {
+				((FlowLayoutSettings)layout_settings).FlowDirection = FlowDirection.TopDown;
+			}
+			return layout_settings;
 		}
 		
 		protected override void Dispose (bool disposing)
@@ -585,49 +598,9 @@ namespace System.Windows.Forms
 
 		protected override void OnLayout (LayoutEventArgs e)
 		{
-			// Find the widest menu item, so we know how wide to make our dropdown
-			int widest = 0;
-
-			foreach (ToolStripItem tsi in this.Items) {
-				if (!tsi.Available) 
-					continue;
-					
-				tsi.SetPlacement (ToolStripItemPlacement.Main);
-				
-				widest = Math.Max (widest, tsi.GetPreferredSize (Size.Empty).Width + tsi.Margin.Horizontal);
-			}
-			
-			// Add any padding our dropdown has set
-			widest += this.Padding.Horizontal;
-			
-			int x = this.Padding.Left;
-			int y = this.Padding.Top;
-
-			foreach (ToolStripItem tsi in this.Items) {
-				if (!tsi.Available)
-					continue;
-
-				y += tsi.Margin.Top;
-
-				int height = 0;
-
-				Size preferred_size = tsi.GetPreferredSize (Size.Empty);
-
-				if (preferred_size.Height > 22)
-					height = preferred_size.Height;
-				else if (tsi is ToolStripSeparator)
-					height = 7;
-				else
-					height = 22;
-
-				tsi.SetBounds (new Rectangle (x, y, preferred_size.Width, height));
-				y += height + tsi.Margin.Bottom;
-			}
-
-			this.Size = new Size (widest, y + this.Padding.Bottom);
-			this.SetDisplayedItems ();
-			this.OnLayoutCompleted (EventArgs.Empty);
-			this.Invalidate ();
+			if (AutoSize)
+				this.Size = GetPreferredSize (Size.Empty);
+			base.OnLayout (e);
 		}
 
 		protected override void OnMouseUp (MouseEventArgs mea)

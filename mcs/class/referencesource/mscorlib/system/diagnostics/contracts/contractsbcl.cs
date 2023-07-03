@@ -7,7 +7,7 @@
 **
 ** Class:  Contract
 ** 
-** <OWNER>maf,mbarnett,[....]</OWNER>
+** <OWNER>maf,mbarnett,Microsoft</OWNER>
 **
 ** Implementation details of CLR Contracts.
 **
@@ -38,7 +38,9 @@ using System.Runtime.ConstrainedExecution;
 #endif
 #if FEATURE_UNTRUSTED_CALLERS
 using System.Security;
+#if !MONO
 using System.Security.Permissions;
+#endif
 #endif
 
 namespace System.Diagnostics.Contracts {
@@ -57,8 +59,10 @@ namespace System.Diagnostics.Contracts {
         [SecuritySafeCritical]
         static partial void AssertMustUseRewriter(ContractFailureKind kind, String contractKind)
         {
+#if !NETCORE
             if (_assertingMustUseRewriter)
                 System.Diagnostics.Assert.Fail("Asserting that we must use the rewriter went reentrant.", "Didn't rewrite this mscorlib?");
+#endif
             _assertingMustUseRewriter = true;
 
             // For better diagnostics, report which assembly is at fault.  Walk up stack and

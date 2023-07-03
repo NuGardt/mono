@@ -41,7 +41,8 @@ namespace System.ServiceModel.Channels
 	{
 		HttpChannelFactory<IRequestChannel> source;
 
-		List<WebRequest> web_requests = new List<WebRequest> ();
+		object locker = new object();
+		List<WebRequest> web_requests = new List<WebRequest> ();	//synced by locker
 
 		// Constructor
 
@@ -56,7 +57,7 @@ namespace System.ServiceModel.Channels
 			get { return source.MessageEncoder; }
 		}
 
-#if NET_2_1
+#if MOBILE
 		public override T GetProperty<T> ()
 		{
 			if (typeof (T) == typeof (IHttpCookieContainerManager))
@@ -86,7 +87,12 @@ namespace System.ServiceModel.Channels
 			}
 
 			var web_request = (HttpWebRequest) HttpWebRequest.Create (destination);
-			web_requests.Add (web_request);
+
+			lock (locker)
+			{
+				web_requests.Add (web_request);
+			}
+		
 			result.WebRequest = web_request;
 			web_request.Method = "POST";
 			web_request.ContentType = Encoder.ContentType;
@@ -126,6 +132,7 @@ namespace System.ServiceModel.Channels
 			}
 
 			web_request.Timeout = (int) timeout.TotalMilliseconds;
+			web_request.KeepAlive = httpbe.KeepAliveEnabled;
 
 			// There is no SOAP Action/To header when AddressingVersion is None.
 			if (message.Version.Envelope.Equals (EnvelopeVersion.Soap11) ||
@@ -189,7 +196,7 @@ namespace System.ServiceModel.Channels
 					suppressEntityBody = true;
 			}
 
-#if !NET_2_1
+#if !MOBILE
 			if (source.ClientCredentials != null) {
 				var cred = source.ClientCredentials;
 				if ((cred.ClientCertificate != null) && (cred.ClientCertificate.Certificate != null))
@@ -349,9 +356,20 @@ namespace System.ServiceModel.Channels
 
 		protected override void OnAbort ()
 		{
-			foreach (var web_request in web_requests.ToArray ())
+			WebRequest[] current_web_requests;
+
+			lock (locker)
+			{
+				current_web_requests = web_requests.ToArray();
+			}
+
+			foreach (var web_request in current_web_requests)
 				web_request.Abort ();
-			web_requests.Clear ();
+
+			lock(locker)
+			{
+				web_requests.Clear ();
+			}
 		}
 
 		// Close
@@ -476,7 +494,7 @@ namespace System.ServiceModel.Channels
 					// FIXME: Do we need to use the timeout? If so, what happens when the timeout is reached.
 					// Is the current request cancelled and an exception thrown? If so we need to pass the
 					// exception to the Complete () method and allow the result to complete 'normally'.
-#if NET_2_1
+#if MOBILE
 					// neither Moonlight nor MonoTouch supports contexts (WaitOne default to false)
 					bool result = AsyncWaitHandle.WaitOne (Timeout);
 #else
@@ -496,7 +514,10 @@ namespace System.ServiceModel.Channels
 			
 			void Cleanup ()
 			{
-				owner.web_requests.Remove (WebRequest);
+				lock (owner.locker)
+				{
+					owner.web_requests.Remove (WebRequest);
+				}
 			}
 		}
 	}

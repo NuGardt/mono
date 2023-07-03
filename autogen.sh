@@ -89,9 +89,11 @@ if test x$NOCONFIGURE = x && test -z "$*"; then
   echo
 fi
 
+am_opt="--add-missing --copy --gnu -Wno-portability -Wno-obsolete"
+
 case $CC in
 xlc )
-  am_opt=--include-deps;;
+  am_opt="$am_opt --include-deps";;
 esac
 
 
@@ -102,12 +104,10 @@ if grep "^AM_PROG_LIBTOOL" configure.ac >/dev/null; then
   fi
 fi
 
-
-#
-# Plug in the extension module
-#
+# Parse parameters
 has_ext_mod=false
 ext_mod_args=''
+has_disable_boehm=false
 for PARAM; do
     if [[ $PARAM =~ "--enable-extension-module" ]] ; then
         has_ext_mod=true
@@ -115,10 +115,16 @@ for PARAM; do
             ext_mod_args=`echo $PARAM | cut -d= -f2`
         fi
     fi
+    if [[ $PARAM =~ "--disable-boehm" ]] ; then
+      has_disable_boehm=true
+    fi
 done
 
+#
+# Plug in the extension module
+#
 if test x$has_ext_mod = xtrue; then
-	pushd ../mono-extensions/scripts
+	pushd $top_srcdir../mono-extensions/scripts
 	sh ./prepare-repo.sh $ext_mod_args || exit 1
 	popd
 else
@@ -142,26 +148,40 @@ if grep "^AC_CONFIG_HEADERS" configure.ac >/dev/null; then
   autoheader || { echo "**Error**: autoheader failed."; exit 1; }
 fi
 
-echo "Running automake --gnu $am_opt ..."
-automake --add-missing --gnu -Wno-portability -Wno-obsolete $am_opt ||
+echo "Running automake $am_opt ..."
+automake $am_opt ||
   { echo "**Error**: automake failed."; exit 1; }
 echo "Running autoconf ..."
 autoconf || { echo "**Error**: autoconf failed."; exit 1; }
 
-if test -d $srcdir/libgc; then
-  echo Running libgc/autogen.sh ...
-  (cd $srcdir/libgc ; NOCONFIGURE=1 ./autogen.sh "$@")
-  echo Done running libgc/autogen.sh ...
+# Update all submodules recursively to ensure everything is checked out
+if test -e $srcdir/scripts/update_submodules.sh; then
+  (cd $srcdir && scripts/update_submodules.sh)
 fi
 
-if test -d $srcdir/eglib; then
-  echo Running eglib/autogen.sh ...
-  (cd $srcdir/eglib ; NOCONFIGURE=1 ./autogen.sh "$@")
-  echo Done running eglib/autogen.sh ...
+if test x$has_disable_boehm = xfalse -a -d $srcdir/external/bdwgc; then
+  echo Running external/bdwgc/autogen.sh ...
+  (cd $srcdir/external/bdwgc ; NOCONFIGURE=1 ./autogen.sh "$@")
+  echo Done running external/bdwgc/autogen.sh ...
 fi
 
+if test x$MONO_EXTRA_CONFIGURE_FLAGS != x; then
+	echo "MONO_EXTRA_CONFIGURE_FLAGS is $MONO_EXTRA_CONFIGURE_FLAGS"
+fi
 
-conf_flags="--enable-maintainer-mode --enable-compile-warnings" #--enable-iso-c
+host_conf_flag=
+build_uname_all=`(uname -a) 2>/dev/null`
+case "$build_uname_all" in
+CYGWIN*)
+  if [[ "$@" != *"--host="* ]]; then
+	  echo "Missing --host parameter, configure using ./configure --host=i686-w64-mingw32 or --host=x86_64-w64-mingw32"
+	  echo "Falling back using --host=x86_64-w64-mingw32 as default."
+    host_conf_flag="--host=x86_64-w64-mingw32"
+  fi
+	;;
+esac
+
+conf_flags="$MONO_EXTRA_CONFIGURE_FLAGS --enable-maintainer-mode --enable-compile-warnings $host_conf_flag" #--enable-iso-c
 
 if test x$NOCONFIGURE = x; then
   echo Running $srcdir/configure $conf_flags "$@" ...

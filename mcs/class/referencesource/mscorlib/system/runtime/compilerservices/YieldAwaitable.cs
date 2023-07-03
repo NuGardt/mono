@@ -7,7 +7,7 @@
 //
 // YieldAwaitable.cs
 //
-// <OWNER>[....]</OWNER>
+// <OWNER>Microsoft</OWNER>
 //
 // Compiler-targeted type for switching back into the current execution context, e.g.
 // 
@@ -42,7 +42,7 @@ namespace System.Runtime.CompilerServices
 
     /// <summary>Provides an awaitable context for switching into a target environment.</summary>
     /// <remarks>This type is intended for compiler use only.</remarks>
-    public struct YieldAwaitable
+    public readonly struct YieldAwaitable
     {
         /// <summary>Gets an awaiter for this <see cref="YieldAwaitable"/>.</summary>
         /// <returns>An awaiter for this awaitable.</returns>
@@ -52,7 +52,7 @@ namespace System.Runtime.CompilerServices
         /// <summary>Provides an awaiter that switches into a target environment.</summary>
         /// <remarks>This type is intended for compiler use only.</remarks>
         [HostProtection(Synchronization = true, ExternalThreading = true)]
-        public struct YieldAwaiter : ICriticalNotifyCompletion
+        public readonly struct YieldAwaiter : ICriticalNotifyCompletion
         {
             /// <summary>Gets whether a yield is not required.</summary>
             /// <remarks>This property is intended for compiler user rather than use directly in code.</remarks>

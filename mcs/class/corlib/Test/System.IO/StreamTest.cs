@@ -120,8 +120,8 @@ namespace MonoTests.System.IO
 			Assert.IsFalse (s.CanRead, "#1");
 		}
 
-#if NET_4_5
 		[Test]
+		[Category ("MultiThreaded")]
 		public void CopyAsync ()
 		{
 			var ms = new MockStream (true, false, true);
@@ -132,6 +132,7 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void FlushAsync ()
 		{
 			bool called = false;
@@ -143,6 +144,7 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void FlushAsync_Exception ()
 		{
 			var ms = new MockStream (false, false, false);
@@ -156,6 +158,7 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void ReadAsync ()
 		{
 			bool called = false;
@@ -170,6 +173,7 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void ReadAsync_Exception ()
 		{
 			var buffer = new byte[4];
@@ -185,6 +189,7 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void WriteAsync ()
 		{
 			bool called = false;
@@ -198,6 +203,7 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void WriteAsync_Exception ()
 		{
 			var buffer = new byte[4];
@@ -211,6 +217,5 @@ namespace MonoTests.System.IO
 			} catch (AggregateException) {
 			}
 		}
-#endif
 	}
 }

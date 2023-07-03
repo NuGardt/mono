@@ -2,21 +2,27 @@ thisdir = build
 SUBDIRS = 
 include ../build/rules.make
 
-BUILT_FILES = common/Consts.cs
+BUILT_FILES = common/Consts.cs $(topdir)/class/lib/$(PROFILE_DIRECTORY)/Consts.cs common/sourcelink.json
 
-all-local install-local test-local run-test-local csproj-local run-test-ondotnet-local uninstall-local doc-update-local: $(BUILT_FILES)
+all-local install-local test-local run-test-local run-test-ondotnet-local uninstall-local doc-update-local: $(BUILT_FILES)
 	@:
 
 clean-local:
 	-rm -f $(BUILT_FILES) deps/*
 
-common/Consts.cs: common/Consts.cs.in $(wildcard config.make)
-	test -n '$(MONO_VERSION)'
-	sed -e 's,@''MONO_VERSION@,$(MONO_VERSION),' $< > $@
+$(topdir)/class/lib/$(PROFILE_DIRECTORY):
+	mkdir -p $@
 
-PLATFORMS = darwin linux win32
+common/Consts.cs $(topdir)/class/lib/$(PROFILE_DIRECTORY)/Consts.cs: common/Consts.cs.in $(wildcard config.make) | $(topdir)/class/lib/$(PROFILE_DIRECTORY)
+	test -n '$(MONO_VERSION)'
+	test -n '$(MONO_CORLIB_VERSION)'
+	sed -e 's,@''MONO_VERSION@,$(MONO_VERSION),' -e 's,@''MONO_CORLIB_VERSION@,$(MONO_CORLIB_VERSION),' $< > $@
+
+common/sourcelink.json: common/sourcelink.json.in $(wildcard config.make) | $(topdir)/class/lib/$(PROFILE_DIRECTORY)
+	sed -e 's,@mono_topdir@,$(shell cd $(topdir)/.. && pwd),' -e 's,@mono_commit_hash@,$(shell cd $(topdir)/.. && git rev-parse HEAD),' -e 's,@corefx_commit_hash@,$(shell cd $(topdir)/../external/corefx && git rev-parse HEAD),' -e 's,@corert_commit_hash@,$(shell cd $(topdir)/../external/corert && git rev-parse HEAD),' -e 's,@cecil_commit_hash@,$(shell cd $(topdir)/../external/cecil && git rev-parse HEAD),' $< > $@
+
+PLATFORMS = macos linux win32 unix
 PROFILES = \
-	basic \
 	build \
 	binary_reference_assemblies \
 	net_4_x \
@@ -25,6 +31,7 @@ PROFILES = \
 
 COMMON_SRCS = \
 	Consts.cs.in			\
+	sourcelink.json.in	\
 	Locale.cs			\
 	MonoTODOAttribute.cs \
 	basic-profile-check.cs		\
@@ -32,18 +39,17 @@ COMMON_SRCS = \
 	AssemblyRef.cs
 
 DISTFILES = \
-	README.makefiles		\
+	README.makefiles.md		\
 	README.platforms		\
 	README.configury		\
 	config-default.make		\
 	corcompare.make			\
 	corcompare-api.xsl		\
 	executable.make			\
-	gensources.sh			\
 	library.make			\
-	nunit-summary.xsl		\
 	rules.make			\
 	tests.make			\
+	start-compiler-server.sh	\
 	$(COMMON_SRCS:%=common/%)	\
 	$(PLATFORMS:%=platforms/%.make) $(PROFILES:%=profiles/%.make)
 

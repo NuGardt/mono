@@ -1,4 +1,5 @@
-/*
+/**
+ * \file
  * Appdomain-related internal data structures and functions.
  * Copyright 2012 Xamarin Inc (http://www.xamarin.com)
  * Licensed under the MIT license. See LICENSE file in the project root for full license information.
@@ -6,15 +7,32 @@
 #ifndef __MONO_METADATA_DOMAIN_INTERNALS_H__
 #define __MONO_METADATA_DOMAIN_INTERNALS_H__
 
+#include <mono/utils/mono-forward-internal.h>
+#include <mono/metadata/object-forward.h>
 #include <mono/metadata/appdomain.h>
 #include <mono/metadata/mempool.h>
 #include <mono/metadata/lock-tracer.h>
 #include <mono/utils/mono-codeman.h>
 #include <mono/metadata/mono-hash.h>
+#include <mono/metadata/mono-conc-hash.h>
 #include <mono/utils/mono-compiler.h>
 #include <mono/utils/mono-internal-hash.h>
-#include <mono/io-layer/io-layer.h>
+#include <mono/metadata/loader-internals.h>
 #include <mono/metadata/mempool-internals.h>
+#include <mono/metadata/handle-decl.h>
+
+/* Mono appdomain support is deeply itegrated in the runtime, as a result, even
+ * though .NET Standard does not include System.AppDomain in
+ * System.Private.CoreLib, we still depend on having an appdomain class.
+ * So we move it to Mono.MonoDomain
+ *
+ */
+#define MONO_APPDOMAIN_CLASS_NAME_SPACE "System"
+#define MONO_APPDOMAIN_CLASS_NAME "AppDomain"
+#define MONO_APPDOMAIN_SETUP_CLASS_NAME_SPACE "System"
+#define MONO_APPDOMAIN_SETUP_CLASS_NAME "AppDomainSetup"
+
+G_BEGIN_DECLS
 
 /*
  * If this is set, the memory belonging to appdomains is not freed when a domain is
@@ -69,6 +87,7 @@ struct _MonoJitInfoTable
 {
 	MonoDomain	       *domain;
 	int			num_chunks;
+	int			num_valid;
 	MonoJitInfoTableChunk  *chunks [MONO_ZERO_LEN_ARRAY];
 };
 
@@ -184,13 +203,25 @@ typedef struct {
 	int thunks_size;
 } MonoThunkJitInfo;
 
+typedef struct {
+	guint8 *unw_info;
+	int unw_info_len;
+} MonoUnwindJitInfo;
+
 typedef enum {
 	JIT_INFO_NONE = 0,
 	JIT_INFO_HAS_GENERIC_JIT_INFO = (1 << 0),
 	JIT_INFO_HAS_TRY_BLOCK_HOLES = (1 << 1),
 	JIT_INFO_HAS_ARCH_EH_INFO = (1 << 2),
-	JIT_INFO_HAS_THUNK_INFO = (1 << 3)
+	JIT_INFO_HAS_THUNK_INFO = (1 << 3),
+	/*
+	 * If this is set, the unwind info is stored in the structure, instead of being pointed to by the
+	 * 'unwind_info' field.
+	 */
+	JIT_INFO_HAS_UNWIND_INFO = (1 << 4)
 } MonoJitInfoFlags;
+
+G_ENUM_FUNCTIONS (MonoJitInfoFlags)
 
 struct _MonoJitInfo {
 	/* NOTE: These first two elements (method and
@@ -200,12 +231,12 @@ struct _MonoJitInfo {
 	union {
 		MonoMethod *method;
 		MonoImage *image;
-		gpointer aot_info;
-		gpointer tramp_info;
+		MonoAotModule *aot_info;
+		MonoTrampInfo *tramp_info;
 	} d;
 	union {
-		struct _MonoJitInfo *next_jit_code_hash;
-		struct _MonoJitInfo *next_tombstone;
+		MonoJitInfo *next_jit_code_hash;
+		MonoJitInfo *next_tombstone;
 	} n;
 	gpointer    code_start;
 	guint32     unwind_info;
@@ -217,6 +248,7 @@ struct _MonoJitInfo {
 	gboolean    has_try_block_holes:1;
 	gboolean    has_arch_eh_info:1;
 	gboolean    has_thunk_info:1;
+	gboolean    has_unwind_info:1;
 	gboolean    from_aot:1;
 	gboolean    from_llvm:1;
 	gboolean    dbg_attrs_inited:1;
@@ -230,9 +262,13 @@ struct _MonoJitInfo {
 	 * d.tramp_info contains additional data in this case.
 	 */
 	gboolean    is_trampoline:1;
+	/* Whenever this jit info refers to an interpreter method */
+	gboolean    is_interp:1;
 
 	/* FIXME: Embed this after the structure later*/
 	gpointer    gc_info; /* Currently only used by SGen */
+
+	gpointer    seq_points;
 	
 	MonoJitExceptionInfo clauses [MONO_ZERO_LEN_ARRAY];
 	/* There is an optional MonoGenericJitInfo after the clauses */
@@ -245,7 +281,7 @@ struct _MonoJitInfo {
 
 typedef struct {
 	gpointer *static_data; /* Used to free the static data without going through the MonoAppContext object itself. */
-	uint32_t gc_handle;
+	MonoGCHandle gc_handle;
 } ContextStaticData;
 
 struct _MonoAppContext {
@@ -296,8 +332,7 @@ struct _MonoDomain {
 	 * must taken first.
 	 */
 	MonoCoopMutex    lock;
-	MonoMemPool        *mp;
-	MonoCodeManager    *code_mp;
+
 	/*
 	 * keep all the managed objects close to each other for the precise GC
 	 * For the Boehm GC we additionally keep close also other GC-tracked pointers.
@@ -315,6 +350,7 @@ struct _MonoDomain {
 	MonoObject         *ephemeron_tombstone;
 	/* new MonoType [0] */
 	MonoArray          *empty_types;
+	MonoString         *empty_string;
 	/* 
 	 * The fields between FIRST_GC_TRACKED and LAST_GC_TRACKED are roots, but
 	 * not object references.
@@ -322,31 +358,27 @@ struct _MonoDomain {
 #define MONO_DOMAIN_FIRST_GC_TRACKED env
 	MonoGHashTable     *env;
 	MonoGHashTable     *ldstr_table;
-	/* hashtables for Reflection handles */
-	MonoGHashTable     *type_hash;
-	MonoGHashTable     *refobject_hash;
-	/* a GC-tracked array to keep references to the static fields of types */
-	gpointer           *static_data_array;
-	/* maps class -> type initialization exception object */
-	MonoGHashTable    *type_init_exception_hash;
-	/* maps delegate trampoline addr -> delegate object */
-	MonoGHashTable     *delegate_hash_table;
-#define MONO_DOMAIN_LAST_GC_TRACKED delegate_hash_table
+#define MONO_DOMAIN_LAST_GC_TRACKED ldstr_table
 	guint32            state;
 	/* Needed by Thread:GetDomainID() */
 	gint32             domain_id;
 	gint32             shadow_serial;
-	unsigned char      inet_family_hint; // used in socket-io.c as a cache
+	/*
+	 * For framework Mono, this is every assembly loaded in this
+	 * domain. For netcore, this is every assembly loaded in every ALC in
+	 * this domain.  In netcore, the thread that adds an assembly to its
+	 * MonoAssemblyLoadContext:loaded_assemblies should also add it to this
+	 * list.
+	 */
 	GSList             *domain_assemblies;
 	MonoAssembly       *entry_assembly;
 	char               *friendly_name;
-	GPtrArray          *class_vtable_array;
 	/* maps remote class key -> MonoRemoteClass */
 	GHashTable         *proxy_vtable_hash;
 	/* Protected by 'jit_code_hash_lock' */
 	MonoInternalHashTable jit_code_hash;
 	mono_mutex_t    jit_code_hash_lock;
-	int		    num_jit_info_tables;
+	int		    num_jit_info_table_duplicates;
 	MonoJitInfoTable * 
 	  volatile          jit_info_table;
 	/*
@@ -370,27 +402,21 @@ struct _MonoDomain {
 	 * This must be a GHashTable, since these objects can't be finalized
 	 * if the hashtable contains a GC visible reference to them.
 	 */
-	GHashTable         *finalizable_objects_hash;
+	GHashTable         *finalizable_objects_hash; // TODO: this needs to be moved for unloadability with non-sgen gc
 
 	/* Protects the three hashes above */
 	mono_mutex_t   finalizable_objects_hash_lock;
 	/* Used when accessing 'domain_assemblies' */
-	mono_mutex_t    assemblies_lock;
-
-	GHashTable	   *method_rgctx_hash;
+	MonoCoopMutex  assemblies_lock;
 
 	GHashTable	   *generic_virtual_cases;
-	MonoThunkFreeList **thunk_free_lists;
-
-	GHashTable     *generic_virtual_thunks;
 
 	/* Information maintained by the JIT engine */
 	gpointer runtime_info;
 
-	/*thread pool jobs, used to coordinate shutdown.*/
-	volatile int			threadpool_jobs;
-	HANDLE				cleanup_semaphore;
-	
+	/* Information maintained by mono-debug.c */
+	gpointer debug_info;
+
 	/* Contains the compiled runtime invoke wrapper used by finalizers */
 	gpointer            finalize_runtime_invoke;
 
@@ -409,10 +435,11 @@ struct _MonoDomain {
 	MonoImage *socket_assembly;
 	MonoClass *sockaddr_class;
 	MonoClassField *sockaddr_data_field;
+	MonoClassField *sockaddr_data_length_field;
 
 	/* Cache function pointers for architectures  */
 	/* that require wrappers */
-	GHashTable *ftnptrs_hash;
+	GHashTable *ftnptrs_hash; // TODO: need to move?
 
 	/* Maps MonoMethod* to weak links to DynamicMethod objects */
 	GHashTable *method_to_dyn_method;
@@ -421,6 +448,10 @@ struct _MonoDomain {
 	gboolean throw_unobserved_task_exceptions;
 
 	guint32 execution_context_field_offset;
+
+
+	// Holds domain code memory
+	MonoMemoryManager *memory_manager;
 };
 
 typedef struct  {
@@ -429,13 +460,23 @@ typedef struct  {
 
 /* MonoRuntimeInfo: Contains information about versions supported by this runtime */
 typedef struct  {
-	const char runtime_version [12];
-	const char framework_version [4];
-	const AssemblyVersionSet version_sets [4];
+	char runtime_version [12];
+	char framework_version [4];
+	AssemblyVersionSet version_sets [5];
 } MonoRuntimeInfo;
 
-#define mono_domain_assemblies_lock(domain) mono_locks_os_acquire(&(domain)->assemblies_lock, DomainAssembliesLock)
-#define mono_domain_assemblies_unlock(domain) mono_locks_os_release(&(domain)->assemblies_lock, DomainAssembliesLock)
+static inline void
+mono_domain_assemblies_lock (MonoDomain *domain)
+{
+	mono_locks_coop_acquire (&domain->assemblies_lock, DomainAssembliesLock);
+}
+
+static inline void
+mono_domain_assemblies_unlock (MonoDomain *domain)
+{
+	mono_locks_coop_release (&domain->assemblies_lock, DomainAssembliesLock);
+}
+
 #define mono_domain_jit_code_hash_lock(domain) mono_locks_os_acquire(&(domain)->jit_code_hash_lock, DomainJitCodeHashLock)
 #define mono_domain_jit_code_hash_unlock(domain) mono_locks_os_release(&(domain)->jit_code_hash_lock, DomainJitCodeHashLock)
 
@@ -459,6 +500,9 @@ typedef void (*MonoFreeDomainFunc) (MonoDomain *domain);
 
 void
 mono_install_free_domain_hook (MonoFreeDomainFunc func);
+
+void
+mono_runtime_quit_internal (void);
 
 void 
 mono_cleanup (void);
@@ -506,35 +550,26 @@ mono_is_shadow_copy_enabled (MonoDomain *domain, const gchar *dir_name);
 gpointer
 mono_domain_alloc  (MonoDomain *domain, guint size);
 
+#define mono_domain_alloc(domain, size) (g_cast (mono_domain_alloc ((domain), (size))))
+
 gpointer
 mono_domain_alloc0 (MonoDomain *domain, guint size);
+
+#define mono_domain_alloc0(domain, size) (g_cast (mono_domain_alloc0 ((domain), (size))))
 
 gpointer
 mono_domain_alloc0_lock_free (MonoDomain *domain, guint size);
 
-void*
-mono_domain_code_reserve (MonoDomain *domain, int size) MONO_LLVM_INTERNAL;
-
-void*
-mono_domain_code_reserve_align (MonoDomain *domain, int size, int alignment);
-
-void
-mono_domain_code_commit (MonoDomain *domain, void *data, int size, int newsize);
-
-void *
-nacl_domain_get_code_dest (MonoDomain *domain, void *data);
-
-void 
-nacl_domain_code_validate (MonoDomain *domain, guint8 **buf_base, int buf_size, guint8 **code_end);
-
-void
-mono_domain_code_foreach (MonoDomain *domain, MonoCodeManagerFunc func, void *user_data);
+#define mono_domain_alloc0_lock_free(domain, size) (g_cast (mono_domain_alloc0_lock_free ((domain), (size))))
 
 void
 mono_domain_unset (void);
 
 void
 mono_domain_set_internal_with_options (MonoDomain *domain, gboolean migrate_exception);
+
+gboolean
+mono_domain_set_config_checked (MonoDomain *domain, const char *base_dir, const char *config_file_name, MonoError *error);
 
 MonoTryBlockHoleTableJitInfo*
 mono_jit_info_get_try_block_hole_table_info (MonoJitInfo *ji);
@@ -545,6 +580,9 @@ mono_jit_info_get_arch_eh_info (MonoJitInfo *ji);
 MonoThunkJitInfo*
 mono_jit_info_get_thunk_info (MonoJitInfo *ji);
 
+MonoUnwindJitInfo*
+mono_jit_info_get_unwind_info (MonoJitInfo *ji);
+
 /* 
  * Installs a new function which is used to return a MonoJitInfo for a method inside
  * an AOT module.
@@ -554,99 +592,6 @@ void          mono_install_jit_info_find_in_aot (MonoJitInfoFindInAot func);
 
 void
 mono_jit_code_hash_init (MonoInternalHashTable *jit_code_hash);
-
-MonoAppDomain *
-ves_icall_System_AppDomain_getCurDomain            (void);
-
-MonoAppDomain *
-ves_icall_System_AppDomain_getRootDomain           (void);
-
-MonoAppDomain *
-ves_icall_System_AppDomain_createDomain            (MonoString         *friendly_name,
-						    MonoAppDomainSetup *setup);
-
-MonoObject *
-ves_icall_System_AppDomain_GetData                 (MonoAppDomain *ad, 
-						    MonoString    *name);
-
-MonoReflectionAssembly *
-ves_icall_System_AppDomain_LoadAssemblyRaw         (MonoAppDomain *ad,
-    						    MonoArray *raw_assembly, 
-						    MonoArray *raw_symbol_store,
-						    MonoObject *evidence,
-						    MonoBoolean refonly);
-
-void
-ves_icall_System_AppDomain_SetData                 (MonoAppDomain *ad, 
-						    MonoString    *name, 
-						    MonoObject    *data);
-
-MonoAppDomainSetup *
-ves_icall_System_AppDomain_getSetup                (MonoAppDomain *ad);
-
-MonoString *
-ves_icall_System_AppDomain_getFriendlyName         (MonoAppDomain *ad);
-
-MonoArray *
-ves_icall_System_AppDomain_GetAssemblies           (MonoAppDomain *ad,
-						    MonoBoolean refonly);
-
-MonoReflectionAssembly *
-ves_icall_System_Reflection_Assembly_LoadFrom      (MonoString *fname,
-						    MonoBoolean refonly);
-
-MonoReflectionAssembly *
-ves_icall_System_AppDomain_LoadAssembly            (MonoAppDomain *ad, 
-						    MonoString *assRef,
-						    MonoObject    *evidence,
-						    MonoBoolean refonly);
-
-gboolean
-ves_icall_System_AppDomain_InternalIsFinalizingForUnload (gint32 domain_id);
-
-void
-ves_icall_System_AppDomain_InternalUnload          (gint32 domain_id);
-
-void
-ves_icall_System_AppDomain_DoUnhandledException (MonoException *exc);
-
-gint32
-ves_icall_System_AppDomain_ExecuteAssembly         (MonoAppDomain *ad, 
-													MonoReflectionAssembly *refass,
-													MonoArray     *args);
-
-MonoAppDomain * 
-ves_icall_System_AppDomain_InternalSetDomain	   (MonoAppDomain *ad);
-
-MonoAppDomain * 
-ves_icall_System_AppDomain_InternalSetDomainByID   (gint32 domainid);
-
-void
-ves_icall_System_AppDomain_InternalPushDomainRef (MonoAppDomain *ad);
-
-void
-ves_icall_System_AppDomain_InternalPushDomainRefByID (gint32 domain_id);
-
-void
-ves_icall_System_AppDomain_InternalPopDomainRef (void);
-
-MonoAppContext * 
-ves_icall_System_AppDomain_InternalGetContext      (void);
-
-MonoAppContext * 
-ves_icall_System_AppDomain_InternalGetDefaultContext      (void);
-
-MonoAppContext * 
-ves_icall_System_AppDomain_InternalSetContext	   (MonoAppContext *mc);
-
-gint32 
-ves_icall_System_AppDomain_GetIDFromDomain (MonoAppDomain * ad);
-
-MonoString *
-ves_icall_System_AppDomain_InternalGetProcessGuid (MonoString* newguid);
-
-MonoBoolean
-ves_icall_System_CLRConfig_CheckThrowUnobservedTaskExceptions (void);
 
 MonoAssembly *
 mono_assembly_load_corlib (const MonoRuntimeInfo *runtime, MonoImageOpenStatus *status);
@@ -660,46 +605,91 @@ mono_runtime_set_no_exec (gboolean val);
 gboolean
 mono_runtime_get_no_exec (void);
 
+void
+mono_domain_parse_assembly_bindings (MonoDomain *domain, int amajor, int aminor, gchar *domain_config_file_name);
+
 gboolean
 mono_assembly_name_parse (const char *name, MonoAssemblyName *aname);
 
-MonoImage *mono_assembly_open_from_bundle (const char *filename,
+MonoAssembly *
+mono_domain_assembly_open_internal (MonoDomain *domain, MonoAssemblyLoadContext *alc, const char *name);
+
+MonoImage *mono_assembly_open_from_bundle (MonoAssemblyLoadContext *alc,
+					   const char *filename,
 					   MonoImageOpenStatus *status,
-					   gboolean refonly);
-
-MONO_API void
-mono_domain_add_class_static_data (MonoDomain *domain, MonoClass *klass, gpointer data, guint32 *bitmap);
-
-MonoReflectionAssembly *
-mono_try_assembly_resolve (MonoDomain *domain, MonoString *fname, MonoAssembly *requesting, gboolean refonly, MonoError *error);
+					   gboolean refonly,
+					   const char *culture);
 
 MonoAssembly *
-mono_domain_assembly_postload_search (MonoAssemblyName *aname, MonoAssembly *requesting, gboolean refonly);
+mono_try_assembly_resolve (MonoAssemblyLoadContext *alc, const char *fname, MonoAssembly *requesting, gboolean refonly, MonoError *error);
 
-MonoAssembly* mono_assembly_load_full_nosearch (MonoAssemblyName *aname, 
-						const char       *basedir, 
-						MonoImageOpenStatus *status,
-						gboolean refonly);
+MonoAssembly *
+mono_domain_assembly_postload_search (MonoAssemblyLoadContext *alc, MonoAssembly *requesting, MonoAssemblyName *aname, gboolean refonly, gboolean postload, gpointer user_data, MonoError *error);
 
 void mono_domain_set_options_from_config (MonoDomain *domain);
 
 int mono_framework_version (void);
 
-void mono_reflection_cleanup_domain (MonoDomain *domain);
-
 void mono_assembly_cleanup_domain_bindings (guint32 domain_id);
 
-MonoJitInfo* mono_jit_info_table_find_internal (MonoDomain *domain, char *addr, gboolean try_aot, gboolean allow_trampolines);
+MonoJitInfo* mono_jit_info_table_find_internal (MonoDomain *domain, gpointer addr, gboolean try_aot, gboolean allow_trampolines);
+
+typedef void (*MonoJitInfoFunc) (MonoJitInfo *ji, gpointer user_data);
+
+void
+mono_jit_info_table_foreach_internal (MonoDomain *domain, MonoJitInfoFunc func, gpointer user_data);
 
 void mono_enable_debug_domain_unload (gboolean enable);
-
-MonoReflectionAssembly *
-mono_domain_try_type_resolve_checked (MonoDomain *domain, char *name, MonoObject *tb, MonoError *error);
 
 void
 mono_runtime_init_checked (MonoDomain *domain, MonoThreadStartCB start_cb, MonoThreadAttachCB attach_cb, MonoError *error);
 
 void
 mono_context_init_checked (MonoDomain *domain, MonoError *error);
+
+gboolean
+mono_assembly_has_reference_assembly_attribute (MonoAssembly *assembly, MonoError *error);
+
+GPtrArray*
+mono_domain_get_assemblies (MonoDomain *domain, gboolean refonly);
+
+void
+mono_runtime_register_appctx_properties (int nprops, const char **keys,  const char **values);
+
+void
+mono_runtime_install_appctx_properties (void);
+
+gboolean 
+mono_domain_set_fast (MonoDomain *domain, gboolean force);
+
+MonoAssemblyLoadContext *
+mono_domain_default_alc (MonoDomain *domain);
+
+
+static inline
+MonoAssemblyLoadContext *
+mono_domain_ambient_alc (MonoDomain *domain)
+{
+	/*
+	 * FIXME: All the callers of mono_domain_ambient_alc should get an ALC
+	 * passed to them from their callers.
+	 */
+	return mono_domain_default_alc (domain);
+}
+
+static inline MonoMemoryManager *
+mono_domain_memory_manager (MonoDomain *domain)
+{
+	return domain->memory_manager;
+}
+
+static inline MonoMemoryManager *
+mono_domain_ambient_memory_manager (MonoDomain *domain)
+{
+	// FIXME: All callers of mono_domain_ambient_memory_manager should get a MemoryManager from their callers or context
+	return mono_domain_memory_manager (domain);
+}
+
+G_END_DECLS
 
 #endif /* __MONO_METADATA_DOMAIN_INTERNALS_H__ */

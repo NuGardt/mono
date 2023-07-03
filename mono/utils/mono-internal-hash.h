@@ -1,5 +1,6 @@
-/*
- * mono-internal-hash.h: A hash table which uses the values themselves as nodes.
+/**
+ * \file
+ * A hash table which uses the values themselves as nodes.
  *
  * Author:
  *   Mark Probst (mark.probst@gmail.com)
@@ -36,6 +37,7 @@ typedef struct _MonoInternalHashTable MonoInternalHashTable;
 
 typedef gpointer (*MonoInternalHashKeyExtractFunc) (gpointer value);
 typedef gpointer* (*MonoInternalHashNextValueFunc) (gpointer value);
+typedef void (*MonoInternalHashApplyFunc) (gpointer value);
 
 struct _MonoInternalHashTable
 {
@@ -71,6 +73,9 @@ mono_internal_hash_table_insert (MonoInternalHashTable *table,
 				 gpointer key, gpointer value);
 
 void
+mono_internal_hash_table_apply (MonoInternalHashTable *table, MonoInternalHashApplyFunc func);
+
+gboolean
 mono_internal_hash_table_remove (MonoInternalHashTable *table, gpointer key);
 
 #endif

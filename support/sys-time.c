@@ -10,6 +10,9 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <string.h>
+#ifdef __HAIKU__
+#include <os/kernel/OS.h>
+#endif
 
 #include "map.h"
 #include "mph.h"
@@ -64,12 +67,17 @@ Mono_Posix_Syscall_settimeofday (
 		ptz = &_tz;
 	}
 
+#ifdef __HAIKU__
+	set_real_time_clock(ptv->tv_sec);
+	r = 0;
+#else
 	r = settimeofday (ptv, ptz);
+#endif
 
 	return r;
 }
 
-static inline struct timeval*
+static struct timeval*
 copy_utimes (struct timeval* to, struct Mono_Posix_Timeval *from)
 {
 	if (from) {

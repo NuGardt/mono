@@ -82,8 +82,8 @@ namespace System.Windows.Forms.PropertyGridInternal
 		public override bool Expandable {
 			get {
 				TypeConverter converter = GetConverter ();
-				if (converter == null || !converter.GetPropertiesSupported ((ITypeDescriptorContext)this))
-					return false;
+				if (converter != null)
+					return converter.GetPropertiesSupported ((ITypeDescriptorContext)this);
 
 				if (GetChildGridItemsCached ().Count > 0)
 					return true;
@@ -223,22 +223,14 @@ namespace System.Windows.Forms.PropertyGridInternal
 			get {
 				if (PropertyDescriptor == null || PropertyOwner == null)
 					return null;
-
 				return PropertyDescriptor.GetValue (PropertyOwner);
 			}
 		}
 
 		public string ValueText {
-			get { 
-				string text = null;
-				try {
-					text = ConvertToString (this.Value);
-					if (text == null)
-						text = String.Empty;
-				} catch {
-					text = String.Empty;
-				}
-				return text;
+			get {
+				var text = ConvertToString (this.Value);
+				return text ?? String.Empty;
 			}
 		}
 
@@ -249,12 +241,11 @@ namespace System.Windows.Forms.PropertyGridInternal
 		}
 
 		#region ITypeDescriptorContext
-		void ITypeDescriptorContext.OnComponentChanged () 
-		{
+
+		void ITypeDescriptorContext.OnComponentChanged () {
 		}
 
-		bool ITypeDescriptorContext.OnComponentChanging () 
-		{
+		bool ITypeDescriptorContext.OnComponentChanging () {
 			return false;
 		}
 
@@ -271,20 +262,13 @@ namespace System.Windows.Forms.PropertyGridInternal
 		}
 
 		object ITypeDescriptorContext.Instance {
-			get {
-				if (ParentEntry != null && ParentEntry.PropertyOwner != null)
-					return ParentEntry.PropertyOwner;
-				return PropertyOwner;
-			}
+			get { return PropertyOwner; }
 		}
 
 		PropertyDescriptor ITypeDescriptorContext.PropertyDescriptor {
-			get {
-				if (ParentEntry != null && ParentEntry.PropertyDescriptor != null)
-					return ParentEntry.PropertyDescriptor; 
-				return PropertyDescriptor;
-			}
+			get { return PropertyDescriptor; }
 		}
+
 		#endregion
 
 		#region IServiceProvider Members
@@ -293,6 +277,8 @@ namespace System.Windows.Forms.PropertyGridInternal
 			IComponent selectedComponent = property_grid.SelectedObject as IComponent;
 			if (selectedComponent != null && selectedComponent.Site != null)
 				return selectedComponent.Site.GetService (serviceType);
+			if (property_grid.Site != null)
+				return property_grid.Site.GetService (serviceType);
 			return null;
 		}
 
@@ -339,21 +325,20 @@ namespace System.Windows.Forms.PropertyGridInternal
 
 		private string ConvertToString (object value)
 		{
-			if (value is string)
-				return (string)value;
+			var converter = GetConverter();
+			var convertContext = (ITypeDescriptorContext)this;
 
-			if (PropertyDescriptor != null && PropertyDescriptor.Converter != null &&
-			    PropertyDescriptor.Converter.CanConvertTo ((ITypeDescriptorContext)this, typeof (string))) {
+			var convertedValue = (string)null;
+			if (converter != null && converter.CanConvertTo (convertContext, typeof (string))) {
 				try {
-					return PropertyDescriptor.Converter.ConvertToString ((ITypeDescriptorContext)this, value);
+					convertedValue = converter.ConvertToString (convertContext, value);
 				} catch {
 					// XXX: Happens too often...
 					// property_grid.ShowError ("Property value of '" + property_descriptor.Name + "' is not convertible to string.");
-					return null;
 				}
 			}
 
-			return null;
+			return (convertedValue != null) ? convertedValue : (value as string);
 		}
 
 		public bool HasCustomEditor {
@@ -475,9 +460,11 @@ namespace System.Windows.Forms.PropertyGridInternal
 			if (this.IsReadOnly)
 				return false;
 
+			object oldValue = Value;
+
 			if (SetValueCore (value, out error)) {
 				InvalidateChildGridItemsCache ();
-				property_grid.OnPropertyValueChangedInternal (this, this.Value);
+				property_grid.OnPropertyValueChangedInternal (this, oldValue);
 				return true;
 			}
 			return false;
@@ -498,8 +485,6 @@ namespace System.Windows.Forms.PropertyGridInternal
 					    converter.CanConvertFrom ((ITypeDescriptorContext)this, valueType))
 						value = converter.ConvertFrom ((ITypeDescriptorContext)this, 
 									       CultureInfo.CurrentCulture, value);
-					else
-						conversionError = true;
 				} catch (Exception e) {
 					error = e.Message;
 					conversionError = true;
@@ -560,7 +545,7 @@ namespace System.Windows.Forms.PropertyGridInternal
 						if (IsValueType (this.ParentEntry)) 
 							current_changed = ParentEntry.SetValueCore (propertyOwners[i], out error);
 						else
-							current_changed = Object.Equals (properties[i].GetValue (propertyOwners[i]), value);
+							current_changed = true;
 					}
 				}
 				if (current_changed)
@@ -711,7 +696,7 @@ namespace System.Windows.Forms.PropertyGridInternal
 			UITypeEditor editor = GetEditor ();
 			if (editor != null) {
 				try {
-					editor.PaintValue (this.Value, gfx, rect);
+					editor.PaintValue (this.ValueText, gfx, rect);
 				} catch {
 					// Some of our Editors throw NotImplementedException
 				}
@@ -792,7 +777,7 @@ namespace System.Windows.Forms.PropertyGridInternal
 		{
 			if (property == null)
 				return false;
-				
+
 			MergablePropertyAttribute attrib = property.Attributes [typeof (MergablePropertyAttribute)] as MergablePropertyAttribute;
 			if (attrib != null && !attrib.AllowMerge)
 				return false;
@@ -827,7 +812,7 @@ namespace System.Windows.Forms.PropertyGridInternal
 			string[] propertyNames = new string [intersection.Count];
 			for (int i=0; i < intersection.Count; i++)
 				propertyNames[i] = ((PropertyDescriptor)intersection[i]).Name;
-				
+
 			return propertyNames;
 		}
 
@@ -849,8 +834,16 @@ namespace System.Windows.Forms.PropertyGridInternal
 
 			Attribute[] atts = new Attribute[attributes.Count];
 			attributes.CopyTo (atts, 0);
+
+			TypeConverter converter = GetConverter ();
+			if (converter != null)
+			{
+				PropertyDescriptorCollection properties = converter.GetProperties ((ITypeDescriptorContext)this, propertyOwner, atts);
+				return properties ?? new PropertyDescriptorCollection (null);
+			}
+
 			return property_grid.SelectedTab.GetProperties ((ITypeDescriptorContext)this, propertyOwner, atts);
 		}
-#endregion
+#endregion  // Population
 	}
 }

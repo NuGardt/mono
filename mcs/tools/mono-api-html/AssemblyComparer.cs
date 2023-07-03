@@ -26,21 +26,33 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Xml.Linq;
 
-namespace Xamarin.ApiDiff {
+namespace Mono.ApiTools {
 
-	public class AssemblyComparer : Comparer {
+	class AssemblyComparer : Comparer {
 
 		XDocument source;
 		XDocument target;
 		NamespaceComparer comparer;
 
-		public AssemblyComparer (string sourceFile, string targetFile)
+		public AssemblyComparer (string sourceFile, string targetFile, State state)
+			: this (XDocument.Load(sourceFile), XDocument.Load(targetFile), state)
 		{
-			source = XDocument.Load (sourceFile);
-			target = XDocument.Load (targetFile);
-			comparer =  new NamespaceComparer ();
+		}
+
+		public AssemblyComparer (Stream sourceFile, Stream targetFile, State state)
+			: this (XDocument.Load(sourceFile), XDocument.Load(targetFile), state)
+		{
+		}
+
+		public AssemblyComparer (XDocument sourceFile, XDocument targetFile, State state)
+			: base (state)
+		{
+			source = sourceFile;
+			target = targetFile;
+			comparer =  new NamespaceComparer (state);
 		}
 
 		public string SourceAssembly { get; private set; }
@@ -66,7 +78,13 @@ namespace Xamarin.ApiDiff {
 		{
 			SourceAssembly = source.GetAttribute ("name");
 			TargetAssembly = target.GetAttribute ("name");
-			// TODO: version
+
+			var sb = source.GetAttribute ("version");
+			var tb = target.GetAttribute ("version");
+			if (sb != tb) {
+				Output.WriteLine ("<h4>Assembly Version Changed: {0} vs {1}</h4>", tb, sb);
+			}
+
 			// ? custom attributes ?
 			comparer.Compare (source, target);
 		}

@@ -11,6 +11,7 @@
 using System;
 using NUnit.Framework;
 using System.Transactions;
+using System.Threading;
 
 namespace MonoTests.System.Transactions
 {
@@ -25,14 +26,14 @@ namespace MonoTests.System.Transactions
 				TransactionScope scope = new TransactionScope (TransactionScopeOption.Required, TimeSpan.FromSeconds (-1));
 				Assert.Fail ("Expected exception when passing TransactionScopeOption and an invalid TimeSpan.");
 			} catch (ArgumentOutOfRangeException ex) {
-				Assert.AreEqual (ex.ParamName, "timeout");
+				Assert.AreEqual ("scopeTimeout", ex.ParamName);
 			}
 
 			try {
 				TransactionScope scope = new TransactionScope (null, TimeSpan.FromSeconds (-1));
 				Assert.Fail ("Expected exception when passing TransactionScopeOption and an invalid TimeSpan.");
 			} catch (ArgumentOutOfRangeException ex) {
-				Assert.AreEqual (ex.ParamName, "timeout");
+				Assert.AreEqual ("scopeTimeout", ex.ParamName);
 			}
 		}
 
@@ -1094,6 +1095,38 @@ namespace MonoTests.System.Transactions
 		}
 
 		#endregion
+
+		[Test]
+		public void DefaultIsolationLevel()
+		{
+			using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Required))
+			{
+				Assert.AreEqual(IsolationLevel.Serializable, Transaction.Current.IsolationLevel);
+			}
+		}
+		
+		[Test]
+		public void ExplicitIsolationLevel()
+		{
+			TransactionOptions transactionOptions = new TransactionOptions();
+			transactionOptions.IsolationLevel = IsolationLevel.ReadCommitted;
+			using (TransactionScope transactionScope = new TransactionScope(TransactionScopeOption.Required, transactionOptions))
+			{
+				Assert.AreEqual(IsolationLevel.ReadCommitted, Transaction.Current.IsolationLevel);
+			}
+		}
+
+		[Test]
+		[ExpectedException(typeof(TransactionAbortedException))]
+		public void TransactionScopeTimeout()
+		{
+			Assert.IsNull(Transaction.Current, "Ambient transaction exists (before)");
+			using (var ts = new TransactionScope(TransactionScopeOption.Required, TimeSpan.FromMilliseconds(1)))
+			{
+				Thread.Sleep(100);
+				ts.Complete();
+			}
+		}
 	}
 
 }

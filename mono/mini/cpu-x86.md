@@ -25,9 +25,9 @@
 #
 # len:number         describe the maximun length in bytes of the instruction
 # 		     number is a positive integer.  If the length is not specified
-#                    it defaults to zero.   But lengths are only checked if the given opcode 
-#                    is encountered during compilation. Some opcodes, like CONV_U4 are 
-#                    transformed into other opcodes in the brg files, so they do not show up 
+#                    it defaults to zero.   But lengths are only checked if the given opcode
+#                    is encountered during compilation. Some opcodes, like CONV_U4 are
+#                    transformed into other opcodes in the brg files, so they do not show up
 #                    during code generation.
 #
 # cost:number        describe how many cycles are needed to complete the instruction (unused)
@@ -64,9 +64,30 @@
 #
 break: len:1
 call: dest:a clob:c len:17
-tailcall: len:120 clob:c
+tailcall: len:255 clob:c
+tailcall_membase: src1:b len:255 clob:c # FIXME len
+tailcall_reg: src1:b len:255 clob:c # FIXME len
+
+# tailcall_parameter models the size of moving one parameter,
+# so that the required size of a branch around a tailcall can
+# be accurately estimated; something like:
+# void f1(volatile long *a)
+# {
+# a[large] = a[another large]
+# }
+#
+# This is like amd64 but without the rex bytes.
+#
+# Frame size is artificially limited to 1GB in mono_arch_tailcall_supported.
+# This is presently redundant with tailcall len:255, as the limit of
+# near branches is [-128, +127], after which the limit is
+# [-2GB, +2GB-1]
+
+# FIXME A fixed size sequence to move parameters would moot this.
+tailcall_parameter: len:12
+
 br: len:5
-seq_point: len:24 clob:c
+seq_point: len:26 clob:c
 il_seq_point: len:0
 
 int_beq: len:6
@@ -81,18 +102,18 @@ int_ble_un: len:6
 int_blt_un: len:6
 label: len:0
 
-template: name:ibalu dest:i src1:i src2:i clob:1 len:2
+#template: name:ibalu
 
-int_add: template:ibalu
-int_sub: template:ibalu
-int_mul: template:ibalu len:3
+int_add: dest:i src1:i src2:i clob:1 len:2
+int_sub: dest:i src1:i src2:i clob:1 len:2
+int_mul: dest:i src1:i src2:i clob:1 len:3
 int_div: dest:a src1:a src2:i len:15 clob:d
 int_div_un: dest:a src1:a src2:i len:15 clob:d
 int_rem: dest:d src1:a src2:i len:15 clob:a
 int_rem_un: dest:d src1:a src2:i len:15 clob:a
-int_and: template:ibalu
-int_or: template:ibalu
-int_xor: template:ibalu
+int_and: dest:i src1:i src2:i clob:1 len:2
+int_or: dest:i src1:i src2:i clob:1 len:2
+int_xor: dest:i src1:i src2:i clob:1 len:2
 int_shl: dest:i src1:i src2:s clob:1 len:2
 int_shr: dest:i src1:i src2:s clob:1 len:2
 int_shr_un: dest:i src1:i src2:s clob:1 len:2
@@ -118,36 +139,36 @@ int_mul_ovf_un: dest:i src1:i src2:i len:16
 throw: src1:i len:13
 rethrow: src1:i len:13
 start_handler: len:16
-endfinally: len:16 nacl:21
-endfilter: src1:a len:16 nacl:21
+endfinally: len:16
+endfilter: src1:a len:16
 get_ex_obj: dest:a len:16
 
 ckfinite: dest:f src1:f len:32
 ceq: dest:y len:6
 cgt: dest:y len:6
-cgt.un: dest:y len:6
+cgt_un: dest:y len:6
 clt: dest:y len:6
-clt.un: dest:y len:6
+clt_un: dest:y len:6
 localloc: dest:i src1:i len:120
 compare: src1:i src2:i len:2
 compare_imm: src1:i len:6
 fcompare: src1:f src2:f clob:a len:9
-oparglist: src1:b len:10
-checkthis: src1:b len:3
+arglist: src1:b len:10
+check_this: src1:b len:3
 voidcall: len:17 clob:c
 voidcall_reg: src1:i len:11 clob:c
-voidcall_membase: src1:b len:16 nacl:17 clob:c
+voidcall_membase: src1:b len:16 clob:c
 fcall: dest:f len:17 clob:c
 fcall_reg: dest:f src1:i len:11 clob:c
-fcall_membase: dest:f src1:b len:16 nacl:17 clob:c
+fcall_membase: dest:f src1:b len:16 clob:c
 lcall: dest:l len:17 clob:c
 lcall_reg: dest:l src1:i len:11 clob:c
-lcall_membase: dest:l src1:b len:16 nacl:17 clob:c
+lcall_membase: dest:l src1:b len:16 clob:c
 vcall: len:17 clob:c
 vcall_reg: src1:i len:11 clob:c
-vcall_membase: src1:b len:16 nacl:17 clob:c
-call_reg: dest:a src1:i len:11 nacl:14 clob:c
-call_membase: dest:a src1:b len:16 nacl:18 clob:c
+vcall_membase: src1:b len:16 clob:c
+call_reg: dest:a src1:i len:11 clob:c
+call_membase: dest:a src1:b len:16 clob:c
 iconst: dest:i len:5
 r4const: dest:f len:15
 r8const: dest:f len:16
@@ -159,11 +180,10 @@ storei2_membase_imm: dest:b len:11
 storei2_membase_reg: dest:b src1:i len:7
 storei4_membase_imm: dest:b len:10
 storei4_membase_reg: dest:b src1:i len:7
-storei8_membase_imm: dest:b 
-storei8_membase_reg: dest:b src1:i 
+storei8_membase_imm: dest:b
+storei8_membase_reg: dest:b src1:i
 storer4_membase_reg: dest:b src1:f len:7
 storer8_membase_reg: dest:b src1:f len:7
-store_mem_imm: len:12
 load_membase: dest:i src1:b len:7
 loadi1_membase: dest:y src1:b len:7
 loadu1_membase: dest:y src1:b len:7
@@ -237,7 +257,7 @@ float_conv_to_u1: dest:y src1:f len:39
 float_conv_to_i: dest:i src1:f len:39
 float_conv_to_ovf_i: dest:a src1:f len:30
 float_conv_to_ovd_u: dest:a src1:f len:30
-float_mul_ovf: 
+float_mul_ovf:
 float_ceq: dest:y src1:f src2:f len:25
 float_cgt: dest:y src1:f src2:f len:25
 float_cgt_un: dest:y src1:f src2:f len:37
@@ -248,7 +268,7 @@ float_cge: dest:y src1:f src2:f len:37
 float_cle: dest:y src1:f src2:f len:37
 float_conv_to_u: dest:i src1:f len:36
 call_handler: len:11 clob:c
-aot_const: dest:i len:5
+aotconst: dest:i len:5
 load_gotaddr: dest:i len:64
 got_entry: dest:i src1:b len:7
 gc_safe_point: clob:c src1:i len:20
@@ -291,7 +311,7 @@ subcc: dest:i src1:i src2:i len:2 clob:1
 adc_imm: dest:i src1:i len:6 clob:1
 sbb: dest:i src1:i src2:i len:2 clob:1
 sbb_imm: dest:i src1:i len:6 clob:1
-br_reg: src1:i len:2 nacl:5
+br_reg: src1:i len:2
 sin: dest:f src1:f len:6
 cos: dest:f src1:f len:6
 abs: dest:f src1:f len:2
@@ -304,9 +324,7 @@ bigmul_un: len:2 dest:l src1:a src2:i
 sext_i1: dest:i src1:y len:3
 sext_i2: dest:i src1:y len:3
 tls_get: dest:i len:32
-tls_get_reg: dest:i src1:i len:20
 tls_set: src1:i len:20
-tls_set_reg: src1:i src2:i len:20
 atomic_add_i4: src1:b src2:i dest:i len:16
 atomic_exchange_i4: src1:b src2:i dest:a len:24
 atomic_cas_i4: src1:b src2:i src3:a dest:a len:24
@@ -336,9 +354,9 @@ hard_nop: len:1
 # Linear IR opcodes
 nop: len:0
 dummy_use: src1:i len:0
-dummy_store: len:0
 dummy_iconst: dest:i len:0
 dummy_r8const: dest:f len:0
+dummy_r4const: dest:f len:0
 not_reached: len:0
 not_null: src1:i len:0
 
@@ -407,7 +425,7 @@ cmov_ile_un: dest:i src1:i src2:i len:16 clob:1
 cmov_ilt_un: dest:i src1:i src2:i len:16 clob:1
 
 long_conv_to_ovf_i4_2: dest:i src1:i src2:i len:30
-long_conv_to_r8_2: dest:f src1:i src2:i len:14 
+long_conv_to_r8_2: dest:f src1:i src2:i len:14
 long_conv_to_r4_2: dest:f src1:i src2:i len:14
 long_conv_to_r_un_2: dest:f src1:i src2:i len:40
 
@@ -423,7 +441,7 @@ loadu2_mem: dest:i len:9
 
 vcall2: len:17 clob:c
 vcall2_reg: src1:i len:11 clob:c
-vcall2_membase: src1:b len:16 nacl:17 clob:c
+vcall2_membase: src1:b len:16 clob:c
 
 localloc_imm: dest:i len:120
 
@@ -484,9 +502,9 @@ sqrtps: dest:x src1:x len:4
 rsqrtps: dest:x src1:x len:4
 rcpps: dest:x src1:x len:4
 
-pshufflew_high: dest:x src1:x len:5
-pshufflew_low: dest:x src1:x len:5
-pshuffled: dest:x src1:x len:5
+pshuflew_high: dest:x src1:x len:5
+pshuflew_low: dest:x src1:x len:5
+pshufled: dest:x src1:x len:5
 shufps: dest:x src1:x src2:x len:4 clob:1
 shufpd: dest:x src1:x src2:x len:5 clob:1
 
@@ -531,7 +549,7 @@ pcmpgtw: dest:x src1:x src2:x len:4 clob:1
 pcmpgtd: dest:x src1:x src2:x len:4 clob:1
 pcmpgtq: dest:x src1:x src2:x len:5 clob:1
 
-psumabsdiff: dest:x src1:x src2:x len:4 clob:1
+psum_abs_diff: dest:x src1:x src2:x len:4 clob:1
 
 unpack_lowb: dest:x src1:x src2:x len:4 clob:1
 unpack_loww: dest:x src1:x src2:x len:4 clob:1
@@ -547,11 +565,11 @@ unpack_highq: dest:x src1:x src2:x len:4 clob:1
 unpack_highps: dest:x src1:x src2:x len:3 clob:1
 unpack_highpd: dest:x src1:x src2:x len:4 clob:1
 
-packw: dest:x src1:x src2:x len:4 clob:1 
-packd: dest:x src1:x src2:x len:4 clob:1 
+packw: dest:x src1:x src2:x len:4 clob:1
+packd: dest:x src1:x src2:x len:4 clob:1
 
-packw_un: dest:x src1:x src2:x len:4 clob:1 
-packd_un: dest:x src1:x src2:x len:5 clob:1 
+packw_un: dest:x src1:x src2:x len:4 clob:1
+packd_un: dest:x src1:x src2:x len:5 clob:1
 
 paddb_sat: dest:x src1:x src2:x len:4 clob:1
 paddb_sat_un: dest:x src1:x src2:x len:4 clob:1
@@ -569,8 +587,8 @@ pmulw: dest:x src1:x src2:x len:4 clob:1
 pmuld: dest:x src1:x src2:x len:5 clob:1
 pmulq: dest:x src1:x src2:x len:4 clob:1
 
-pmul_high_un: dest:x src1:x src2:x len:4 clob:1
-pmul_high: dest:x src1:x src2:x len:4 clob:1
+pmulw_high_un: dest:x src1:x src2:x len:4 clob:1
+pmulw_high: dest:x src1:x src2:x len:4 clob:1
 
 pshrw: dest:x src1:x len:5 clob:1
 pshrw_reg: dest:x src1:x src2:x len:4 clob:1
@@ -607,6 +625,7 @@ cvttps2dq: dest:x src1:x len:4 clob:1
 
 xmove: dest:x src1:x len:4
 xzero: dest:x len:4
+xones: dest:x len:4
 
 iconv_to_x: dest:x src1:i len:4
 extract_i4: dest:i src1:x len:4
@@ -615,7 +634,7 @@ extract_i2: dest:i src1:x len:10
 extract_u2: dest:i src1:x len:10
 extract_i1: dest:i src1:x len:10
 extract_u1: dest:i src1:x len:10
-extract_r8: dest:f src1:x len:8 
+extract_r8: dest:f src1:x len:8
 
 insert_i2: dest:x src1:x src2:i len:5 clob:1
 
@@ -634,16 +653,15 @@ loadx_aligned_membase: dest:x src1:b len:7
 storex_aligned_membase_reg: dest:b src1:x len:7
 storex_nta_membase_reg: dest:b src1:x len:7
 
-fconv_to_r8_x: dest:x src1:f len:14 
+fconv_to_r8_x: dest:x src1:f len:14
 xconv_r8_to_i4: dest:y src1:x len:7
 
 prefetch_membase: src1:b len:4
 
-expand_i1: dest:x src1:y len:17 clob:1
 expand_i2: dest:x src1:i len:15
 expand_i4: dest:x src1:i len:9
-expand_r4: dest:x src1:f len:13
-expand_r8: dest:x src1:f len:13
+expand_r4: dest:x src1:f len:20
+expand_r8: dest:x src1:f len:20
 
 liverange_start: len:0
 liverange_end: len:0
@@ -653,3 +671,7 @@ gc_spill_slot_liveness_def: len:0
 gc_param_slot_liveness_def: len:0
 get_sp: dest:i len:6
 set_sp: src1:i len:6
+
+fill_prof_call_ctx: src1:i len:128
+
+get_last_error: dest:i len:32

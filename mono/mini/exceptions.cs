@@ -1331,6 +1331,48 @@ class Tests
 		return 0;
 	}
 
+	/* Github issue 13284 */
+	public static int test_0_ulong_ovf_spilling () {
+		checked {
+			ulong x = 2UL;
+			ulong y = 1UL;
+			ulong z = 3UL;
+			ulong t = x - y;
+
+			try {
+				var a = x - y >= z;
+				if (a)
+					return 1;
+				// Console.WriteLine ($"u64 ({x} - {y} >= {z}) => {a} [{(a == false ? "OK" : "NG")}]");
+			} catch (OverflowException) {
+				return 2;
+				// Console.WriteLine ($"u64 ({x} - {y} >= {z}) => overflow [NG]");
+			}
+
+			try {
+				var a = t >= z;
+				if (a)
+					return 3;
+				// Console.WriteLine ($"u64 ({t} >= {z}) => {a} [{(a == false ? "OK" : "NG")}]");
+			} catch (OverflowException) {
+				return 4;
+				// Console.WriteLine ($"u64 ({t} >= {z}) => overflow [NG]");
+			}
+
+			try {
+				var a = x - y - z >= 0;
+				if (a)
+					return 5;
+				else
+					return 6;
+				// Console.WriteLine ($"u64 ({x} - {y} - {z} >= 0) => {a} [NG]");
+			} catch (OverflowException) {
+				return 0;
+				// Console.WriteLine ($"u64 ({x} - {y} - {z} >= 0) => overflow [OK]");
+			}
+		}
+	}
+
 	public static int test_0_ulong_cast () {
 		ulong a;
 		bool failed;
@@ -1462,7 +1504,6 @@ class Tests
 		return 0;
 	}
 	
-	[Category ("NaClDisable")]
 	public static int test_0_div_zero () {
 		int d = 1;
 		int q = 0;
@@ -1633,7 +1674,6 @@ class Tests
 		return 0;
 	}
 
-	[Category ("NaClDisable")]
 	public static int test_0_long_div_zero () {
 		long d = 1;
 		long q = 0;
@@ -1665,7 +1705,7 @@ class Tests
 			val = d / q;
 		} catch (DivideByZeroException) {
 			/* wrong exception */
-		} catch (ArithmeticException) {
+		} catch (OverflowException) {
 			failed = false;
 		}
 		if (failed)
@@ -1678,7 +1718,7 @@ class Tests
 			val = d % q;
 		} catch (DivideByZeroException) {
 			/* wrong exception */
-		} catch (ArithmeticException) {
+		} catch (OverflowException) {
 			failed = false;
 		}
 		if (failed)
@@ -2843,6 +2883,150 @@ class Tests
 			return 1;
 		} catch {
 		}
+		return 0;
+	}
+
+	public class MyException : Exception {
+		public int marker = 0;
+		public string res = "";
+
+		public MyException (String res) {
+			this.res = res;
+		}
+
+		public bool FilterWithoutState () {
+			return this.marker == 0x666;
+		}
+
+		public bool FilterWithState () {
+			bool ret = this.marker == 0x566;
+			this.marker += 0x100;
+			return ret;
+		}
+
+		public bool FilterWithStringState () {
+			bool ret = this.marker == 0x777;
+			this.res = "fromFilter_" + this.res;
+			return ret;
+		}
+	}
+
+	[Category ("!BITCODE")]
+	public static int test_1_basic_filter_catch () {
+		try {
+			MyException e = new MyException ("");
+			e.marker = 0x1337;
+			throw e;
+		} catch (MyException ex) when (ex.marker == 0x1337) {
+			return 1;
+		}
+		return 0;
+	}
+
+	[Category ("!BITCODE")]
+	public static int test_1234_complicated_filter_catch () {
+		string res = "init";
+		try {
+			MyException e = new MyException (res);
+			e.marker = 0x566;
+			try {
+				try {
+					throw e;
+				} catch (MyException ex) when (ex.FilterWithoutState ()) {
+					res = "WRONG_" + res;
+				} finally {
+					e.marker = 0x777;
+					res = "innerFinally_" + res;
+				}
+			} catch (MyException ex) when (ex.FilterWithState ()) {
+				res = "2ndcatch_" + res;
+			}
+			// "2ndcatch_innerFinally_init"
+			// Console.WriteLine ("res1: " + res);
+			e.res = res;
+			throw e;
+		} catch (MyException ex) when (ex.FilterWithStringState ()) {
+			res = "fwos_" + ex.res;
+		} finally {
+			res = "outerFinally_" + res;
+		}
+		// Console.WriteLine ("res2: " + res);
+		return "outerFinally_fwos_fromFilter_2ndcatch_innerFinally_init" == res ? 1234 : 0;
+	}
+
+    public struct FooStruct
+    {
+        public long Part1 { get; }
+        public long Part2 { get; }
+
+        public byte Part3 { get; }
+    }
+
+    [MethodImpl( MethodImplOptions.NoInlining )]
+    private static bool ExceptionFilter( byte x, FooStruct item ) => true;
+
+	[Category ("!BITCODE")]
+	public static int test_0_filter_caller_area () {
+        try {
+            throw new Exception();
+        }
+        catch (Exception) when (ExceptionFilter (default(byte), default (FooStruct))) {
+        }
+		return 0;
+	}
+
+	public static int test_0_signed_ct_div () {
+		int n = 2147483647;
+		bool divide_by_zero = false;
+		bool overflow = false;
+
+		n = -n;
+		n--; /* MinValue */
+		try {
+			int r = n / (-1);
+		} catch (OverflowException) {
+			overflow = true;
+		}
+		if (!overflow)
+			return 7;
+
+		try {
+			int r = n / 0;
+		} catch (DivideByZeroException) {
+			divide_by_zero = true;
+		}
+		if (!divide_by_zero)
+			return 8;
+
+		if ((n / 35) != -61356675)
+			return 9;
+		if ((n / -35) != 61356675)
+			return 10;
+		n = -(n + 1);  /* MaxValue */
+		if ((n / 35) != 61356675)
+			return 11;
+		if ((n / -35) != -61356675)
+			return 12;
+
+		return 0;
+	}
+
+	public static int test_0_unsigned_ct_div () {
+		uint n = 4294967295;
+		bool divide_by_zero = false;
+
+		try {
+			uint a = n / 0;
+		} catch (DivideByZeroException) {
+			divide_by_zero = true;
+		}
+
+		if (!divide_by_zero)
+			return 5;
+
+		if ((n / 35) != 122713351)
+			return 9;
+
 		return 0;
 	}
 }

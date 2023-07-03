@@ -3,27 +3,24 @@ SUBDIRS =
 include ../../build/rules.make
 
 LIBRARY = System.Web.Services.dll
+KEYFILE = ../msfinal.pub
 ifdef MOBILE_PROFILE
 LIB_REFS = System System.Xml
 LIB_MCS_FLAGS = \
-	-nowarn:649 -nowarn:169			\
+	-nowarn:649 -nowarn:168		\
 	-resource:System.Web.Services.Description/wsdl-1.1.xsd,wsdl-1.1.xsd \
 	-resource:System.Web.Services.Description/wsdl-1.1-soap.xsd,wsdl-1.1-soap.xsd \
 	-resource:System.Web.Services.Description/web-reference.xsd,web-reference.xsd
 else
 LIB_REFS = System System.EnterpriseServices System.Xml System.Data
-LIB_MCS_FLAGS = -nowarn:168,169,219,414,612,649 -d:MONO_BROKEN_CONFIGURATION_DLL
+LIB_MCS_FLAGS = -nowarn:168,612,618,649 -d:MONO_BROKEN_CONFIGURATION_DLL
 
 ifndef NO_SYSTEM_WEB_DEPENDENCY
-plainweb = $(the_libdir_base)plainweb/System.Web.dll
-system_web_deps = $(plainweb)
-LIB_REFS += plainweb/System.Web
+API_BIN_REFS := System.Web
 endif
 
 ifndef NO_SYSTEM_DESIGN_DEPENDENCY
-plaindesign = $(the_libdir_base)plaindesign/System.Design.dll
-system_design_deps = $(plaindesign)
-LIB_REFS += plaindesign/System.Design
+LIB_REFS += System.Design
 endif
 
 ifndef NO_SYSTEM_DIRECTORY_SERVICES_DEPENDENCY
@@ -47,21 +44,27 @@ ifndef NO_THREAD_SUSPEND_RESUME
 TEST_MCS_FLAGS += -d:MONO_FEATURE_THREAD_SUSPEND_RESUME
 endif
 
+TEST_RESOURCE_FILES = $(wildcard Test/System.Web.Services.Description/*.wsdl)
+
+TEST_MCS_FLAGS += $(foreach r, $(TEST_RESOURCE_FILES), -resource:$(r),$(r))
+
+#
+# This is only used to test the tool in `--existing` mode, see my comment
+# at top top of tools/resx2sr/resx2sr.cs
+#
+
+RESX_EXTRA_ARGUMENTS = \
+	--in=corefx/SR.template.cs --name=System.Web.Services.Res --existing
+
+RESX_RESOURCE_STRING = \
+	../referencesource/System.Web.Services/System.Web.Services.txt
+
+
 EXTRA_DISTFILES = \
 	System.Web.Services.Description/web-reference.xsd	\
 	System.Web.Services.Description/wsdl-1.1.xsd		\
 	System.Web.Services.Description/wsdl-1.1-soap.xsd	\
 	System.Web.Services.Description/wsdl.genxs		\
-	Test/System.Web.Services.Description/*.wsdl
+	$(TEST_RESOURCE_FILES)
 
 include ../../build/library.make
-
-$(the_libdir_base)$(LIBRARY): $(system_web_deps) $(system_design_deps)
-
-$(plainweb):
-	(cd ../System.Web; $(MAKE) $@)
-
-$(plaindesign):
-	(cd ../System.Design; $(MAKE) $@)
-
-.NOTPARALLEL: $(plainweb) $(plaindesign)

@@ -1,5 +1,6 @@
-/*
- * strenc.c: string encoding conversions
+/**
+ * \file
+ * string encoding conversions
  *
  * Author:
  *	Dick Porter (dick@ximian.com)
@@ -12,6 +13,9 @@
 #include <string.h>
 
 #include "strenc.h"
+#include "strenc-internals.h"
+#include "mono-error.h"
+#include "mono-error-internals.h"
 
 static const char trailingBytesForUTF8[256] = {
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -26,26 +30,24 @@ static const char trailingBytesForUTF8[256] = {
 
 /**
  * mono_unicode_from_external:
- * @in: pointers to the buffer.
- * @bytes: number of bytes in the string.
+ * \param in pointers to the buffer.
+ * \param bytes number of bytes in the string.
+ * Tries to turn a NULL-terminated string into UTF-16.
  *
- * Tries to turn a NULL-terminated string into UTF16.
- *
- * First, see if it's valid UTF8, in which case just turn it directly
- * into UTF16.  Next, run through the colon-separated encodings in
- * MONO_EXTERNAL_ENCODINGS and do an iconv conversion on each,
- * returning the first successful conversion to UTF16.  If no
+ * First, see if it's valid UTF-8, in which case just turn it directly
+ * into UTF-16.  Next, run through the colon-separated encodings in
+ * \c MONO_EXTERNAL_ENCODINGS and do an \c iconv conversion on each,
+ * returning the first successful conversion to UTF-16.  If no
  * conversion succeeds, return NULL.
  *
- * Callers must free the returned string if not NULL. bytes holds the number
+ * Callers must free the returned string if not NULL. \p bytes holds the number
  * of bytes in the returned string, not including the terminator.
  */
-gunichar2 *
-mono_unicode_from_external (const gchar *in, gsize *bytes)
+gunichar2 *mono_unicode_from_external (const gchar *in, gsize *bytes)
 {
 	gchar *res=NULL;
 	gchar **encodings;
-	const gchar *encoding_list;
+	gchar *encoding_list;
 	int i;
 	glong lbytes;
 	
@@ -55,10 +57,11 @@ mono_unicode_from_external (const gchar *in, gsize *bytes)
 	
 	encoding_list=g_getenv ("MONO_EXTERNAL_ENCODINGS");
 	if(encoding_list==NULL) {
-		encoding_list = "";
+		encoding_list = g_strdup("");
 	}
 	
 	encodings=g_strsplit (encoding_list, ":", 0);
+	g_free (encoding_list);
 	for(i=0;encodings[i]!=NULL; i++) {
 		/* "default_locale" is a special case encoding */
 		if(!strcmp (encodings[i], "default_locale")) {
@@ -89,8 +92,10 @@ mono_unicode_from_external (const gchar *in, gsize *bytes)
 	g_strfreev (encodings);
 	
 	if(g_utf8_validate (in, -1, NULL)) {
-		gunichar2 *unires=g_utf8_to_utf16 (in, -1, NULL, (glong *)bytes, NULL);
-		*bytes *= 2;
+		glong items_written;
+		gunichar2 *unires=g_utf8_to_utf16 (in, -1, NULL, &items_written, NULL);
+		items_written *= 2;
+		*bytes = items_written;
 		return(unires);
 	}
 
@@ -99,27 +104,26 @@ mono_unicode_from_external (const gchar *in, gsize *bytes)
 
 /**
  * mono_utf8_from_external:
- * @in: pointer to the string buffer.
- *
+ * \param in pointer to the string buffer.
  * Tries to turn a NULL-terminated string into UTF8.
  *
- * First, see if it's valid UTF8, in which case there's nothing more
+ * First, see if it's valid UTF-8, in which case there's nothing more
  * to be done.  Next, run through the colon-separated encodings in
- * MONO_EXTERNAL_ENCODINGS and do an iconv conversion on each,
- * returning the first successful conversion to utf8.  If no
+ * \c MONO_EXTERNAL_ENCODINGS and do an \c iconv conversion on each,
+ * returning the first successful conversion to UTF-8.  If no
  * conversion succeeds, return NULL.
  *
  * Callers must free the returned string if not NULL.
  *
- * This function is identical to mono_unicode_from_external, apart
- * from returning utf8 not utf16; it's handy in a few places to work
- * in utf8.
+ * This function is identical to \c mono_unicode_from_external, apart
+ * from returning UTF-8 not UTF-16; it's handy in a few places to work
+ * in UTF-8.
  */
 gchar *mono_utf8_from_external (const gchar *in)
 {
 	gchar *res=NULL;
 	gchar **encodings;
-	const gchar *encoding_list;
+	gchar *encoding_list;
 	int i;
 	
 	if(in==NULL) {
@@ -128,10 +132,11 @@ gchar *mono_utf8_from_external (const gchar *in)
 	
 	encoding_list=g_getenv ("MONO_EXTERNAL_ENCODINGS");
 	if(encoding_list==NULL) {
-		encoding_list = "";
+		encoding_list = g_strdup("");
 	}
 	
 	encodings=g_strsplit (encoding_list, ":", 0);
+	g_free (encoding_list);
 	for(i=0;encodings[i]!=NULL; i++) {
 		
 		/* "default_locale" is a special case encoding */
@@ -163,24 +168,32 @@ gchar *mono_utf8_from_external (const gchar *in)
 
 /**
  * mono_unicode_to_external:
- * @uni: an UTF16 string to conver to an external representation.
- *
- * Turns NULL-terminated UTF16 into either UTF8, or the first
- * working item in MONO_EXTERNAL_ENCODINGS if set.  If no conversions
- * work, then UTF8 is returned.
- *
+ * \param uni a UTF-16 string to convert to an external representation.
+ * Turns NULL-terminated UTF-16 into either UTF-8, or the first
+ * working item in \c MONO_EXTERNAL_ENCODINGS if set.  If no conversions
+ * work, then UTF-8 is returned.
  * Callers must free the returned string.
  */
 gchar *mono_unicode_to_external (const gunichar2 *uni)
 {
+	return mono_unicode_to_external_checked (uni, NULL);
+}
+
+gchar *mono_unicode_to_external_checked (const gunichar2 *uni, MonoError *err)
+{
 	gchar *utf8;
-	const gchar *encoding_list;
+	gchar *encoding_list;
+	GError *gerr = NULL;
 	
 	/* Turn the unicode into utf8 to start with, because its
 	 * easier to work with gchar * than gunichar2 *
 	 */
-	utf8=g_utf16_to_utf8 (uni, -1, NULL, NULL, NULL);
-	g_assert (utf8!=NULL);
+	utf8=g_utf16_to_utf8 (uni, -1, NULL, NULL, &gerr);
+	if (utf8 == NULL) {
+		mono_error_set_argument (err, "uni", gerr->message);
+		g_error_free (gerr);
+		return utf8;
+	}
 	
 	encoding_list=g_getenv ("MONO_EXTERNAL_ENCODINGS");
 	if(encoding_list==NULL) {
@@ -191,6 +204,7 @@ gchar *mono_unicode_to_external (const gunichar2 *uni)
 		int i;
 		
 		encodings=g_strsplit (encoding_list, ":", 0);
+		g_free (encoding_list);
 		for(i=0; encodings[i]!=NULL; i++) {
 			if(!strcmp (encodings[i], "default_locale")) {
 				res=g_locale_from_utf8 (utf8, -1, NULL, NULL,
@@ -217,15 +231,13 @@ gchar *mono_unicode_to_external (const gunichar2 *uni)
 
 /**
  * mono_utf8_validate_and_len
- * @source: Pointer to putative UTF-8 encoded string.
- *
- * Checks @source for being valid UTF-8. @utf is assumed to be
+ * \param source Pointer to putative UTF-8 encoded string.
+ * Checks \p source for being valid UTF-8. \p utf is assumed to be
  * null-terminated.
- *
- * Return value: true if @source is valid.
- * oEnd : will equal the null terminator at the end of the string if valid.
- *            if not valid, it will equal the first charater of the invalid sequence.
- * oLengh : will equal the length to @oEnd
+ * \returns TRUE if \p source is valid.
+ * \p oEnd will equal the null terminator at the end of the string if valid.
+ * if not valid, it will equal the first charater of the invalid sequence.
+ * \p oLength will equal the length to \p oEnd
  **/
 gboolean
 mono_utf8_validate_and_len (const gchar *source, glong* oLength, const gchar** oEnd)
@@ -256,8 +268,11 @@ mono_utf8_validate_and_len (const gchar *source, glong* oLength, const gchar** o
 		/* no fall-through in this inner switch */
 		case 0xE0: if (a < (guchar) 0xA0) retVal = FALSE; break;
 		case 0xED: if (a > (guchar) 0x9F) retVal = FALSE; break;
-		case 0xEF: if (a == (guchar)0xB7 && (*(srcPtr+1) > (guchar) 0x8F && *(srcPtr+1) < 0xB0)) retVal = FALSE;
-				   if (a == (guchar)0xBF && (*(srcPtr+1) == (guchar) 0xBE || *(srcPtr+1) == 0xBF)) retVal = FALSE; break;
+		case 0xEF: {
+			if (a == (guchar)0xB7 && (*(srcPtr+1) > (guchar) 0x8F && *(srcPtr+1) < 0xB0)) retVal = FALSE;
+			else if (a == (guchar)0xBF && (*(srcPtr+1) == (guchar) 0xBE || *(srcPtr+1) == 0xBF)) retVal = FALSE;
+			break;
+		}
 		case 0xF0: if (a < (guchar) 0x90) retVal = FALSE; break;
 		case 0xF4: if (a > (guchar) 0x8F) retVal = FALSE; break;
 		default:   if (a < (guchar) 0x80) retVal = FALSE;
@@ -284,17 +299,18 @@ mono_utf8_validate_and_len (const gchar *source, glong* oLength, const gchar** o
 
 /**
  * mono_utf8_validate_and_len_with_bounds
- * @source: Pointer to putative UTF-8 encoded string.
- * @max_bytes: Max number of bytes that can be decoded. This function returns FALSE if
- * it needs to decode characters beyond that.
+ * \param source: Pointer to putative UTF-8 encoded string.
+ * \param max_bytes: Max number of bytes that can be decoded.
  *
- * Checks @source for being valid UTF-8. @utf is assumed to be
+ * Checks \p source for being valid UTF-8. \p utf is assumed to be
  * null-terminated.
  *
- * Return value: true if @source is valid.
- * oEnd : will equal the null terminator at the end of the string if valid.
- *            if not valid, it will equal the first charater of the invalid sequence.
- * oLengh : will equal the length to @oEnd
+ * This function returns FALSE if it needs to decode characters beyond \p max_bytes.
+ *
+ * \returns TRUE if \p source is valid.
+ * \p oEnd will equal the null terminator at the end of the string if valid.
+ * if not valid, it will equal the first charater of the invalid sequence.
+ * \p oLength will equal the length to \p oEnd
  **/
 gboolean
 mono_utf8_validate_and_len_with_bounds (const gchar *source, glong max_bytes, glong* oLength, const gchar** oEnd)
@@ -340,8 +356,11 @@ mono_utf8_validate_and_len_with_bounds (const gchar *source, glong max_bytes, gl
 		/* no fall-through in this inner switch */
 		case 0xE0: if (a < (guchar) 0xA0) retVal = FALSE; break;
 		case 0xED: if (a > (guchar) 0x9F) retVal = FALSE; break;
-		case 0xEF: if (a == (guchar)0xB7 && (*(srcPtr+1) > (guchar) 0x8F && *(srcPtr+1) < 0xB0)) retVal = FALSE;
-				   if (a == (guchar)0xBF && (*(srcPtr+1) == (guchar) 0xBE || *(srcPtr+1) == 0xBF)) retVal = FALSE; break;
+		case 0xEF: {
+			if (a == (guchar)0xB7 && (*(srcPtr+1) > (guchar) 0x8F && *(srcPtr+1) < 0xB0)) retVal = FALSE;
+			else if (a == (guchar)0xBF && (*(srcPtr+1) == (guchar) 0xBE || *(srcPtr+1) == 0xBF)) retVal = FALSE;
+			break;
+		}
 		case 0xF0: if (a < (guchar) 0x90) retVal = FALSE; break;
 		case 0xF4: if (a > (guchar) 0x8F) retVal = FALSE; break;
 		default:   if (a < (guchar) 0x80) retVal = FALSE;

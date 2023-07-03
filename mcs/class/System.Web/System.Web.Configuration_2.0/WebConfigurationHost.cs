@@ -174,7 +174,11 @@ namespace System.Web.Configuration
 		{
 			string fullPath = (string) hostInitConfigurationParams [1];
 			map = (WebConfigurationFileMap) hostInitConfigurationParams [0];
-			bool inAnotherApp = (bool) hostInitConfigurationParams [7];
+			bool inAnotherApp = false;
+
+			if ((hostInitConfigurationParams.Length > 7)
+				&& (hostInitConfigurationParams[7] is bool))
+				inAnotherApp = (bool) hostInitConfigurationParams[7];
 
 			if (inAnotherApp)
 				appVirtualPath = fullPath;
@@ -268,7 +272,8 @@ namespace System.Web.Configuration
 		{
 			string path = NormalizeVirtualPath (virtualPath);
 			
-			foreach (VirtualDirectoryMapping mapping in map.VirtualDirectories) {
+			for (int j = 0; j < map.VirtualDirectories.Count; j++) {
+				VirtualDirectoryMapping mapping = map.VirtualDirectories.Get(j);
 				if (path.StartsWith (mapping.VirtualDirectory)) {
 					int i = mapping.VirtualDirectory.Length;
 					if (path.Length == i) {

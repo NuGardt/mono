@@ -25,53 +25,44 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-using System;
-using System.Collections.Generic;
-using System.Net;
+#if WIN_PLATFORM
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace System.Net.NetworkInformation
 {
+	class Win32NetworkInterface {
+		[DllImport ("iphlpapi.dll", SetLastError = true)]
+		static extern int GetNetworkParams (IntPtr ptr, ref int size);
+
+		static Win32_FIXED_INFO fixedInfo;
+		static bool initialized = false;
+
+		public static Win32_FIXED_INFO FixedInfo {
+			get {
+				if (!initialized) {
+					int len = 0;
+					IntPtr ptr = IntPtr.Zero;
+					GetNetworkParams (ptr, ref len);
+					ptr = Marshal.AllocHGlobal(len);
+					GetNetworkParams (ptr, ref len);
+					fixedInfo = Marshal.PtrToStructure<Win32_FIXED_INFO> (ptr);
+					initialized = true;
+				}
+				return fixedInfo;
+			}
+		}
+	}
+
 	// They are mostly defined in iptypes.h (included by iphlpapi.h).
 	// grep around /usr/include/w32api/* for identifiers you are curious.
 
 	[StructLayout (LayoutKind.Sequential)]
-	class Win32_FIXED_INFO
+	struct Win32_FIXED_INFO
 	{
-		[DllImport ("iphlpapi.dll", SetLastError = true)]
-		static extern int GetNetworkParams (byte [] bytes, ref int size);
-
-		static Win32_FIXED_INFO fixed_info;
-
-		public static Win32_FIXED_INFO Instance {
-			get {
-				if (fixed_info == null)
-					fixed_info = GetInstance ();
-				return fixed_info;
-			}
-		}
-
-		static Win32_FIXED_INFO GetInstance ()
-		{
-			int len = 0;
-			byte [] bytes = null;
-			GetNetworkParams (null, ref len);
-			bytes = new byte [len];
-			GetNetworkParams (bytes, ref len);
-			Win32_FIXED_INFO info = new Win32_FIXED_INFO ();
-			unsafe {
-				fixed (byte* ptr = bytes) {
-					Marshal.PtrToStructure ((IntPtr) ptr, info);
-				}
-			}
-			return info;
-		}
 
 		const int MAX_HOSTNAME_LEN = 128;
 		const int MAX_DOMAIN_NAME_LEN = 128;
 		const int MAX_SCOPE_ID_LEN = 256;
-
 		[MarshalAs (UnmanagedType.ByValTStr, SizeConst = MAX_HOSTNAME_LEN + 4)]
 		public string HostName;
 		[MarshalAs (UnmanagedType.ByValTStr, SizeConst = MAX_DOMAIN_NAME_LEN + 4)]
@@ -98,7 +89,7 @@ namespace System.Net.NetworkInformation
 	}
 
 	[StructLayout (LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-	class Win32_IP_ADAPTER_ADDRESSES {
+	struct Win32_IP_ADAPTER_ADDRESSES {
 		public AlignmentUnion Alignment;
 		public IntPtr Next; // to Win32_IP_ADAPTER_ADDRESSES
 		[MarshalAs (UnmanagedType.LPStr)]
@@ -118,20 +109,46 @@ namespace System.Net.NetworkInformation
 		public NetworkInterfaceType IfType;
 		public OperationalStatus OperStatus;
 		public int Ipv6IfIndex;
-		[MarshalAs (UnmanagedType.ByValArray, SizeConst = 16 * 4)]
+		[MarshalAs (UnmanagedType.ByValArray, SizeConst = 16)]
 		public uint [] ZoneIndices;
+		public IntPtr FirstPrefix; // to PIP_ADAPTER_PREFIX
+		public UInt64 TransmitLinkSpeed;
+		public UInt64 ReceiveLinkSpeed;
+		public IntPtr FirstWinsServerAddress; // to PIP_ADAPTER_WINS_SERVER_ADDRESS_LH
+		public IntPtr FirstGatewayAddress; // to PIP_ADAPTER_GATEWAY_ADDRESS_LH
+		public uint Ipv4Metric;
+		public uint Ipv6Metric;
+		public UInt64 Luid;
+		public Win32_SOCKET_ADDRESS Dhcpv4Server;
+		public uint CompartmentId;
+		public UInt64 NetworkGuid;
+		public int ConnectionType;
+		public int TunnelType;
+		public Win32_SOCKET_ADDRESS Dhcpv6Server;
+		[MarshalAs (UnmanagedType.ByValArray, SizeConst = MAX_DHCPV6_DUID_LENGTH)]
+		public byte [] Dhcpv6ClientDuid;
+		public ulong Dhcpv6ClientDuidLength;
+		public ulong Dhcpv6Iaid;
+		public IntPtr FirstDnsSuffix; // to PIP_ADAPTER_DNS_SUFFIX
 
-		// Note that Vista-only members and XP-SP1-only member are
-		// omitted.
+		//Flags For GetAdapterAddresses
+		public const int GAA_FLAG_INCLUDE_WINS_INFO = 0x0040;
+		public const int GAA_FLAG_INCLUDE_GATEWAYS = 0x0080;
 
 		const int MAX_ADAPTER_ADDRESS_LENGTH = 8;
+		const int MAX_DHCPV6_DUID_LENGTH = 130;
 
 		const int IP_ADAPTER_DDNS_ENABLED = 1;
+		const int IP_ADAPTER_DHCP_ENABLED = 4;
 		const int IP_ADAPTER_RECEIVE_ONLY = 8;
 		const int IP_ADAPTER_NO_MULTICAST = 0x10;
 
 		public bool DdnsEnabled {
 			get { return (Flags & IP_ADAPTER_DDNS_ENABLED) != 0; }
+		}
+
+		public bool DhcpEnabled {
+			get { return (Flags & IP_ADAPTER_DHCP_ENABLED) != 0; }
 		}
 
 		public bool IsReceiveOnly {
@@ -144,7 +161,7 @@ namespace System.Net.NetworkInformation
 	}
 
 	[StructLayout (LayoutKind.Sequential)]
-	class Win32_IP_ADAPTER_INFO
+	struct Win32_IP_ADAPTER_INFO
 	{
 		const int MAX_ADAPTER_NAME_LENGTH = 256;
 		const int MAX_ADAPTER_DESCRIPTION_LENGTH = 128;
@@ -265,6 +282,22 @@ namespace System.Net.NetworkInformation
 	}
 
 	[StructLayout (LayoutKind.Sequential)]
+	struct Win32_IP_ADAPTER_GATEWAY_ADDRESS
+	{
+		public Win32LengthFlagsUnion LengthFlags;
+		public IntPtr Next; // to Win32_IP_ADAPTER_GATEWAY_ADDRESS
+		public Win32_SOCKET_ADDRESS Address;
+	}
+
+	[StructLayout (LayoutKind.Sequential)]
+	struct Win32_IP_ADAPTER_WINS_SERVER_ADDRESS
+	{
+		public Win32LengthFlagsUnion LengthFlags;
+		public IntPtr Next; // to Win32_IP_ADAPTER_WINS_SERVER_ADDRESS
+		public Win32_SOCKET_ADDRESS Address;
+	}
+
+	[StructLayout (LayoutKind.Sequential)]
 	struct Win32_IP_ADAPTER_UNICAST_ADDRESS
 	{
 		public Win32LengthFlagsUnion LengthFlags;
@@ -314,4 +347,4 @@ namespace System.Net.NetworkInformation
 		const int AF_INET6 = 23;
 	}
 }
-
+#endif

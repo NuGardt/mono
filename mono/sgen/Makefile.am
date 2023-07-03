@@ -1,21 +1,14 @@
+MAKEFLAGS := $(MAKEFLAGS) --no-builtin-rules
+
+if !ENABLE_MSVC_ONLY
+
 AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/mono $(LIBGC_CPPFLAGS) $(GLIB_CFLAGS) $(SHARED_CFLAGS)
 
 if SUPPORT_SGEN
-if DISABLE_EXECUTABLES
 shared_libraries = libmonosgen.la
-else
-if SHARED_MONO
-shared_libraries = libmonosgen.la
-endif
-endif
-libraries = $(shared_libraries) libmonosgen-static.la
 endif
 
-if DISABLE_EXECUTABLES
 noinst_LTLIBRARIES = $(shared_libraries)
-else
-noinst_LTLIBRARIES = $(libraries)
-endif
 
 monosgen_sources = \
 	gc-internal-agnostic.h \
@@ -73,6 +66,18 @@ monosgen_sources = \
 libmonosgen_la_SOURCES = $(monosgen_sources)
 libmonosgen_la_CFLAGS = $(SGEN_DEFINES)
 
-libmonosgen_static_la_SOURCES = $(libmonosgen_la_SOURCES)
-libmonosgen_static_la_CFLAGS = $(SGEN_DEFINES)
-libmonosgen_static_la_LDFLAGS = -static
+endif # !ENABLE_MSVC_ONLY
+
+CFLAGS := $(filter-out @CXX_REMOVE_CFLAGS@, @CFLAGS@) @CXX_ADD_CFLAGS@
+
+if ENABLE_MSVC_ONLY
+
+all-local:
+
+	make -C $(top_srcdir)/msvc libgcmonosgen
+
+clean-local:
+
+	make -C $(top_srcdir)/msvc clean-libgcmonosgen
+
+endif # ENABLE_MSVC_ONLY

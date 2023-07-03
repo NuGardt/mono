@@ -114,6 +114,7 @@ namespace System.Windows.Forms {
 						ThemeEngine.Current.ColorControlLight = ColorFromGdkColor (style.light[0]);
 						ThemeEngine.Current.ColorControlLightLight = ControlPaint.Light (ThemeEngine.Current.ColorControlLight);
 						ThemeEngine.Current.ColorControlDarkDark = ControlPaint.Dark (ThemeEngine.Current.ColorControlDark);
+						ThemeEngine.Current.ColorButtonFace = ColorFromGdkColor (style.bg[0]);
 
 						// We don't want ControlLight to disappear on a white background!
 						if (ThemeEngine.Current.ColorControlLight.ToArgb () == Color.White.ToArgb ()) {
@@ -267,8 +268,8 @@ namespace System.Windows.Forms {
 		#endregion	// Methods
 
 		#region	DllImports
-		const string libgdk = "libgdk-x11-2.0.so.0";
-		const string libgtk = "libgtk-x11-2.0.so.0";
+		const string libgdk = "libgdk-x11-2.0";
+		const string libgtk = "libgtk-x11-2.0";
 		
 		[DllImport(libgtk)]
 		static extern bool gtk_init_check (IntPtr argc, IntPtr argv);

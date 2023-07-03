@@ -30,6 +30,10 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+#if FULL_AOT_INTERP && DISABLE_COM
+#define FULL_AOT_RUNTIME
+#endif
+
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -37,39 +41,56 @@ using System;
 using System.Security;
 using System.Reflection;
 using System.Threading;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 
 using System.Runtime.ConstrainedExecution;
-#if !FULL_AOT_RUNTIME
-using System.Runtime.InteropServices.ComTypes;
+#if !FULL_AOT_RUNTIME && !DISABLE_REMOTING
 using Mono.Interop;
 #endif
 
 namespace System.Runtime.InteropServices
 {
-	public static class Marshal
+	public static partial class Marshal
 	{
 		/* fields */
 		public static readonly int SystemMaxDBCSCharSize = 2; // don't know what this is
 		public static readonly int SystemDefaultCharSize = Environment.IsRunningOnWindows ? 2 : 1;
 
-#if !MOBILE
+#if !MOBILE || WINAOT
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private extern static int AddRefInternal (IntPtr pUnk);
 #endif
 
 		public static int AddRef (IntPtr pUnk)
 		{
-#if !MOBILE
+#if !MOBILE || WINAOT
 			if (pUnk == IntPtr.Zero)
-				throw new ArgumentException ("Value cannot be null.", "pUnk");
+				throw new ArgumentNullException ("pUnk");
 			return AddRefInternal (pUnk);
 #else
 			throw new NotImplementedException ();
 #endif
 		}
 
+
+		public static bool AreComObjectsAvailableForCleanup ()
+		{
+			return false;
+		}
+
+
+		public static void CleanupUnusedObjectsInCurrentContext ()
+		{
+			if (Environment.IsRunningOnWindows)
+				throw new PlatformNotSupportedException ();
+		}
+
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		public extern static IntPtr AllocCoTaskMem (int cb);
+		
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		internal extern static IntPtr AllocCoTaskMemSize (UIntPtr sizet);
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		[ReliabilityContractAttribute (Consistency.WillNotCorruptState, Cer.MayFail)]
@@ -81,104 +102,188 @@ namespace System.Runtime.InteropServices
 			return AllocHGlobal ((IntPtr)cb);
 		}
 
-		[MonoTODO]
+
 		public static object BindToMoniker (string monikerName)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
+
 		public static void ChangeWrapperHandleStrength (object otp, bool fIsWeak)
 		{
 			throw new NotImplementedException ();
 		}
 
+		unsafe internal static void copy_to_unmanaged (Array source, int startIndex,
+		       IntPtr destination, int length)
+		{
+			copy_to_unmanaged_fixed (source, startIndex, destination, length, null);
+		}
+
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		internal extern static void copy_to_unmanaged (Array source, int startIndex,
-							       IntPtr destination, int length);
+		unsafe private extern static void copy_to_unmanaged_fixed (Array source, int startIndex,
+		       IntPtr destination, int length, void* fixed_source_element);
+
+		static private bool skip_fixed (System.Array array, int startIndex)
+		{
+			// In particular, we see length == 0 && startIndex == array.Length, and fixed fails.
+			return startIndex < 0 || startIndex >= array.Length;
+		}
+
+		unsafe internal static void copy_to_unmanaged (byte[] source, int startIndex, IntPtr destination, int length)
+		{
+			// This function is inconsistent with its surroundings.
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, null);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		unsafe internal static void copy_to_unmanaged (char[] source, int startIndex,
+		       IntPtr destination, int length)
+		{
+			// This function is inconsistent with its surroundings.
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, null);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		public unsafe static void Copy (byte[] source, int startIndex, IntPtr destination, int length)
+		{
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		public unsafe static void Copy (char[] source, int startIndex, IntPtr destination, int length)
+		{
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		public unsafe static void Copy (short[] source, int startIndex, IntPtr destination, int length)
+		{
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		public unsafe static void Copy (int[] source, int startIndex, IntPtr destination, int length)
+		{
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		public unsafe static void Copy (long[] source, int startIndex, IntPtr destination, int length)
+		{
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		public unsafe static void Copy (float[] source, int startIndex, IntPtr destination, int length)
+		{
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		public unsafe static void Copy (double[] source, int startIndex, IntPtr destination, int length)
+		{
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		public unsafe static void Copy (IntPtr[] source, int startIndex, IntPtr destination, int length)
+		{
+			if (skip_fixed (source, startIndex))
+				copy_to_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_source = &source [startIndex])
+				copy_to_unmanaged_fixed (source, startIndex, destination, length, fixed_source);
+		}
+
+		unsafe internal static void copy_from_unmanaged (IntPtr source, int startIndex, Array destination, int length)
+		{
+			copy_from_unmanaged_fixed (source, startIndex, destination, length, null);
+		}
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		internal extern static void copy_from_unmanaged (IntPtr source, int startIndex,
-								 Array destination, int length);
+		unsafe private extern static void copy_from_unmanaged_fixed (IntPtr source, int startIndex,
+			Array destination, int length, void* fixed_destination_element);
 
-		public static void Copy (byte[] source, int startIndex, IntPtr destination, int length)
+		public unsafe static void Copy (IntPtr source, byte[] destination, int startIndex, int length)
 		{
-			copy_to_unmanaged (source, startIndex, destination, length);
+			if (skip_fixed (destination, startIndex))
+				copy_from_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_destination = &destination [startIndex])
+				copy_from_unmanaged_fixed (source, startIndex, destination, length, fixed_destination);
 		}
 
-		public static void Copy (char[] source, int startIndex, IntPtr destination, int length)
+		public unsafe static void Copy (IntPtr source, char[] destination, int startIndex, int length)
 		{
-			copy_to_unmanaged (source, startIndex, destination, length);
+			if (skip_fixed (destination, startIndex))
+				copy_from_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_destination = &destination [startIndex])
+				copy_from_unmanaged_fixed (source, startIndex, destination, length, fixed_destination);
 		}
 
-		public static void Copy (short[] source, int startIndex, IntPtr destination, int length)
+		public unsafe static void Copy (IntPtr source, short[] destination, int startIndex, int length)
 		{
-			copy_to_unmanaged (source, startIndex, destination, length);
+			if (skip_fixed (destination, startIndex))
+				copy_from_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_destination = &destination [startIndex])
+				copy_from_unmanaged_fixed (source, startIndex, destination, length, fixed_destination);
 		}
 
-		public static void Copy (int[] source, int startIndex, IntPtr destination, int length)
+		public unsafe static void Copy (IntPtr source, int[] destination, int startIndex, int length)
 		{
-			copy_to_unmanaged (source, startIndex, destination, length);
+			if (skip_fixed (destination, startIndex))
+				copy_from_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_destination = &destination [startIndex])
+				copy_from_unmanaged_fixed (source, startIndex, destination, length, fixed_destination);
 		}
 
-		public static void Copy (long[] source, int startIndex, IntPtr destination, int length)
+		public unsafe static void Copy (IntPtr source, long[] destination, int startIndex, int length)
 		{
-			copy_to_unmanaged (source, startIndex, destination, length);
+			if (skip_fixed (destination, startIndex))
+				copy_from_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_destination = &destination [startIndex])
+				copy_from_unmanaged_fixed (source, startIndex, destination, length, fixed_destination);
 		}
 
-		public static void Copy (float[] source, int startIndex, IntPtr destination, int length)
+		public unsafe static void Copy (IntPtr source, float[] destination, int startIndex, int length)
 		{
-			copy_to_unmanaged (source, startIndex, destination, length);
+			if (skip_fixed (destination, startIndex))
+				copy_from_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_destination = &destination [startIndex])
+				copy_from_unmanaged_fixed (source, startIndex, destination, length, fixed_destination);
 		}
 
-		public static void Copy (double[] source, int startIndex, IntPtr destination, int length)
+		public unsafe static void Copy (IntPtr source, double[] destination, int startIndex, int length)
 		{
-			copy_to_unmanaged (source, startIndex, destination, length);
+			if (skip_fixed (destination, startIndex))
+				copy_from_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_destination = &destination [startIndex])
+				copy_from_unmanaged_fixed (source, startIndex, destination, length, fixed_destination);
 		}
 
-		public static void Copy (IntPtr[] source, int startIndex, IntPtr destination, int length)
+		public unsafe static void Copy (IntPtr source, IntPtr[] destination, int startIndex, int length)
 		{
-			copy_to_unmanaged (source, startIndex, destination, length);
-		}
-
-		public static void Copy (IntPtr source, byte[] destination, int startIndex, int length)
-		{
-			copy_from_unmanaged (source, startIndex, destination, length);
-		}
-
-		public static void Copy (IntPtr source, char[] destination, int startIndex, int length)
-		{
-			copy_from_unmanaged (source, startIndex, destination, length);
-		}
-
-		public static void Copy (IntPtr source, short[] destination, int startIndex, int length)
-		{
-			copy_from_unmanaged (source, startIndex, destination, length);
-		}
-
-		public static void Copy (IntPtr source, int[] destination, int startIndex, int length)
-		{
-			copy_from_unmanaged (source, startIndex, destination, length);
-		}
-
-		public static void Copy (IntPtr source, long[] destination, int startIndex, int length)
-		{
-			copy_from_unmanaged (source, startIndex, destination, length);
-		}
-
-		public static void Copy (IntPtr source, float[] destination, int startIndex, int length)
-		{
-			copy_from_unmanaged (source, startIndex, destination, length);
-		}
-
-		public static void Copy (IntPtr source, double[] destination, int startIndex, int length)
-		{
-			copy_from_unmanaged (source, startIndex, destination, length);
-		}
-
-		public static void Copy (IntPtr source, IntPtr[] destination, int startIndex, int length)
-		{
-			copy_from_unmanaged (source, startIndex, destination, length);
+			if (skip_fixed (destination, startIndex))
+				copy_from_unmanaged (source, startIndex, destination, length);
+			else fixed (void* fixed_destination = &destination [startIndex])
+				copy_from_unmanaged_fixed (source, startIndex, destination, length, fixed_destination);
 		}
 
 		public static IntPtr CreateAggregatedObject (IntPtr pOuter,
@@ -191,9 +296,11 @@ namespace System.Runtime.InteropServices
 			return CreateAggregatedObject (pOuter, (object)o);
 		}
 
-#if !FULL_AOT_RUNTIME
 		public static object CreateWrapperOfType (object o, Type t)
 		{
+#if FULL_AOT_RUNTIME || DISABLE_REMOTING
+			throw new PlatformNotSupportedException ();
+#else
 			__ComObject co = o as __ComObject;
 			if (co == null)
 				throw new ArgumentException ("o must derive from __ComObject", "o");
@@ -207,12 +314,12 @@ namespace System.Runtime.InteropServices
 			}
 
 			return ComInteropProxy.GetProxy (co.IUnknown, t).GetTransparentProxy ();
+#endif
 		}
 
 		public static TWrapper CreateWrapperOfType<T, TWrapper> (T o) {
 			return (TWrapper)CreateWrapperOfType ((object)o, typeof (TWrapper));
 		}
-#endif
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		[ComVisible (true)]
@@ -270,6 +377,12 @@ namespace System.Runtime.InteropServices
 			FreeCoTaskMem (s);
 		}
 
+		public static void ZeroFreeCoTaskMemUTF8 (IntPtr s)
+		{
+			ClearAnsi (s);
+			FreeCoTaskMem (s);
+		}
+		
 		public static void ZeroFreeGlobalAllocAnsi (IntPtr s)
 		{
 			ClearAnsi (s);
@@ -282,7 +395,7 @@ namespace System.Runtime.InteropServices
 			FreeHGlobal (s);
 		}
 
-#if !FULL_AOT_RUNTIME
+#if !FULL_AOT_RUNTIME && !MONOTOUCH
 		public static Guid GenerateGuidForType (Type type)
 		{
 			return type.GUID;
@@ -311,7 +424,7 @@ namespace System.Runtime.InteropServices
 			return type.FullName;
 		}
 
-		[MonoTODO]
+
 		public static object GetActiveObject (string progID)
 		{
 			throw new NotImplementedException ();
@@ -329,29 +442,36 @@ namespace System.Runtime.InteropServices
 				return GetCCW (o, T);
 		}
 #endif
+#endif // !FULL_AOT_RUNTIME && !MONOTOUCH
 
 		public static IntPtr GetComInterfaceForObject (object o, Type T)
 		{
-#if !MOBILE
+#if MOBILE
+			throw new PlatformNotSupportedException ();
+#else
 			IntPtr pItf = GetComInterfaceForObjectInternal (o, T);
 			AddRef (pItf);
 			return pItf;
-#else
-			throw new NotImplementedException ();
 #endif
+		}
+
+
+		public static IntPtr GetComInterfaceForObject (object o, Type T, CustomQueryInterfaceMode mode)
+		{
+			throw new NotImplementedException ();
 		}
 
 		public static IntPtr GetComInterfaceForObject<T, TInterface> (T o) {
 			return GetComInterfaceForObject ((object)o, typeof (T));
 		}
 
-		[MonoTODO]
+#if !FULL_AOT_RUNTIME && !MONOTOUCH
+
 		public static IntPtr GetComInterfaceForObjectInContext (object o, Type t)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoNotSupportedAttribute ("MSDN states user code should never need to call this method.")]
 		public static object GetComObjectData (object obj, object key)
 		{
 			throw new NotSupportedException ("MSDN states user code should never need to call this method.");
@@ -377,19 +497,13 @@ namespace System.Runtime.InteropServices
 #endif
 		}
 
-		[MonoTODO]
+
 		public static int GetEndComSlot (Type t)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
-		public static int GetExceptionCode()
-		{
-			throw new NotImplementedException ();
-		}
 
-		[MonoTODO]
 		[ComVisible (true)]
 		public static IntPtr GetExceptionPointers()
 		{
@@ -401,30 +515,50 @@ namespace System.Runtime.InteropServices
 			if (m == null)
 				throw new ArgumentNullException ("m");
 
-			return m.GetHINSTANCE ();
+			if (m is RuntimeModule rm)
+				return RuntimeModule.GetHINSTANCE (rm.MonoModule);
+
+			return (IntPtr)(-1);
 		}
+#else
+		public static IntPtr GetHINSTANCE (Module m) => throw new PlatformNotSupportedException();
+		public static IntPtr GetIDispatchForObject (object o) => throw new PlatformNotSupportedException();
+		public static object GetTypedObjectForIUnknown (IntPtr pUnk, Type t) => throw new PlatformNotSupportedException();
+		public static bool SetComObjectData (object obj, object key, object data) => throw new PlatformNotSupportedException();
+		public static object GetComObjectData (object obj, object key) => throw new PlatformNotSupportedException();
+		public static string GenerateProgIdForType (Type type) => throw new PlatformNotSupportedException();
+		public static Guid GenerateGuidForType (Type type) => throw new PlatformNotSupportedException();
 #endif // !FULL_AOT_RUNTIME
 
-#if !FULL_AOT_RUNTIME
+		public static int GetExceptionCode ()
+		{
+			throw new PlatformNotSupportedException ();
+		}
+
 		public static int GetHRForException (Exception e)
 		{
+			if (e == null) return 0;
+
 #if FEATURE_COMINTEROP
 			var errorInfo = new ManagedErrorInfo(e);
 			SetErrorInfo (0, errorInfo);
+#endif
 
 			return e._HResult;
-#else			
-			return -1;
-#endif
 		}
 
-		[MonoTODO]
+
 		[ReliabilityContract (Consistency.WillNotCorruptState, Cer.Success)]
 		public static int GetHRForLastWin32Error()
 		{
+#if FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			throw new NotImplementedException ();
+#endif
 		}
 
+#if !FULL_AOT_RUNTIME && !MONOTOUCH
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private extern static IntPtr GetIDispatchForObjectInternal (object o);
 
@@ -436,14 +570,33 @@ namespace System.Runtime.InteropServices
 			return pUnk;
 		}
 
-		[MonoTODO]
+
 		public static IntPtr GetIDispatchForObjectInContext (object o)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
+
 		public static IntPtr GetITypeInfoForType (Type t)
+		{
+			throw new NotImplementedException ();
+		}
+
+
+		public static IntPtr GetIUnknownForObjectInContext (object o)
+		{
+			throw new NotImplementedException ();
+		}
+
+
+		[Obsolete ("This method has been deprecated")]
+		public static IntPtr GetManagedThunkForUnmanagedMethodPtr (IntPtr pfnMethodToWrap, IntPtr pbSignature, int cbSignature)
+		{
+			throw new NotImplementedException ();
+		}
+
+
+		public static MemberInfo GetMethodInfoForComSlot (Type t, int slot, ref ComMemberType memberType)
 		{
 			throw new NotImplementedException ();
 		}
@@ -451,52 +604,45 @@ namespace System.Runtime.InteropServices
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private extern static IntPtr GetIUnknownForObjectInternal (object o);
 
+#endif // !FULL_AOT_RUNTIME
+
 		public static IntPtr GetIUnknownForObject (object o)
 		{
+#if FULL_AOT_RUNTIME || MONOTOUCH
+			throw new PlatformNotSupportedException ();
+#else
 			IntPtr pUnk = GetIUnknownForObjectInternal (o);
 			// Internal method does not AddRef
 			AddRef (pUnk);
 			return pUnk;
-		}
-
-		[MonoTODO]
-		public static IntPtr GetIUnknownForObjectInContext (object o)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		[Obsolete ("This method has been deprecated")]
-		public static IntPtr GetManagedThunkForUnmanagedMethodPtr (IntPtr pfnMethodToWrap, IntPtr pbSignature, int cbSignature)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		public static MemberInfo GetMethodInfoForComSlot (Type t, int slot, ref ComMemberType memberType)
-		{
-			throw new NotImplementedException ();
+#endif
 		}
 
 		public static void GetNativeVariantForObject (object obj, IntPtr pDstNativeVariant)
 		{
+#if FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			Variant vt = new Variant();
 			vt.SetValue(obj);
 			Marshal.StructureToPtr(vt, pDstNativeVariant, false);
+#endif
 		}
 
 		public static void GetNativeVariantForObject<T> (T obj, IntPtr pDstNativeVariant) {
 			GetNativeVariantForObject ((object)obj, pDstNativeVariant);
 		}
 
-#if !MOBILE
+#if !MOBILE && !FULL_AOT_RUNTIME
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private static extern object GetObjectForCCW (IntPtr pUnk);
 #endif
 
 		public static object GetObjectForIUnknown (IntPtr pUnk)
 		{
-#if !MOBILE
+#if MOBILE || FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			object obj = GetObjectForCCW (pUnk);
 			// was not a CCW
 			if (obj == null) {
@@ -504,24 +650,34 @@ namespace System.Runtime.InteropServices
 				obj = proxy.GetTransparentProxy ();
 			}
 			return obj;
-#else
-			throw new NotImplementedException ();
 #endif
 		}
 
 		public static object GetObjectForNativeVariant (IntPtr pSrcNativeVariant)
 		{
+#if FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			Variant vt = (Variant)Marshal.PtrToStructure(pSrcNativeVariant, typeof(Variant));
 			return vt.GetValue();
+#endif
 		}
 
-		public static T GetObjectForNativeVariant<T> (IntPtr pSrcNativeVariant) {
+		public static T GetObjectForNativeVariant<T> (IntPtr pSrcNativeVariant)
+		{
+#if FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			Variant vt = (Variant)Marshal.PtrToStructure(pSrcNativeVariant, typeof(Variant));
 			return (T)vt.GetValue();
+#endif
 		}
 
 		public static object[] GetObjectsForNativeVariants (IntPtr aSrcNativeVariant, int cVars)
 		{
+#if FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			if (cVars < 0)
 				throw new ArgumentOutOfRangeException ("cVars", "cVars cannot be a negative number.");
 			object[] objects = new object[cVars];
@@ -529,9 +685,14 @@ namespace System.Runtime.InteropServices
 				objects[i] = GetObjectForNativeVariant ((IntPtr)(aSrcNativeVariant.ToInt64 () +
 					i * SizeOf (typeof(Variant))));
 			return objects;
+#endif
 		}
 
-		public static T[] GetObjectsForNativeVariants<T> (IntPtr aSrcNativeVariant, int cVars) {
+		public static T[] GetObjectsForNativeVariants<T> (IntPtr aSrcNativeVariant, int cVars)
+		{
+#if FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			if (cVars < 0)
 				throw new ArgumentOutOfRangeException ("cVars", "cVars cannot be a negative number.");
 			T[] objects = new T[cVars];
@@ -539,15 +700,21 @@ namespace System.Runtime.InteropServices
 				objects[i] = GetObjectForNativeVariant<T> ((IntPtr)(aSrcNativeVariant.ToInt64 () +
 					i * SizeOf (typeof(Variant))));
 			return objects;
+#endif
 		}
 
-		[MonoTODO]
+
 		public static int GetStartComSlot (Type t)
 		{
+#if FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			throw new NotImplementedException ();
+#endif
 		}
 
-		[MonoTODO]
+#if !FULL_AOT_RUNTIME && !MONOTOUCH
+
 		[Obsolete ("This method has been deprecated")]
 		public static Thread GetThreadFromFiberCookie (int cookie)
 		{
@@ -556,6 +723,9 @@ namespace System.Runtime.InteropServices
 
 		public static object GetTypedObjectForIUnknown (IntPtr pUnk, Type t)
 		{
+#if DISABLE_REMOTING
+			throw new NotImplementedException ();
+#else
 			ComInteropProxy proxy = new ComInteropProxy (pUnk, t);
 			__ComObject co = (__ComObject)proxy.GetTransparentProxy ();
 			foreach (Type itf in t.GetInterfaces ()) {
@@ -565,94 +735,106 @@ namespace System.Runtime.InteropServices
 				}
 			}
 			return co;
+#endif
 		}
 
-		[MonoTODO]
+
 		public static Type GetTypeForITypeInfo (IntPtr piTypeInfo)
 		{
 			throw new NotImplementedException ();
 		}
 
-		public static Type GetTypeFromCLSID (Guid clsid)
-		{
-			throw new NotImplementedException ();			
-		}
-
-#if !FULL_AOT_RUNTIME
 		[Obsolete]
-		[MonoTODO]
+
 		public static string GetTypeInfoName (UCOMITypeInfo pTI)
 		{
 			throw new NotImplementedException ();
 		}
 
-		public static string GetTypeInfoName (ITypeInfo typeInfo)
-		{
-			throw new NotImplementedException ();
-		}
-
 		[Obsolete]
-		[MonoTODO]
+
 		public static Guid GetTypeLibGuid (UCOMITypeLib pTLB)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
+
 		public static Guid GetTypeLibGuid (ITypeLib typelib)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
+
 		public static Guid GetTypeLibGuidForAssembly (Assembly asm)
 		{
 			throw new NotImplementedException ();
 		}
 
 		[Obsolete]
-		[MonoTODO]
+
 		public static int GetTypeLibLcid (UCOMITypeLib pTLB)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
+
 		public static int GetTypeLibLcid (ITypeLib typelib)
 		{
 			throw new NotImplementedException ();
 		}
 
 		[Obsolete]
-		[MonoTODO]
+
 		public static string GetTypeLibName (UCOMITypeLib pTLB)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
+
 		public static string GetTypeLibName (ITypeLib typelib)
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
+
 		public static void GetTypeLibVersionForAssembly (Assembly inputAssembly, out int majorVersion, out int minorVersion)
 		{
 			throw new NotImplementedException ();
 		}
 
-		public static object GetUniqueObjectForIUnknown (IntPtr unknown)
-		{
-			throw new NotImplementedException ();
-		}
-#endif
 
-		[MonoTODO]
 		[Obsolete ("This method has been deprecated")]
 		public static IntPtr GetUnmanagedThunkForManagedMethodPtr (IntPtr pfnMethodToWrap, IntPtr pbSignature, int cbSignature)
 		{
 			throw new NotImplementedException ();
+		}
+
+
+		public static bool IsTypeVisibleFromCom (Type t)
+		{
+			throw new NotImplementedException ();
+		}
+
+
+		public static int NumParamBytes (MethodInfo m)
+		{
+			throw new NotImplementedException ();
+		}
+#endif // !FULL_AOT_RUNTIME
+
+		public static Type GetTypeFromCLSID (Guid clsid)
+		{
+			throw new PlatformNotSupportedException ();
+		}
+
+		public static string GetTypeInfoName (ITypeInfo typeInfo)
+		{
+			throw new PlatformNotSupportedException ();
+		}
+
+		public static object GetUniqueObjectForIUnknown (IntPtr unknown)
+		{
+			throw new PlatformNotSupportedException ();
 		}
 
 #if !MOBILE
@@ -661,20 +843,7 @@ namespace System.Runtime.InteropServices
 #else
 		public static bool IsComObject (object o)
 		{
-			throw new NotImplementedException ();
-		}
-#endif		
-
-		[MonoTODO]
-		public static bool IsTypeVisibleFromCom (Type t)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		public static int NumParamBytes (MethodInfo m)
-		{
-			throw new NotImplementedException ();
+			return false;
 		}
 #endif
 
@@ -701,6 +870,16 @@ namespace System.Runtime.InteropServices
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		public extern static string PtrToStringAnsi (IntPtr ptr, int len);
 
+		public static string PtrToStringUTF8 (IntPtr ptr)
+		{
+			return PtrToStringAnsi (ptr);
+		}
+		
+		public static string PtrToStringUTF8 (IntPtr ptr, int byteLen)
+		{
+			return PtrToStringAnsi (ptr, byteLen);
+		}
+		
 		public static string PtrToStringAuto (IntPtr ptr)
 		{
 			return SystemDefaultCharSize == 2
@@ -719,15 +898,8 @@ namespace System.Runtime.InteropServices
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		public extern static string PtrToStringUni (IntPtr ptr, int len);
 
-#if !MOBILE
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		public extern static string PtrToStringBSTR (IntPtr ptr);
-#else
-		public static string PtrToStringBSTR (IntPtr ptr)
-		{
-			throw new NotImplementedException ();
-		}
-#endif
 		
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		[ComVisible (true)]
@@ -745,16 +917,16 @@ namespace System.Runtime.InteropServices
 			return (T) PtrToStructure (ptr, typeof (T));
 		}
 
-#if !MOBILE
+#if !MOBILE || WINAOT
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private extern static int QueryInterfaceInternal (IntPtr pUnk, ref Guid iid, out IntPtr ppv);
 #endif
 
 		public static int QueryInterface (IntPtr pUnk, ref Guid iid, out IntPtr ppv)
 		{
-#if !MOBILE
+#if !MOBILE || WINAOT
 			if (pUnk == IntPtr.Zero)
-				throw new ArgumentException ("Value cannot be null.", "pUnk");
+				throw new ArgumentNullException ("pUnk");
 			return QueryInterfaceInternal (pUnk, ref iid, out ppv);
 #else
 			throw new NotImplementedException ();
@@ -774,7 +946,7 @@ namespace System.Runtime.InteropServices
 			}
 		}
 
-		[MonoTODO]
+
 		[SuppressUnmanagedCodeSecurity]
 		public static byte ReadByte ([In, MarshalAs (UnmanagedType.AsAny)] object ptr, int ofs)
 		{
@@ -808,7 +980,7 @@ namespace System.Runtime.InteropServices
 			return s;
 		}
 
-		[MonoTODO]
+
 		[SuppressUnmanagedCodeSecurity]
 		public static short ReadInt16 ([In, MarshalAs(UnmanagedType.AsAny)] object ptr, int ofs)
 		{
@@ -843,7 +1015,7 @@ namespace System.Runtime.InteropServices
 		}
 
 		[ReliabilityContractAttribute (Consistency.WillNotCorruptState, Cer.Success)]
-		[MonoTODO]
+
 		[SuppressUnmanagedCodeSecurity]
 		public static int ReadInt32 ([In, MarshalAs(UnmanagedType.AsAny)] object ptr, int ofs)
 		{
@@ -878,7 +1050,7 @@ namespace System.Runtime.InteropServices
 		}
 
 		[ReliabilityContractAttribute (Consistency.WillNotCorruptState, Cer.Success)]
-		[MonoTODO]
+
 		[SuppressUnmanagedCodeSecurity]
 		public static long ReadInt64 ([In, MarshalAs (UnmanagedType.AsAny)] object ptr, int ofs)
 		{
@@ -904,7 +1076,7 @@ namespace System.Runtime.InteropServices
 		}
 
 		[ReliabilityContractAttribute (Consistency.WillNotCorruptState, Cer.Success)]
-		[MonoTODO]
+
 		public static IntPtr ReadIntPtr ([In, MarshalAs (UnmanagedType.AsAny)] object ptr, int ofs)
 		{
 			throw new NotImplementedException ();
@@ -916,7 +1088,7 @@ namespace System.Runtime.InteropServices
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		public extern static IntPtr ReAllocHGlobal (IntPtr pv, IntPtr cb);
 
-#if !MOBILE
+#if !MOBILE || WINAOT
 		[ReliabilityContractAttribute (Consistency.WillNotCorruptState, Cer.Success)]
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private extern static int ReleaseInternal (IntPtr pUnk);
@@ -925,9 +1097,9 @@ namespace System.Runtime.InteropServices
 		[ReliabilityContract (Consistency.WillNotCorruptState, Cer.Success)]
 		public static int Release (IntPtr pUnk)
 		{
-#if !MOBILE
+#if !MOBILE || WINAOT
 			if (pUnk == IntPtr.Zero)
-				throw new ArgumentException ("Value cannot be null.", "pUnk");
+				throw new ArgumentNullException ("pUnk");
 
 			return ReleaseInternal (pUnk);
 #else
@@ -938,24 +1110,29 @@ namespace System.Runtime.InteropServices
 #if !FULL_AOT_RUNTIME
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private extern static int ReleaseComObjectInternal (object co);
+#endif
 
 		public static int ReleaseComObject (object o)
 		{
+#if FULL_AOT_RUNTIME
+			throw new PlatformNotSupportedException ();
+#else
 			if (o == null)
 				throw new ArgumentException ("Value cannot be null.", "o");
 			if (!IsComObject (o))
 				throw new ArgumentException ("Value must be a Com object.", "o");
 			return ReleaseComObjectInternal (o);
+#endif
 		}
 
+#if !FULL_AOT_RUNTIME && !MONOTOUCH
 		[Obsolete]
-		[MonoTODO]
+
 		public static void ReleaseThreadCache()
 		{
 			throw new NotImplementedException ();
 		}
 
-		[MonoNotSupportedAttribute ("MSDN states user code should never need to call this method.")]
 		public static bool SetComObjectData (object obj, object key, object data)
 		{
 			throw new NotSupportedException ("MSDN states user code should never need to call this method.");
@@ -994,26 +1171,17 @@ namespace System.Runtime.InteropServices
 			return (size + 3) & (~((uint)3));
 		}
 
-		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		public extern static IntPtr StringToBSTR (string s);
+		public unsafe static IntPtr StringToBSTR (string s)
+		{
+			if (s == null)
+				return IntPtr.Zero;
+			fixed (char* fixed_s = s)
+				return BufferToBSTR (fixed_s, s.Length);
+		}
 
-		//
-		// I believe this is wrong, because in Mono and in P/Invoke
-		// we treat "Ansi" conversions as UTF-8 conversions, while
-		// this one does not do this
-		//
 		public static IntPtr StringToCoTaskMemAnsi (string s)
 		{
-			int length = s.Length + 1;
-			IntPtr ctm = AllocCoTaskMem (length);
-
-			byte[] asBytes = new byte[length];
-			for (int i = 0; i < s.Length; i++)
-				asBytes[i] = (byte)s[i];
-			asBytes[s.Length] = 0;
-
-			copy_to_unmanaged (asBytes, 0, ctm, length);
-			return ctm;
+			return StringToAllocatedMemoryUTF8 (s);
 		}
 
 		public static IntPtr StringToCoTaskMemAuto (string s)
@@ -1036,8 +1204,41 @@ namespace System.Runtime.InteropServices
 		}
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		public extern static IntPtr StringToHGlobalAnsi (string s);
+		unsafe extern static IntPtr StringToHGlobalAnsi (char* s, int length);
 
+		public unsafe static IntPtr StringToHGlobalAnsi (string s)
+		{
+			fixed (char* fixed_s = s)
+				return StringToHGlobalAnsi (fixed_s, (s != null) ? s.Length : 0);
+		}
+
+		unsafe public static IntPtr StringToAllocatedMemoryUTF8(String s)
+		{
+			const int MAX_UTF8_CHAR_SIZE = 3;
+			if (s == null)
+				return IntPtr.Zero;
+
+			int nb = (s.Length + 1) * MAX_UTF8_CHAR_SIZE;
+
+			// Overflow checking
+			if (nb < s.Length)
+				throw new ArgumentOutOfRangeException("s");
+			
+			IntPtr pMem = AllocCoTaskMemSize(new UIntPtr((uint)nb +1));
+			
+			if (pMem == IntPtr.Zero)
+				throw new OutOfMemoryException();
+
+			byte* pbMem = (byte*)pMem;
+
+            fixed (char* pwzChar = s)
+            {
+                int nbWritten = Encoding.UTF8.GetBytes(pwzChar, s.Length, pbMem, nb);
+				pbMem[nbWritten] = 0;
+            }
+			return pMem;
+		}
+		
 		public static IntPtr StringToHGlobalAuto (string s)
 		{
 			return SystemDefaultCharSize == 2
@@ -1045,38 +1246,54 @@ namespace System.Runtime.InteropServices
 		}
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		public extern static IntPtr StringToHGlobalUni (string s);
+		unsafe extern static IntPtr StringToHGlobalUni (char* s, int length);
 
-		public static IntPtr SecureStringToBSTR (SecureString s)
+		public unsafe static IntPtr StringToHGlobalUni (string s)
 		{
-			if (s == null)
-				throw new ArgumentNullException ("s");
-			int len = s.Length;
-			IntPtr ctm = AllocCoTaskMem ((len+1) * 2 + 4);
-			byte [] buffer = null;
-			WriteInt32 (ctm, 0, len*2);
-			try {
-				buffer = s.GetBuffer ();
-
-				for (int i = 0; i < len; i++)
-					WriteInt16 (ctm, 4 + (i * 2), (short) ((buffer [(i*2)] << 8) | (buffer [i*2+1])));
-				WriteInt16 (ctm, 4 + buffer.Length, 0);
-			} finally {
-				if (buffer != null)
-					for (int i = buffer.Length; i > 0; ){
-						i--;
-						buffer [i] = 0;
-					}
-			}
-			return (IntPtr) ((long)ctm + 4);
+			fixed (char* fixed_s = s)
+				return StringToHGlobalUni (fixed_s, (s != null) ? s.Length : 0);
 		}
 
-		public static IntPtr SecureStringToCoTaskMemAnsi (SecureString s)
+		public unsafe static IntPtr SecureStringToBSTR (SecureString s)
 		{
 			if (s == null)
 				throw new ArgumentNullException ("s");
+
+			byte[] buffer = s.GetBuffer ();
 			int len = s.Length;
-			IntPtr ctm = AllocCoTaskMem (len + 1);
+			
+			// SecureString doesn't take endian-ness into account. 
+			// Therefore swap bytes here before we send it to c-side if little-endian.
+			if (BitConverter.IsLittleEndian) {
+				for (int i = 0; i < buffer.Length; i += 2) {
+					byte b = buffer[i];
+					buffer[i] = buffer[i + 1];
+					buffer[i + 1] = b;
+				}
+			}
+			fixed (byte* fixed_buffer = buffer)
+				return BufferToBSTR ((char*)fixed_buffer, len);
+		}
+
+		internal delegate IntPtr SecureStringAllocator(int len);
+
+		internal static IntPtr SecureStringCoTaskMemAllocator (int len)
+		{
+			return AllocCoTaskMem (len);
+		}
+
+		internal static IntPtr SecureStringGlobalAllocator (int len)
+		{
+			return AllocHGlobal (len);
+		}
+
+		internal static IntPtr SecureStringToAnsi (SecureString s, SecureStringAllocator allocator)
+		{
+			if (s == null)
+				throw new ArgumentNullException ("s");
+
+			int len = s.Length;
+			IntPtr ctm = allocator (len + 1);
 			byte [] copy = new byte [len+1];
 
 			try {
@@ -1099,12 +1316,12 @@ namespace System.Runtime.InteropServices
 			return ctm;
 		}
 
-		public static IntPtr SecureStringToCoTaskMemUnicode (SecureString s)
+		internal static IntPtr SecureStringToUnicode (SecureString s, SecureStringAllocator allocator)
 		{
 			if (s == null)
 				throw new ArgumentNullException ("s");
 			int len = s.Length;
-			IntPtr ctm = AllocCoTaskMem (len * 2 + 2);
+			IntPtr ctm = allocator (len * 2 + 2);
 			byte [] buffer = null;
 			try {
 				buffer = s.GetBuffer ();
@@ -1121,18 +1338,28 @@ namespace System.Runtime.InteropServices
 			return ctm;
 		}
 
+		public static IntPtr SecureStringToCoTaskMemAnsi (SecureString s)
+		{
+			return SecureStringToAnsi (s, SecureStringCoTaskMemAllocator);
+		}
+
+		public static IntPtr SecureStringToCoTaskMemUnicode (SecureString s)
+		{
+			return SecureStringToUnicode (s, SecureStringCoTaskMemAllocator);
+		}
+
 		public static IntPtr SecureStringToGlobalAllocAnsi (SecureString s)
 		{
 			if (s == null)
 				throw new ArgumentNullException ("s");
-			return SecureStringToCoTaskMemAnsi (s);
+			return SecureStringToAnsi (s, SecureStringGlobalAllocator);
 		}
 
 		public static IntPtr SecureStringToGlobalAllocUnicode (SecureString s)
 		{
 			if (s == null)
 				throw new ArgumentNullException ("s");
-			return SecureStringToCoTaskMemUnicode (s);
+			return SecureStringToUnicode (s, SecureStringGlobalAllocator);
 		}
 
 		[ReliabilityContractAttribute (Consistency.WillNotCorruptState, Cer.MayFail)]
@@ -1156,6 +1383,10 @@ namespace System.Runtime.InteropServices
 				throw ex;
 		}
 
+
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		extern unsafe static IntPtr BufferToBSTR (char* ptr, int slen);
+
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		public extern static IntPtr UnsafeAddrOfPinnedArrayElement (Array arr, int index);
 
@@ -1176,7 +1407,7 @@ namespace System.Runtime.InteropServices
 			}
 		}
 
-		[MonoTODO]
+
 		[SuppressUnmanagedCodeSecurity]
 		public static void WriteByte ([In, Out, MarshalAs (UnmanagedType.AsAny)] object ptr, int ofs, byte val)
 		{
@@ -1204,7 +1435,7 @@ namespace System.Runtime.InteropServices
 			}
 		}
 
-		[MonoTODO]
+
 		[SuppressUnmanagedCodeSecurity]
 		public static void WriteInt16 ([In, Out, MarshalAs (UnmanagedType.AsAny)] object ptr, int ofs, short val)
 		{
@@ -1221,7 +1452,7 @@ namespace System.Runtime.InteropServices
 			WriteInt16 (ptr, ofs, (short)val);
 		}
 
-		[MonoTODO]
+
 		public static void WriteInt16([In, Out] object ptr, int ofs, char val)
 		{
 			throw new NotImplementedException ();
@@ -1249,7 +1480,7 @@ namespace System.Runtime.InteropServices
 			}
 		}
 
-		[MonoTODO]
+
 		[SuppressUnmanagedCodeSecurity]
 		public static void WriteInt32([In, Out, MarshalAs(UnmanagedType.AsAny)] object ptr, int ofs, int val)
 		{
@@ -1280,7 +1511,7 @@ namespace System.Runtime.InteropServices
 				Buffer.Memcpy (addr, (byte*)&val, 8);
 		}
 
-		[MonoTODO]
+
 		[SuppressUnmanagedCodeSecurity]
 		public static void WriteInt64 ([In, Out, MarshalAs (UnmanagedType.AsAny)] object ptr, int ofs, long val)
 		{
@@ -1303,7 +1534,7 @@ namespace System.Runtime.InteropServices
 				WriteInt64 (ptr, ofs, (long)val);
 		}
 
-		[MonoTODO]
+
 		public static void WriteIntPtr([In, Out, MarshalAs(UnmanagedType.AsAny)] object ptr, int ofs, IntPtr val)
 		{
 			throw new NotImplementedException ();
@@ -1359,7 +1590,9 @@ namespace System.Runtime.InteropServices
 			const int ERROR_FILENAME_EXCED_RANGE = unchecked ((int)0xCE);
 			const int COR_E_RANK = unchecked ((int)0x80131517L);
 			const int COR_E_REFLECTIONTYPELOAD = unchecked ((int)0x80131602L);
+#if !DISABLE_REMOTING
 			const int COR_E_REMOTING = unchecked ((int)0x8013150BL);
+#endif
 			const int COR_E_SAFEARRAYTYPEMISMATCH = unchecked ((int)0x80131533L);
 			const int COR_E_SECURITY = unchecked ((int)0x8013150AL);
 			const int COR_E_SERIALIZATION = unchecked ((int)0x8013150CL);
@@ -1370,10 +1603,10 @@ namespace System.Runtime.InteropServices
 			const int COR_E_TARGET = unchecked ((int)0x80131603L);
 			const int COR_E_TARGETINVOCATION = unchecked ((int)0x80131604L);
 			const int COR_E_TARGETPARAMCOUNT = unchecked ((int)0x8002000EL);
-			const int COR_E_THREADABORTED = unchecked ((int)0x80131530L);
+			//const int COR_E_THREADABORTED = unchecked ((int)0x80131530L);
 			const int COR_E_THREADINTERRUPTED = unchecked ((int)0x80131519L);
 			const int COR_E_THREADSTATE = unchecked ((int)0x80131520L);
-			const int COR_E_THREADSTOP = unchecked ((int)0x80131521L);
+			//const int COR_E_THREADSTOP = unchecked ((int)0x80131521L);
 			const int COR_E_TYPEINITIALIZATION = unchecked ((int)0x80131534L);
 			const int COR_E_VERIFICATION = unchecked ((int)0x8013150DL);
 			//const int COR_E_WEAKREFERENCE = unchecked ((int)?);
@@ -1473,8 +1706,10 @@ namespace System.Runtime.InteropServices
 					return new RankException ();
 				case COR_E_REFLECTIONTYPELOAD:
 					return new System.Reflection.ReflectionTypeLoadException (new Type[] { }, new Exception[] { });
+#if !DISABLE_REMOTING
 				case COR_E_REMOTING:
 					return new System.Runtime.Remoting.RemotingException ();
+#endif
 				case COR_E_SAFEARRAYTYPEMISMATCH:
 					return new SafeArrayTypeMismatchException ();
 				case COR_E_SECURITY:
@@ -1618,13 +1853,11 @@ namespace System.Runtime.InteropServices
 #endif
 		}
 
-#if !FULL_AOT_RUNTIME
 		public static int FinalReleaseComObject (object o)
 		{
 			while (ReleaseComObject (o) != 0);
 			return 0;
 		}
-#endif
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		private static extern Delegate GetDelegateForFunctionPointerInternal (IntPtr ptr, Type t);
@@ -1663,6 +1896,140 @@ namespace System.Runtime.InteropServices
 				throw new ArgumentNullException ("d");
 			
 			return GetFunctionPointerForDelegateInternal ((Delegate)(object)d);
+		}
+
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		internal static extern void SetLastWin32Error (int error);
+
+#if FEATURE_COMINTEROP || MONO_COM
+		// Copied from referencesource/mscorlib/system/runtime/interopservices/marshal.cs
+		//====================================================================
+		// return the raw IUnknown* for a COM Object not related to current 
+		// context
+		// Does not call AddRef
+		//====================================================================
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		internal static extern IntPtr /* IUnknown* */ GetRawIUnknownForComObjectNoAddRef(Object o);
+		
+		// Copied from referencesource/mscorlib/system/runtime/interopservices/marshal.cs
+		//====================================================================
+		// Converts the CLR exception to an HRESULT. This function also sets
+		// up an IErrorInfo for the exception.
+		// This function is only used in WinRT and converts ObjectDisposedException
+		// to RO_E_CLOSED
+		//====================================================================
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		internal static extern int GetHRForException_WinRT(Exception e);
+
+		// Copied from referencesource/mscorlib/system/runtime/interopservices/marshal.cs
+		//========================================================================
+		// Create activation factory and wraps it with a unique RCW
+		//========================================================================
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		internal static extern object GetNativeActivationFactory(Type type);
+#else
+		internal static IntPtr /* IUnknown* */ GetRawIUnknownForComObjectNoAddRef(Object o) {
+			throw new NotSupportedException();
+		}
+
+		internal static int GetHRForException_WinRT(Exception e) {
+			throw new NotSupportedException();
+		}
+
+		internal static object GetNativeActivationFactory(Type type) {
+			throw new NotSupportedException();
+		}
+#endif
+
+		internal class MarshalerInstanceKeyComparer : IEqualityComparer<(Type, string)> {
+			public bool Equals ((Type, string) lhs, (Type, string) rhs) {
+				return lhs.CompareTo(rhs) == 0;
+			}
+
+			public int GetHashCode ((Type, string) key) {
+				return key.GetHashCode ();
+			}
+		}
+
+		internal static Dictionary<(Type, string), ICustomMarshaler> MarshalerInstanceCache;
+		internal static readonly object MarshalerInstanceCacheLock = new object ();
+
+		internal static ICustomMarshaler GetCustomMarshalerInstance (Type type, string cookie) {
+			var key = (type, cookie);
+
+			LazyInitializer.EnsureInitialized (
+				ref MarshalerInstanceCache, 
+				() => new Dictionary<(Type, string), ICustomMarshaler> (new MarshalerInstanceKeyComparer ())
+			);
+
+			ICustomMarshaler result;
+			bool gotExistingInstance;
+			lock (MarshalerInstanceCacheLock)
+				gotExistingInstance = MarshalerInstanceCache.TryGetValue (key, out result);
+
+			if (!gotExistingInstance) {
+				RuntimeMethodInfo getInstanceMethod;
+				try {
+					getInstanceMethod = (RuntimeMethodInfo)type.GetMethod (
+						"GetInstance", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.InvokeMethod,
+						null, new Type[] { typeof(string) }, null
+					);
+				} catch (AmbiguousMatchException) {
+					throw new ApplicationException ($"Custom marshaler '{type.FullName}' implements multiple static GetInstance methods that take a single string parameter.");
+				}
+
+				if ((getInstanceMethod == null) || 
+					(getInstanceMethod.ReturnType != typeof (ICustomMarshaler))) {
+					throw new ApplicationException ($"Custom marshaler '{type.FullName}' does not implement a static GetInstance method that takes a single string parameter and returns an ICustomMarshaler.");
+				}
+
+				Exception exc;
+				try {
+					result = (ICustomMarshaler)getInstanceMethod.InternalInvoke (null, new object[] { cookie }, out exc);
+				} catch (Exception e) {
+					// FIXME: mscorlib's legacyUnhandledExceptionPolicy is apparently 1, 
+					//  so exceptions are thrown instead of being passed through the outparam
+					exc = e;
+					result = null;
+				}
+
+				if (exc != null) {
+					var edi = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture (exc);
+					edi.Throw ();
+				}
+
+				if (result == null)
+					throw new ApplicationException ($"A call to GetInstance() for custom marshaler '{type.FullName}' returned null, which is not allowed.");
+
+				lock (MarshalerInstanceCacheLock)
+					MarshalerInstanceCache[key] = result;
+			}
+
+			return result;
+		}
+
+		public static unsafe IntPtr StringToCoTaskMemUTF8(string s)
+		{
+			if (s == null)
+			{
+				return IntPtr.Zero;
+			}
+
+			int nb = Encoding.UTF8.GetMaxByteCount(s.Length);
+
+			IntPtr pMem = AllocCoTaskMem(nb + 1);
+
+			int nbWritten;
+			byte* pbMem = (byte*)pMem;
+
+			fixed (char* firstChar = s)
+			{
+				nbWritten = Encoding.UTF8.GetBytes(firstChar, s.Length, pbMem, nb);
+			}
+
+			pbMem[nbWritten] = 0;
+
+			return pMem;
 		}
 	}
 }

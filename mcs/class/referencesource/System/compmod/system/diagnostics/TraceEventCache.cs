@@ -30,7 +30,7 @@ namespace System.Diagnostics {
             get {
                 if (stackTrace == null)
                     stackTrace = Environment.StackTrace;
-#if !DISABLE_CAS_USE
+#if MONO_FEATURE_CAS
                 else
                     new EnvironmentPermission(PermissionState.Unrestricted).Demand();
 #endif
@@ -40,7 +40,11 @@ namespace System.Diagnostics {
 
         public Stack LogicalOperationStack {
             get {
+#if DISABLE_REMOTING
+                throw new PlatformNotSupportedException ();
+#else
                 return Trace.CorrelationManager.LogicalOperationStack;
+#endif
             }
         }
 
@@ -77,7 +81,7 @@ namespace System.Diagnostics {
         [ResourceExposure(ResourceScope.None)]
         [ResourceConsumption(ResourceScope.Machine, ResourceScope.Machine)]
         private static void InitProcessInfo() {
-#if !DISABLE_CAS_USE
+#if MONO_FEATURE_CAS
             // Demand unmanaged code permission
             new SecurityPermission(SecurityPermissionFlag.UnmanagedCode).Demand();
 #endif

@@ -139,7 +139,9 @@ namespace System.Net {
 
             set 
             {
+#if MONO_FEATURE_CAS
                 ExceptionHelper.ControlPolicyPermission.Demand();
+#endif
                 Instance.CredentialPolicy = value;
             }
         }
@@ -203,7 +205,9 @@ namespace System.Net {
         /// </devdoc>
         public static void Register(IAuthenticationModule authenticationModule) 
         {
+#if MONO_FEATURE_CAS
             ExceptionHelper.UnmanagedPermission.Demand();
+#endif
             Instance.Register(authenticationModule);
         }
 
@@ -212,7 +216,9 @@ namespace System.Net {
         /// </devdoc>
         public static void Unregister(IAuthenticationModule authenticationModule) 
         {
+#if MONO_FEATURE_CAS
             ExceptionHelper.UnmanagedPermission.Demand();
+#endif
             Instance.Unregister(authenticationModule);
         }
 
@@ -221,7 +227,9 @@ namespace System.Net {
         /// </devdoc>
         public static void Unregister(string authenticationScheme) 
         {
+#if MONO_FEATURE_CAS
             ExceptionHelper.UnmanagedPermission.Demand();
+#endif
             Instance.Unregister(authenticationScheme);
         }
 

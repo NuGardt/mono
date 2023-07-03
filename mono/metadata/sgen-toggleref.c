@@ -1,5 +1,6 @@
-/*
- * sgen-toggleref.c: toggleref support for sgen
+/**
+ * \file
+ * toggleref support for sgen
  *
  * Author:
  *  Rodrigo Kumpera (kumpera@gmail.com)
@@ -18,6 +19,7 @@
 #include "sgen-toggleref.h"
 #include "sgen/sgen-client.h"
 
+#ifndef DISABLE_SGEN_TOGGLEREF
 
 /*only one of the two can be non null at a given time*/
 typedef struct {
@@ -100,6 +102,16 @@ void sgen_client_mark_togglerefs (char *start, char *end, ScanCopyContext ctx)
 	sgen_drain_gray_stack (ctx);
 }
 
+void
+sgen_foreach_toggleref_root (void (*callback)(MonoObject*, gpointer), gpointer data)
+{
+	int i;
+	for (i = 0; i < toggleref_array_size; ++i) {
+		if (toggleref_array [i].strong_ref)
+			callback (toggleref_array [i].strong_ref, data);
+	}
+}
+
 void sgen_client_clear_togglerefs (char *start, char *end, ScanCopyContext ctx)
 {
 	CopyOrMarkObjectFunc copy_func = ctx.ops->copy_or_mark_object;
@@ -168,6 +180,8 @@ mono_gc_toggleref_add (MonoObject *object, mono_bool strong_ref)
 	if (!toggleref_callback)
 		return;
 
+	MONO_ENTER_GC_UNSAFE;
+
 	SGEN_LOG (4, "Adding toggleref %p %d", object, strong_ref);
 
 	sgen_gc_lock ();
@@ -178,16 +192,18 @@ mono_gc_toggleref_add (MonoObject *object, mono_bool strong_ref)
 	++toggleref_array_size;
 
 	sgen_gc_unlock ();
+
+	MONO_EXIT_GC_UNSAFE;
 }
 
 /**
  * mono_gc_toggleref_register_callback:
- * @callback callback used to determine the new state of the given object.
+ * \param callback callback used to determine the new state of the given object.
  *
- * The callback must decide the status of a given object. It must return one of the values in the MONO_TOGGLE_REF_ enum.
+ * The callback must decide the status of a given object. It must return one of the values in the \c MONO_TOGGLE_REF_ enum.
  * This function is called with the world running but with the GC locked. This means that you can do everything that doesn't
  * require GC interaction. This includes, but not limited to, allocating objects, (de)registering for finalization, manipulating
- *gchandles, storing to reference fields or interacting with other threads that might perform such operations.
+ * gchandles, storing to reference fields or interacting with other threads that might perform such operations.
  */
 void
 mono_gc_toggleref_register_callback (MonoToggleRefStatus (*proccess_toggleref) (MonoObject *obj))
@@ -198,15 +214,17 @@ mono_gc_toggleref_register_callback (MonoToggleRefStatus (*proccess_toggleref) (
 static MonoToggleRefStatus
 test_toggleref_callback (MonoObject *obj)
 {
-	static MonoClassField *mono_toggleref_test_field;
 	MonoToggleRefStatus status = MONO_TOGGLE_REF_DROP;
 
-	if (!mono_toggleref_test_field) {
-		mono_toggleref_test_field = mono_class_get_field_from_name (mono_object_get_class (obj), "__test");
-		g_assert (mono_toggleref_test_field);
-	}
+	MONO_STATIC_POINTER_INIT (MonoClassField, mono_toggleref_test_field)
 
-	mono_field_get_value (obj, mono_toggleref_test_field, &status);
+		mono_toggleref_test_field = mono_class_get_field_from_name_full (mono_object_class (obj), "__test", NULL);
+		g_assert (mono_toggleref_test_field);
+
+	MONO_STATIC_POINTER_INIT_END (MonoClassField, mono_toggleref_test_field)
+
+	/* In coop mode, important to not call a helper that will pin obj! */
+	mono_field_get_value_internal (obj, mono_toggleref_test_field, &status);
 	printf ("toggleref-cb obj %d\n", status);
 	return status;
 }
@@ -216,5 +234,19 @@ sgen_register_test_toggleref_callback (void)
 {
 	toggleref_callback = test_toggleref_callback;
 }
+
+#else
+
+void
+mono_gc_toggleref_register_callback (MonoToggleRefStatus (*proccess_toggleref) (MonoObject *obj))
+{
+}
+
+void
+mono_gc_toggleref_add (MonoObject *object, mono_bool strong_ref)
+{
+}
+
+#endif
 
 #endif

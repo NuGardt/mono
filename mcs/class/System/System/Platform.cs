@@ -30,14 +30,30 @@ namespace System {
 	internal static class Platform {
 		static bool checkedOS;
 		static bool isMacOS;
-		static bool isFreeBSD;
+		static bool isAix;
+		static bool isIBMi;
 
 #if MONOTOUCH || XAMMAC
+		const bool isFreeBSD = false;
+		const bool isOpenBSD = false;
+
 		private static void CheckOS() {
 			isMacOS = true;
 			checkedOS = true;
 		}
+
+#elif ORBIS
+		const bool isFreeBSD = true;
+		const bool isOpenBSD = false;
+
+ 		private static void CheckOS() {
+ 			checkedOS = true;
+ 		}
+
 #else
+		static bool isFreeBSD;
+		static bool isOpenBSD;
+
 		[DllImport ("libc")]
 		static extern int uname (IntPtr buf);
 
@@ -56,6 +72,15 @@ namespace System {
 					break;
 				case "FreeBSD":
 					isFreeBSD = true;
+					break;
+				case "AIX":
+					isAix = true;
+					break;
+				case "OS400":
+					isIBMi = true;
+					break;
+				case "OpenBSD":
+					isOpenBSD = true;
 					break;
 				}
 			}
@@ -77,6 +102,30 @@ namespace System {
 				if (!checkedOS)
 					CheckOS();
 				return isFreeBSD;
+			}
+		}
+
+		public static bool IsOpenBSD {
+			get {
+				if (!checkedOS)
+					CheckOS();
+				return isOpenBSD;
+			}
+		}
+
+		public static bool IsIBMi {
+			get {
+				if (!checkedOS)
+					CheckOS();
+				return isIBMi;
+			}
+		}
+
+		public static bool IsAix {
+			get {
+				if (!checkedOS)
+					CheckOS();
+				return isAix;
 			}
 		}
 	}

@@ -15,7 +15,6 @@ using NUnit.Framework;
 using System;
 using System.Xml;
 using System.IO;
-using Network =  System.Net;
 using System.Xml.Linq;
 using System.Xml.Schema;
 using System.Collections.Generic;
@@ -94,7 +93,7 @@ namespace MonoTests.System.Xml.Schema
 		{
 			// Create a resolver with default credentials.
 			XmlUrlResolver resolver = new XmlUrlResolver ();
-			resolver.Credentials = Network.CredentialCache.DefaultCredentials; 
+			resolver.Credentials = global::System.Net.CredentialCache.DefaultCredentials;
 			// Set the reader settings object to use the resolver.
 			XmlReaderSettings settings = new XmlReaderSettings ();
 			settings.XmlResolver = resolver;
@@ -220,8 +219,8 @@ namespace MonoTests.System.Xml.Schema
 				}
 			}
 
-			Assert.GreaterOrEqual (afterNoOfAttributes, beforeNoOfAttributes, "newAttributes");
-			Assert.GreaterOrEqual (afterNoOfElements, beforeNoOfElements, "newElements");       
+			AssertHelper.GreaterOrEqual (afterNoOfAttributes, beforeNoOfAttributes, "newAttributes");
+			AssertHelper.GreaterOrEqual (afterNoOfElements, beforeNoOfElements, "newElements");       
 		}
 
 		/*

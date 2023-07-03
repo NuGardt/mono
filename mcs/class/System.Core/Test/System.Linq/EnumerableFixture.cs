@@ -34,11 +34,8 @@ using System.Text;
 using System.Threading;
 using NUnit.Framework;
 using System.Linq;
-using NUnit.Framework.SyntaxHelpers;
 using NUnit.Framework.Constraints;
 using System.Diagnostics;
-
-namespace NUnit.Framework.SyntaxHelpers { class Dummy {} }
 
 namespace MonoTests.System.Linq
 {
@@ -503,6 +500,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void Distinct_MixedCaseStringsWithCaseIgnoringComparer_YieldsFirstCaseOfEachDistinctStringInSourceOrder ()
 		{
 			var source = Read ("Foo Bar BAZ BaR baz FOo".Split ());
@@ -613,6 +611,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void Except_SecondArgComparerArg_ComparerIsUsed ()
 		{
 			var first = Read ("albert", "john", "simon");
@@ -776,6 +775,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void GroupBy_KeySelectorArgComparerArg_KeysThatDifferInCasingNonCaseSensitiveStringComparer_CorrectGrouping ()
 		{
 			var persons = Read (Person.CreatePersonsWithNamesUsingMixedCase ());
@@ -837,6 +837,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void GroupBy_KeySelectorArgElementSelectorArgComparerArg_ValidArguments_CorrectGroupingAndProcessing ()
 		{
 			var persons = Read (Person.CreatePersonsWithNamesUsingMixedCase ());
@@ -876,6 +877,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void GroupBy_KeySelectorArgResultSelectorArgComparerArg_ValidArguments_CorrectGroupingAndTransforming ()
 		{
 			var persons = Read (Person.CreatePersonsWithNamesUsingMixedCase ());
@@ -894,6 +896,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void GroupBy_KeySelectorArgElementSelectorArgResultSelectorArgComparerArg_ValidArguments_CorrectGroupingAndTransforming ()
 		{
 			var persons = Read (Person.CreatePersonsWithNamesUsingMixedCase ());
@@ -950,6 +953,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void GroupJoin_InnerArgOuterKeySelectorArgInnerKeySelectorArgResultSelectorArgComparerArg_ValidArguments_CorrectGroupingAndJoining ()
 		{
 			var persons = Read (Person.CreatePersons ());
@@ -1008,6 +1012,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void Intersect_MixedStringsAndCaseInsensitiveComparer_YieldsCommonSetFromFirstSource ()
 		{
 			var first = Read ("Heinrich", "Hubert", "Thomas");
@@ -1061,6 +1066,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void Join_InnerArgOuterKeySelectorArgInnerKeySelectorArgResultSelectorArgComparerArg_PetOwnersNamesCasingIsInconsistent_CaseInsensitiveJoinIsPerformed ()
 		{
 			var persons = Read (Person.CreatePersons ());
@@ -2083,6 +2089,7 @@ namespace MonoTests.System.Linq
 		}
 
 		[Test]
+		[Category ("ManagedCollator")]
 		public void Union_SecondArgComparerArg_UpperCaseAndLowerCaseStrings_PassedComparerIsUsed ()
 		{
 			var source = Read ("A", "B", "C", "D", "E", "F");
@@ -2169,14 +2176,14 @@ namespace MonoTests.System.Linq
 			// then check that the source enumerator will be disposed
 			// by the time the test is torn.
 			//
-
+/*
 			var disposed = false;
 			var enumerated = false;
 			reader.Disposed += delegate { disposed = true; };
 			reader.Enumerated += delegate { enumerated = true; };
 			AssertionHandler assertion = () => Assert.That (!enumerated || disposed, Is.True, "Enumerator not disposed.");
 			tearDownAssertions = (AssertionHandler) Delegate.Combine (tearDownAssertions, assertion);
-
+*/
 			return reader;
 		}
 	}

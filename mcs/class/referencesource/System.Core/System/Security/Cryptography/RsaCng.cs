@@ -10,6 +10,44 @@ namespace System.Security.Cryptography
 {
     public sealed class RSACng : RSA
     {
+#if MONO
+        public RSACng() : this(2048) { }
+
+        public RSACng(int keySize)
+        {
+            throw new NotImplementedException ();
+        }
+
+        public RSACng(CngKey key)
+        {
+            throw new NotImplementedException ();
+        }
+
+        public CngKey Key
+        {
+            [SecuritySafeCritical]
+            get
+            {
+                throw new NotImplementedException ();
+            }
+
+            private set
+            {
+                throw new NotImplementedException ();
+            }
+        }
+
+        public override RSAParameters ExportParameters(bool includePrivateParameters)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override void ImportParameters(RSAParameters parameters)
+        {
+            throw new NotImplementedException();
+        }
+#else
+
         // See https://msdn.microsoft.com/en-us/library/windows/desktop/bb931354(v=vs.85).aspx
         private static KeySizes[] s_legalKeySizes = new KeySizes[] { new KeySizes(512, 16384, 64) };
 
@@ -49,6 +87,7 @@ namespace System.Security.Cryptography
         /// <exception cref="ArgumentException">if <paramref name="key" /> is not an RSA key</exception>
         /// <exception cref="ArgumentNullException">if <paramref name="key" /> is null.</exception>
         [SecuritySafeCritical]
+        [SecurityPermission(SecurityAction.Assert, UnmanagedCode = true)]
         public RSACng(CngKey key)
         {
             if (key == null)
@@ -77,6 +116,7 @@ namespace System.Security.Cryptography
         public CngKey Key
         {
             [SecuritySafeCritical]
+            [SecurityPermission(SecurityAction.Assert, UnmanagedCode = true)]
             get
             {
                 // If our key size was changed from the key we're using, we need to generate a new key
@@ -89,17 +129,21 @@ namespace System.Security.Cryptography
                 // If we don't have a key yet, we need to generate a random one now
                 if (_key == null)
                 {
-                    CngKeyCreationParameters creationParameters = new CngKeyCreationParameters();
+                    CngKeyCreationParameters creationParameters = new CngKeyCreationParameters()
+                    {
+                        ExportPolicy = CngExportPolicies.AllowPlaintextExport,
+                    };
+
                     CngProperty keySizeProperty = new CngProperty(NCryptNative.KeyPropertyName.Length,
-                                                                  BitConverter.GetBytes(KeySize),
-                                                                  CngPropertyOptions.None);
+                                                                    BitConverter.GetBytes(KeySize),
+                                                                    CngPropertyOptions.None);
                     creationParameters.Parameters.Add(keySizeProperty);
                     _key = CngKey.Create(CngAlgorithm.Rsa, null, creationParameters);
                 }
 
                 return _key;
             }
-
+            
             private set
             {
                 Debug.Assert(value != null, "value != null");
@@ -114,7 +158,22 @@ namespace System.Security.Cryptography
                 }
 
                 _key = value;
-                KeySize = _key.KeySize;
+
+                // Our LegalKeySizes value stores the values that we encoded as being the correct
+                // legal key size limitations for this algorithm, as documented on MSDN.
+                //
+                // But on a new OS version we might not question if our limit is accurate, or MSDN
+                // could have been innacurate to start with.
+                //
+                // Since the key is already loaded, we know that Windows thought it to be valid;
+                // therefore we should set KeySizeValue directly to bypass the LegalKeySizes conformance
+                // check.
+                //
+                // For RSA there are known cases where this change matters. RSACryptoServiceProvider can
+                // create a 384-bit RSA key, which we consider too small to be legal. It can also create
+                // a 1032-bit RSA key, which we consider illegal because it doesn't match our 64-bit
+                // alignment requirement. (In both cases Windows loads it just fine)
+                KeySizeValue = _key.KeySize;
             }
         }
 
@@ -124,6 +183,7 @@ namespace System.Security.Cryptography
         private SafeNCryptKeyHandle KeyHandle
         {
             [SecuritySafeCritical]
+            [SecurityPermission(SecurityAction.Assert, UnmanagedCode = true)]
             get { return Key.Handle; }
         }
 
@@ -385,7 +445,7 @@ namespace System.Security.Cryptography
                 throw new ArgumentNullException("padding");
             }
 
-            SafeNCryptKeyHandle keyHandle = Key.Handle;
+            SafeNCryptKeyHandle keyHandle = KeyHandle;
 
             if (padding == RSAEncryptionPadding.Pkcs1)
             {
@@ -435,6 +495,7 @@ namespace System.Security.Cryptography
         //
 
         [SecuritySafeCritical]
+        [SecurityPermission(SecurityAction.Assert, UnmanagedCode = true)]
         public override byte[] SignHash(byte[] hash, HashAlgorithmName hashAlgorithm, RSASignaturePadding padding)
         {
             if (hash == null)
@@ -504,5 +565,25 @@ namespace System.Security.Cryptography
                  throw new CryptographicException(SR.GetString(SR.Cryptography_UnsupportedPaddingMode));
             }
         }
+
+        /*
+         * The members
+         *   DecryptValue
+         *   EncryptValue
+         *   get_KeyExchangeAlgorithm
+         *   get_SignatureAlgorithm
+         * are all implemented on RSA as of net46.
+         *
+         * But in servicing situations, System.Core.dll can get patched onto a machine which has mscorlib < net46, meaning
+         * these abstract members have no implementation.
+         *
+         * To keep servicing simple, we'll redefine the overrides here. Since this type is sealed it only affects reflection,
+         * as there are no derived types to mis-target base.-invocations.
+         */
+        public override byte[] DecryptValue(byte[] rgb) { throw new NotSupportedException(SR.NotSupported_Method); }
+        public override byte[] EncryptValue(byte[] rgb) { throw new NotSupportedException(SR.NotSupported_Method); }
+        public override string KeyExchangeAlgorithm { get { return "RSA"; } }
+        public override string SignatureAlgorithm { get { return "RSA"; } }
+#endif
     }
 }

@@ -20,6 +20,7 @@ using System.Runtime;
 using System.Runtime.Serialization;
 using System.Text;
 using System.Diagnostics.Contracts;
+using System.Threading.Tasks;
 
 namespace System.IO {
     // This abstract base class represents a writer that can write
@@ -28,7 +29,7 @@ namespace System.IO {
     //
     [Serializable]
 [System.Runtime.InteropServices.ComVisible(true)]
-    public class BinaryWriter : IDisposable
+    public class BinaryWriter : IDisposable, IAsyncDisposable
     {
         public static readonly BinaryWriter Null = new BinaryWriter();
         
@@ -135,6 +136,45 @@ namespace System.IO {
         {
             return OutStream.Seek(offset, origin);
         }
+
+#if MONO
+        public virtual void Write(ReadOnlySpan<byte> buffer)
+        {
+            Write(buffer.ToArray());
+        }
+
+        public virtual void Write(ReadOnlySpan<char> buffer)
+        {
+            Write(buffer.ToArray());
+        }
+
+        public virtual ValueTask DisposeAsync()
+        {
+            try
+            {
+                if (GetType() == typeof(BinaryWriter))
+                {
+                    if (_leaveOpen)
+                    {
+                        return new ValueTask(OutStream.FlushAsync());
+                    }
+
+                    OutStream.Close();
+                }
+                else
+                {
+                    // Since this is a derived BinaryWriter, delegate to whatever logic
+                    // the derived implementation already has in Dispose.
+                    Dispose();
+                }
+                return default;
+            }
+            catch (Exception exc)
+            {
+                return new ValueTask(Task.FromException(exc));
+            }
+        }
+#endif
         
         // Writes a boolean to this stream. A single byte is written to the stream
         // with the value 0 representing false or the value 1 representing true.
@@ -196,7 +236,7 @@ namespace System.IO {
             Contract.Assert(_encoding.GetMaxByteCount(1) <= 16, "_encoding.GetMaxByteCount(1) <= 16)");
             int numBytes = 0;
             fixed(byte * pBytes = _buffer) {
-                numBytes = _encoder.GetBytes(&ch, 1, pBytes, 16, true);
+                numBytes = _encoder.GetBytes(&ch, 1, pBytes, _buffer.Length, true);
             }
             OutStream.Write(_buffer, 0, numBytes);
         }
@@ -371,10 +411,10 @@ namespace System.IO {
 
             if (_largeByteBuffer == null) {
                 _largeByteBuffer = new byte[LargeByteBufferSize];
-                _maxChars = LargeByteBufferSize / _encoding.GetMaxByteCount(1);
+                _maxChars = _largeByteBuffer.Length / _encoding.GetMaxByteCount(1);
             }
 
-            if (len <= LargeByteBufferSize) {
+            if (len <= _largeByteBuffer.Length) {
                 //Contract.Assert(len == _encoding.GetBytes(chars, 0, chars.Length, _largeByteBuffer, 0), "encoding's GetByteCount & GetBytes gave different answers!  encoding type: "+_encoding.GetType().Name);
                 _encoding.GetBytes(value, 0, value.Length, _largeByteBuffer, 0);
                 OutStream.Write(_largeByteBuffer, 0, len);
@@ -393,14 +433,21 @@ namespace System.IO {
                     // Figure out how many chars to process this round.
                     int charCount = (numLeft > _maxChars) ? _maxChars : numLeft;
                     int byteLen;
-                    fixed(char* pChars = value) {
-                        fixed(byte* pBytes = _largeByteBuffer) {
-                            byteLen = _encoder.GetBytes(pChars + charStart, charCount, pBytes, LargeByteBufferSize, charCount == numLeft);
+
+                    checked {
+                        if (charStart < 0 || charCount < 0 || charStart + charCount > value.Length) {
+                            throw new ArgumentOutOfRangeException("charCount");
+                        }
+
+                        fixed(char* pChars = value) {
+                            fixed(byte* pBytes = _largeByteBuffer) {
+                                byteLen = _encoder.GetBytes(pChars + charStart, charCount, pBytes, _largeByteBuffer.Length, charCount == numLeft);
+                            }
                         }
                     }
 #if _DEBUG
                     totalBytes += byteLen;
-                    Contract.Assert (totalBytes <= len && byteLen <= LargeByteBufferSize, "BinaryWriter::Write(String) - More bytes encoded than expected!");
+                    Contract.Assert (totalBytes <= len && byteLen <= _largeByteBuffer.Length, "BinaryWriter::Write(String) - More bytes encoded than expected!");
 #endif
                     OutStream.Write(_largeByteBuffer, 0, byteLen);
                     charStart += charCount;

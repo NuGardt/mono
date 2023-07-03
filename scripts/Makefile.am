@@ -29,13 +29,16 @@ bin_SCRIPTS = \
 	$(scripts_defaults)	\
 	$(scripts_2_0)		\
 	$(scripts_service)	\
-	$(scripts_nunit)	\
 	$(scripts_rpmhelpers)	\
 	$(MDOC_SUBCOMMANDS)	\
 	$(MDOC_COMPAT)		\
 	mono-test-install	\
-	peverify			\
-	mcs					\
+	peverify		\
+	mcs			\
+	csc			\
+	vbc			\
+	csi			\
+	mono-package-runtime	\
 	mono-heapviz		\
 	$(scripts_mono_configuration_crypto)
 
@@ -61,6 +64,7 @@ scripts_2_0 = \
 	wsdl2$(SCRIPT_SUFFIX)
 
 scripts_4_0 = \
+	aprofutil$(SCRIPT_SUFFIX)		\
 	disco$(SCRIPT_SUFFIX)			\
 	dtd2xsd$(SCRIPT_SUFFIX)			\
 	dtd2rng$(SCRIPT_SUFFIX)			\
@@ -69,7 +73,6 @@ scripts_4_0 = \
 	macpack$(SCRIPT_SUFFIX)			\
 	mdoc$(SCRIPT_SUFFIX)                    \
 	mono-cil-strip$(SCRIPT_SUFFIX)		\
-	prj2make$(SCRIPT_SUFFIX)		\
 	soapsuds$(SCRIPT_SUFFIX)		\
 	caspol$(SCRIPT_SUFFIX)			\
 	cert-sync$(SCRIPT_SUFFIX)		\
@@ -79,6 +82,7 @@ scripts_4_0 = \
 	crlupdate$(SCRIPT_SUFFIX)		\
 	csharp$(SCRIPT_SUFFIX)			\
 	httpcfg$(SCRIPT_SUFFIX)			\
+	illinkanalyzer$(SCRIPT_SUFFIX)		\
 	lc$(SCRIPT_SUFFIX)			\
 	mconfig$(SCRIPT_SUFFIX)			\
 	mod$(SCRIPT_SUFFIX)			\
@@ -135,11 +139,10 @@ scripts_defaults = 		\
 	wsdl$(SCRIPT_SUFFIX)
 
 scripts_service = mono-service mono-service2
-scripts_nunit = nunit-console$(SCRIPT_SUFFIX) nunit-console2$(SCRIPT_SUFFIX) nunit-console4$(SCRIPT_SUFFIX)
 scripts_rpmhelpers = mono-find-provides mono-find-requires
 scripts_mono_configuration_crypto = mono-configuration-crypto$(SCRIPT_SUFFIX)
 
-CLEANFILES = $(scripts_mono_configuration_crypto) $(scripts_4_0_umask) $(scripts_2_0) $(scripts_defaults) $(scripts_4_0) mono-service mono-service2 nunit-console nunit-console2 nunit-console4 mono-find-provides mono-find-requires mod $(MDOC_SUBCOMMANDS)
+CLEANFILES = $(scripts_mono_configuration_crypto) $(scripts_4_0_umask) $(scripts_2_0) $(scripts_defaults) $(scripts_4_0) mono-service mono-service2 mono-find-provides mono-find-requires mod $(MDOC_SUBCOMMANDS)
 DISTCLEANFILES = $(pkgconfig_DATA) $(scripts_rpmhelpers)
 
 EXTRA_DIST =			\
@@ -153,14 +156,19 @@ EXTRA_DIST =			\
 	mono-find-requires.in	\
 	peverify.in			\
 	xbuild.in			\
-	update_submodules		\
+	update_submodules.sh	\
 	mcs.in				\
+	csc.in				\
+	vbc.in				\
 	dmcs.in				\
+	csi.in			\
+	mono-package-runtime	\
 	mono-test-install	\
 	mono-heapviz		\
 	$(MDOC_COMPAT)		\
-	get-cygwin-deps.sh	\
-	mono-configuration-crypto.in
+	mono-configuration-crypto.in	\
+	submodules/versions.mk	\
+	submodules/versions.py
 
 mono_interp = mono
 
@@ -198,8 +206,20 @@ mcs: mcs.in Makefile
 	$(REWRITE_COMMON) $(srcdir)/mcs.in > $@.tmp
 	mv -f $@.tmp $@
 
+csc: csc.in Makefile
+	$(REWRITE_COMMON) $(srcdir)/csc.in > $@.tmp
+	mv -f $@.tmp $@
+
+vbc: vbc.in Makefile
+	$(REWRITE_COMMON) $(srcdir)/vbc.in > $@.tmp
+	mv -f $@.tmp $@
+
 dmcs: dmcs.in Makefile
 	$(REWRITE_COMMON) $(srcdir)/dmcs.in > $@.tmp
+	mv -f $@.tmp $@
+
+csi: csi.in Makefile
+	$(REWRITE_COMMON) $(srcdir)/csi.in > $@.tmp
 	mv -f $@.tmp $@
 
 mono-service: mono-service.in Makefile
@@ -208,18 +228,6 @@ mono-service: mono-service.in Makefile
 
 mono-service2: mono-service.in Makefile
 	$(REWRITE4) -e 's,@''exe_name@,$@,g' $(srcdir)/mono-service.in > $@.tmp
-	mv -f $@.tmp $@
-
-nunit-console$(SCRIPT_SUFFIX): $(SCRIPT_IN) Makefile
-	$(REWRITE4_DEBUG) -e 's,@''exe_name@,nunit-console,g' $(srcdir)/$(SCRIPT_IN) | $(FILTER) > $@.tmp
-	mv -f $@.tmp $@
-
-nunit-console2$(SCRIPT_SUFFIX): $(SCRIPT_IN) Makefile
-	$(REWRITE4_DEBUG) -e 's,@''exe_name@,nunit-console,g' $(srcdir)/$(SCRIPT_IN) | $(FILTER) > $@.tmp
-	mv -f $@.tmp $@
-
-nunit-console4$(SCRIPT_SUFFIX): $(SCRIPT_IN) Makefile
-	$(REWRITE4_DEBUG) -e 's,@''exe_name@,nunit-console,g' $(srcdir)/$(SCRIPT_IN) | $(FILTER) > $@.tmp
 	mv -f $@.tmp $@
 
 xbuild: xbuild.in Makefile

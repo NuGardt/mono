@@ -12,6 +12,7 @@ using System;
 using System.Collections;
 using System.Globalization;
 using System.Reflection;
+using System.Threading;
 using System.Collections.Generic;
 
 namespace MonoTests.System
@@ -517,7 +518,15 @@ public class ArrayTest
 		var arr2_2 = new C [1] { new DC () };
 		try {
 			Array.Copy (arr2_2, arr1_2, 1);
-			Assert.Fail ("#1");
+			Assert.Fail ("#2");
+		} catch (InvalidCastException) {
+		}
+
+		var arr1_3 = new float [5];
+		var arr2_3 = new object [1];
+		try {
+			Array.Copy (arr2_3, arr1_3, 1);
+			Assert.Fail ("#3");
 		} catch (InvalidCastException) {
 		}
 	}
@@ -780,6 +789,14 @@ public class ArrayTest
 	}
 
 	[Test]
+	public void CreateInstanceVoid ()
+	{
+		Assert.Throws<NotSupportedException> (delegate () {
+				Array.CreateInstance (typeof (void), 1);
+			});
+	}
+
+	[Test]
 	public void TestGetEnumerator() {
 		String[] s1 = {"this", "is", "a", "test"};
 		IEnumerator en = s1.GetEnumerator ();
@@ -995,7 +1012,6 @@ public class ArrayTest
 		int[] myBoundArray = new int[1] { Int32.MinValue };
 		Array myExtremeArray=Array.CreateInstance ( typeof(String), myLengthArray, myBoundArray );
 		Assert.AreEqual (Int32.MaxValue, ((IList)myExtremeArray).IndexOf (42), "AD04");
-
 	}
 
 	[Test]
@@ -2271,7 +2287,7 @@ public class ArrayTest
 					errorThrown = true;
 				}
 
-				Assert.IsTrue (!errorThrown, "#M93(" + types [i] + ")");
+				Assert.IsFalse (errorThrown, "#M93(" + types [i] + ")");
 			}
 
 			// Copy
@@ -2572,6 +2588,26 @@ public class ArrayTest
 		int IComparable.CompareTo (object obj)
 		{
 			return val.CompareTo ((obj as Comp).val);
+		}
+	}
+
+	[Test]
+	public void TestSortComparableMixed()
+	{
+		var m = new TestSortComparableMixed_Comparer ();
+		var arr = new object [] { 1, 2, m, 4, 5, 6, 7, 8, 9, 10 };
+
+		Array.Sort (arr);
+
+		var expected = new object [] { m, 1, 2, 4, 5, 6, 7, 8, 9, 10 };
+		Assert.AreEqual (expected, arr);
+	}
+
+	class TestSortComparableMixed_Comparer : IComparable
+	{
+		public int CompareTo (object other)
+		{
+			return -1;
 		}
 	}
 
@@ -3358,6 +3394,30 @@ public class ArrayTest
 		}
 	}
 
+	[Test]
+	public void IEnumerator_Dispose ()
+	{
+		IEnumerable<int> e = new int[] { 1 };
+		var en = e.GetEnumerator ();
+		Assert.IsTrue (en.MoveNext (), "#1");
+		Assert.IsFalse (en.MoveNext (), "#2");
+		en.Dispose ();
+		Assert.IsFalse (en.MoveNext (), "#3");
+	}
+
+	[Test]
+	public void IEnumerator_ZeroSize ()
+	{
+		IEnumerable<int> e = Array.Empty<int> ();
+		var en = e.GetEnumerator ();
+		Assert.IsFalse (en.MoveNext (), "#1");
+
+		e = Array.Empty<int> ();
+		en = e.GetEnumerator ();
+		Assert.IsFalse (en.MoveNext (), "#2");
+	}
+
+	[Test]
 	public void ICollection_IsReadOnly() {
 		ICollection<string> arr = new string [10];
 
@@ -3642,6 +3702,20 @@ public class ArrayTest
 		Assert.AreEqual (3, c.Counter);		
 	}
 
+	[Test]
+	public void EnumeratorsEquality ()
+	{
+		int [] normalBase = new int [0];
+		IEnumerable<int> specialBase = new int [0];
+
+		var firstSpecial = specialBase.GetEnumerator ();
+		var secondSpecial = specialBase.GetEnumerator ();
+		var firstNormal = normalBase.GetEnumerator ();
+		var secondNormal = normalBase.GetEnumerator ();
+
+		Assert.IsFalse (object.ReferenceEquals (firstNormal, secondNormal));
+		Assert.IsTrue (object.ReferenceEquals (firstSpecial, secondSpecial));
+	}
 
 	[Test]
 	public void JaggedArrayCtor ()
@@ -3660,5 +3734,78 @@ public class ArrayTest
 			Assert.AreEqual (10, ((object[])arr [i]).Length);
 		}
 	}
+
+	[Test]
+	public unsafe void PointerArraysBoxing ()
+	{
+		var x = new int*[10];
+		var e = x.GetEnumerator ();
+		e.MoveNext ();
+
+		Assert.Throws<NotSupportedException> (() => { var _ = e.Current; }, "#1");
+		Assert.Throws<NotSupportedException> (() => { var _ = x.GetValue (0); }, "#2");
+		Assert.Throws<NotSupportedException> (() => { x.SetValue (0, 0); }, "#3");
+	}
+
+
+#if MONO_FEATURE_THREAD_ABORT
+	public struct J
+	{
+		public int i;
+
+		public J(int i_) { i = i_; }
+	}
+
+	struct JComp : IComparer<J>
+	{
+		public int Compare(J x, J y)
+		{
+			int val = 0;
+			Thread.Sleep (Timeout.Infinite);
+			return val;
+		}
+	}
+
+	class ArraySortAbortData {
+		internal ManualResetEventSlim mre;
+		internal bool threw;
+
+		internal ArraySortAbortData () {
+			mre = new ManualResetEventSlim ();
+			threw = false;
+		}
+	}
+
+	[Test]
+	public void ArraySortAbort ()
+	{
+		var d = new ArraySortAbortData();
+		var t = new Thread(RunArraySort);
+		t.Start(d);
+		d.mre.Wait();
+		Thread.Sleep(400);
+		t.Abort();
+		t.Join();
+		Assert.IsFalse (d.threw);
+	}
+
+	public static void RunArraySort(object data)
+	{
+		var d = data as ArraySortAbortData;
+		int n = 10;
+		var a = new J[n];
+		for (int i = 0; i < n; ++i)
+		{
+			a[i] = new J(n - i);
+		}
+		d.mre.Set();
+		try {
+			Array.Sort(a, 0, n, new JComp());
+		} catch (InvalidOperationException) {
+			// t.Abort in ArraySortAbort should _not_ end up here
+			d.threw = true;
+		}
+	}
+#endif
 }
 }

@@ -1,5 +1,6 @@
-/*
- * sgen-bridge-internals.h: The cross-GC bridge.
+/**
+ * \file
+ * The cross-GC bridge.
  *
  * Copyright (C) 2015 Xamarin Inc
  *
@@ -18,8 +19,8 @@
 #include "mono/sgen/sgen-gc.h"
 #include "mono/metadata/sgen-bridge.h"
 
-extern volatile gboolean bridge_processing_in_progress;
-extern MonoGCBridgeCallbacks bridge_callbacks;
+extern volatile gboolean mono_bridge_processing_in_progress;
+extern MonoGCBridgeCallbacks mono_bridge_callbacks;
 
 gboolean sgen_need_bridge_processing (void);
 void sgen_bridge_reset_data (void);
@@ -33,8 +34,18 @@ void sgen_bridge_describe_pointer (GCObject *object);
 gboolean sgen_is_bridge_object (GCObject *obj);
 void sgen_mark_bridge_object (GCObject *obj);
 
+gboolean sgen_bridge_handle_gc_param (const char *opt);
 gboolean sgen_bridge_handle_gc_debug (const char *opt);
 void sgen_bridge_print_gc_debug_usage (void);
+
+typedef struct {
+	char *dump_prefix;
+	gboolean accounting;
+	gboolean scc_precise_merge; // Used by Tarjan
+	// Disables reporting SCCs with no bridge objects on tarjan. Used when comparing outputs
+	// of two bridge processors, in order to keep consistency.
+	gboolean disable_non_bridge_scc;
+} SgenBridgeProcessorConfig;
 
 typedef struct {
 	void (*reset_data) (void);
@@ -44,8 +55,9 @@ typedef struct {
 	MonoGCBridgeObjectKind (*class_kind) (MonoClass *klass);
 	void (*register_finalized_object) (GCObject *object);
 	void (*describe_pointer) (GCObject *object);
-	void (*enable_accounting) (void);
-	void (*set_dump_prefix) (const char *prefix);
+
+	/* Should be called once, immediately after init */
+	void (*set_config) (const SgenBridgeProcessorConfig *);
 
 	/*
 	 * These are set by processing_build_callback_data().
@@ -62,6 +74,7 @@ void sgen_new_bridge_init (SgenBridgeProcessor *collector);
 void sgen_tarjan_bridge_init (SgenBridgeProcessor *collector);
 void sgen_set_bridge_implementation (const char *name);
 void sgen_bridge_set_dump_prefix (const char *prefix);
+void sgen_init_bridge (void);
 
 #endif
 

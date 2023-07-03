@@ -13,12 +13,14 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-#if !MONOTOUCH && !MOBILE_STATIC
+#if !MONOTOUCH && !FULL_AOT_RUNTIME
 using System.Reflection.Emit;
 #endif
 using System.Runtime.InteropServices;
+#if !DISABLE_REMOTING
 using System.Runtime.Remoting;
 using System.Runtime.Remoting.Channels;
+#endif
 using System.Security;
 using System.Security.Permissions;
 
@@ -273,6 +275,7 @@ namespace MonoTests.System {
 			Activator.CreateInstance (new CustomUserType ());
 		}
 
+#if !DISABLE_REMOTING
 		[Test]
 		public void CreateInstance_StringString ()
 		{
@@ -281,6 +284,7 @@ namespace MonoTests.System {
 			objCOMTest.Id = 2;
 			Assert.AreEqual (2, objCOMTest.Id, "#A03");
 		}
+#endif
 
 		[Test]
 		[ExpectedException (typeof (ArgumentNullException))]
@@ -311,7 +315,7 @@ namespace MonoTests.System {
 			Assert.AreEqual (7, objCOMTest.Id, "#A05");
 		}
 
-#if !MONOTOUCH && !MOBILE_STATIC
+#if !MONOTOUCH && !FULL_AOT_RUNTIME
 		[Test]
 		[ExpectedException (typeof (MissingMethodException))]
 		public void CreateInstance_TypeBuilder ()
@@ -412,6 +416,7 @@ namespace MonoTests.System {
 		}
 
 		[Test]
+		[Category ("MobileNotWorking")]
 		[ExpectedException (typeof (ArgumentNullException))]
 		public void GetObject_UrlNull ()
 		{
@@ -421,6 +426,7 @@ namespace MonoTests.System {
 
 		// TODO: Implemente the test methods for all the overriden function using activationAttribute
 
+#if !DISABLE_REMOTING
 		[Test]
 		[Category ("AndroidNotWorking")] // Assemblies aren't accessible using filesystem paths (they're either in apk, embedded in native code or not there at all
 		public void CreateInstanceFrom ()
@@ -430,6 +436,7 @@ namespace MonoTests.System {
 			objHandle.Unwrap ();
 			// TODO: Implement the test methods for all the overriden function using activationAttribute
 		}
+#endif
 
 #if !MOBILE
 
@@ -504,6 +511,7 @@ namespace MonoTests.System {
 			Assert.IsNotNull (Activator.CreateInstance (typeof (foo2<long, int>)), "foo2<long, int>");
 		}
 
+#if !DISABLE_REMOTING
 		[Test]
 		public void CreateInstanceCrossDomain ()
 		{
@@ -512,8 +520,9 @@ namespace MonoTests.System {
 						  BindingFlags.Public | BindingFlags.Instance, null, null, CultureInfo.InvariantCulture,
 						  null, null);
 		}
+#endif
 
-#if !MONOTOUCH && !MOBILE_STATIC
+#if !MONOTOUCH && !FULL_AOT_RUNTIME && !DISABLE_REMOTING
 		[Test]
 		public void CreateInstanceCustomDomain ()
 		{
@@ -523,6 +532,8 @@ namespace MonoTests.System {
 						  null, null);
 		}
 #endif
+
+#if !DISABLE_REMOTING
 		[Test]
 		public void CreateInstanceCrossDomainNonSerializableArgs ()
 		{
@@ -530,6 +541,7 @@ namespace MonoTests.System {
 			Activator.CreateInstance (AppDomain.CurrentDomain, "mscorlib.dll", "System.WeakReference", false,
 						  BindingFlags.Public | BindingFlags.Instance, null, new object [] {ModuleHandle.EmptyHandle}, null, null, null);
 		}
+#endif
 
 		[Test]
 		[ExpectedException (typeof (NotSupportedException))]

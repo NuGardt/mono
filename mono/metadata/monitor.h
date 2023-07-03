@@ -1,5 +1,6 @@
-/*
- * monitor.h: Monitor locking functions
+/**
+ * \file
+ * Monitor locking functions
  *
  * Author:
  *	Dick Porter (dick@ximian.com)
@@ -12,10 +13,9 @@
 
 #include <glib.h>
 #include <mono/metadata/object.h>
-#include <mono/io-layer/io-layer.h>
-#include "mono/utils/mono-compiler.h"
-
-G_BEGIN_DECLS
+#include <mono/utils/mono-compiler.h>
+#include <mono/utils/mono-coop-mutex.h>
+#include <mono/metadata/icalls.h>
 
 #define OWNER_MASK		0x0000ffff
 #define ENTRY_COUNT_MASK	0xffff0000
@@ -39,9 +39,10 @@ struct _MonoThreadsSync
 #ifdef HAVE_MOVING_COLLECTOR
 	gint32 hash_code;
 #endif
-	HANDLE entry_sem;
 	GSList *wait_list;
 	void *data;
+	MonoCoopMutex *entry_mutex;
+	MonoCoopCond *entry_cond;
 };
 
 /*
@@ -76,14 +77,9 @@ struct _MonoThreadsSync
  */
 
 typedef union {
-#if SIZEOF_REGISTER == 8
-	guint64 lock_word;
-#elif SIZEOF_REGISTER == 4
-	guint32 lock_word;
-#endif
+	gsize lock_word;
 	MonoThreadsSync *sync;
 } LockWord;
-
 
 enum {
 	LOCK_WORD_FLAT = 0,
@@ -101,28 +97,38 @@ enum {
 	LOCK_WORD_OWNER_SHIFT = LOCK_WORD_STATUS_BITS + LOCK_WORD_NEST_BITS
 };
 
-MONO_API void mono_locks_dump (gboolean include_untaken);
+MONO_API void
+mono_locks_dump (gboolean include_untaken);
 
-void mono_monitor_init (void);
-void mono_monitor_cleanup (void);
+void
+mono_monitor_init (void);
 
-gboolean mono_monitor_enter_fast (MonoObject *obj);
-gboolean mono_monitor_enter_v4_fast (MonoObject *obj, char *lock_taken);
+void
+mono_monitor_cleanup (void);
 
-guint32 mono_monitor_get_object_monitor_gchandle (MonoObject *object);
+ICALL_EXTERN_C
+MonoBoolean
+mono_monitor_enter_internal (MonoObject *obj);
 
-void mono_monitor_threads_sync_members_offset (int *status_offset, int *nest_offset);
+ICALL_EXTERN_C
+void
+mono_monitor_enter_v4_internal (MonoObject *obj, MonoBoolean *lock_taken);
+
+ICALL_EXTERN_C
+guint32
+mono_monitor_enter_fast (MonoObject *obj);
+
+ICALL_EXTERN_C
+guint32
+mono_monitor_enter_v4_fast (MonoObject *obj, MonoBoolean *lock_taken);
+
+MonoGCHandle
+mono_monitor_get_object_monitor_gchandle (MonoObject *object);
+
+void
+mono_monitor_threads_sync_members_offset (int *status_offset, int *nest_offset);
 #define MONO_THREADS_SYNC_MEMBER_OFFSET(o)	((o)>>8)
 #define MONO_THREADS_SYNC_MEMBER_SIZE(o)	((o)&0xff)
 
-extern gboolean ves_icall_System_Threading_Monitor_Monitor_try_enter(MonoObject *obj, guint32 ms);
-extern gboolean ves_icall_System_Threading_Monitor_Monitor_test_owner(MonoObject *obj);
-extern gboolean ves_icall_System_Threading_Monitor_Monitor_test_synchronised(MonoObject *obj);
-extern void ves_icall_System_Threading_Monitor_Monitor_pulse(MonoObject *obj);
-extern void ves_icall_System_Threading_Monitor_Monitor_pulse_all(MonoObject *obj);
-extern gboolean ves_icall_System_Threading_Monitor_Monitor_wait(MonoObject *obj, guint32 ms);
-extern void ves_icall_System_Threading_Monitor_Monitor_try_enter_with_atomic_var (MonoObject *obj, guint32 ms, char *lockTaken);
-
-G_END_DECLS
 
 #endif /* _MONO_METADATA_MONITOR_H_ */

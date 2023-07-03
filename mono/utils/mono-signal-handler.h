@@ -1,5 +1,6 @@
-/*
- * mono-signal-handler.h: Handle signal handler differences across platforms
+/**
+ * \file
+ * Handle signal handler differences across platforms
  *
  * Copyright (C) 2013 Xamarin Inc
  * Licensed under the MIT license. See LICENSE file in the project root for full license information.
@@ -9,6 +10,7 @@
 #define __MONO_SIGNAL_HANDLER_H__
 
 #include "config.h"
+#include <glib.h>
 
 /*
  * When a signal is delivered to a thread on a Krait Android device
@@ -41,7 +43,7 @@
 #ifdef KRAIT_IT_BUG_WORKAROUND
 #define MONO_SIGNAL_HANDLER_FUNC(access, name, arglist)		\
 	static void __krait_ ## name arglist;	\
-	__attribute__ ((naked)) access void				\
+	__attribute__ ((__naked__)) access void				\
 	name arglist							\
 	{								\
 		asm volatile (						\
@@ -52,7 +54,7 @@
 				  "b __krait_" # name			\
 				  "\n\t");						\
 	}	\
-	static __attribute__((used)) void __krait_ ## name arglist
+	static __attribute__ ((__used__)) void __krait_ ## name arglist
 #endif
 
 /* Don't use this */
@@ -77,25 +79,29 @@
  */
 
 #ifdef HOST_WIN32
-#define MONO_SIG_HANDLER_SIGNATURE(ftn) ftn (int _dummy, EXCEPTION_POINTERS *_info, void *context)
-#define MONO_SIG_HANDLER_FUNC(access, ftn) MONO_SIGNAL_HANDLER_FUNC (access, ftn, (int _dummy, EXCEPTION_POINTERS *_info, void *context))
-#define MONO_SIG_HANDLER_PARAMS _dummy, _info, context
-#define MONO_SIG_HANDLER_GET_SIGNO() (_dummy)
-#define MONO_SIG_HANDLER_GET_INFO() (_info)
-#define MONO_SIG_HANDLER_INFO_TYPE EXCEPTION_POINTERS
+#include <windows.h>
+#define MONO_SIG_HANDLER_INFO_TYPE MonoWindowsSigHandlerInfo
+typedef struct {
+	/* Set to FALSE to indicate chained signal handler needs run.
+	 * With vectored exceptions Windows does that for us by returning
+	 * EXCEPTION_CONTINUE_SEARCH from handler */
+	gboolean handled;
+	EXCEPTION_POINTERS* ep;
+} MonoWindowsSigHandlerInfo;
 /* seh_vectored_exception_handler () passes in a CONTEXT* */
-#define MONO_SIG_HANDLER_GET_CONTEXT \
-    void *ctx = context;
 #else
 /* sigaction */
-#define MONO_SIG_HANDLER_SIGNATURE(ftn) ftn (int _dummy, siginfo_t *_info, void *context)
-#define MONO_SIG_HANDLER_FUNC(access, ftn) MONO_SIGNAL_HANDLER_FUNC (access, ftn, (int _dummy, siginfo_t *_info, void *context))
+#define MONO_SIG_HANDLER_INFO_TYPE siginfo_t
+#endif
+
+#define MONO_SIG_HANDLER_SIGNATURE(ftn) ftn (int _dummy, MONO_SIG_HANDLER_INFO_TYPE *_info, void *context)
+#define MONO_SIG_HANDLER_FUNC(access, ftn) MONO_SIGNAL_HANDLER_FUNC (access, ftn, (int _dummy, MONO_SIG_HANDLER_INFO_TYPE *_info, void *context))
 #define MONO_SIG_HANDLER_PARAMS _dummy, _info, context
 #define MONO_SIG_HANDLER_GET_SIGNO() (_dummy)
 #define MONO_SIG_HANDLER_GET_INFO() (_info)
-#define MONO_SIG_HANDLER_INFO_TYPE siginfo_t
-#define MONO_SIG_HANDLER_GET_CONTEXT \
-    void *ctx = context;
-#endif
+#define MONO_SIG_HANDLER_GET_CONTEXT void *ctx = context;
 
-#endif
+void mono_load_signames (void);
+const char * mono_get_signame (int signo);
+
+#endif // __MONO_SIGNAL_HANDLER_H__

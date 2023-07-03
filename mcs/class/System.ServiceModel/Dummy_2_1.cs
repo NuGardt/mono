@@ -7,24 +7,96 @@ using System.ServiceModel.Channels;
 using System.ServiceModel.Dispatcher;
 using System.Text;
 using System.Xml;
-
-namespace System.Runtime.CompilerServices
-{
-	// introduced for silverlight sdk compatibility
-	internal class FriendAccessAllowedAttribute : Attribute
-	{
-		public FriendAccessAllowedAttribute ()
-		{
-		}
-	}
-}
+using System.Threading;
 
 namespace System.ServiceModel
 {
 	public class EndpointIdentity {}
-	public class InstanceContext
+	public class InstanceContext : CommunicationObject, IExtensibleObject<InstanceContext>
 	{
-		public InstanceContext (object dummy) {}
+		protected internal override TimeSpan DefaultCloseTimeout
+		{
+			get { throw new NotImplementedException (); }
+		}
+
+		protected internal override TimeSpan DefaultOpenTimeout
+		{
+			get { throw new NotImplementedException (); }
+		}
+
+		public IExtensionCollection<InstanceContext> Extensions
+		{
+			get { throw new NotImplementedException (); }
+		}
+
+		public SynchronizationContext SynchronizationContext {
+			get { throw new NotImplementedException (); }
+			set { throw new NotImplementedException (); }
+		}
+
+		public InstanceContext (object implementation)
+		{
+		}
+
+		public object GetServiceInstance (Message message)
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnAbort ()
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override IAsyncResult OnBeginClose (TimeSpan timeout, AsyncCallback callback, object state)
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override IAsyncResult OnBeginOpen (TimeSpan timeout, AsyncCallback callback, object state)
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnClose (TimeSpan timeout)
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnClosed ()
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnEndClose (IAsyncResult result)
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnEndOpen (IAsyncResult result)
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnFaulted ()
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnOpen (TimeSpan timeout)
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnOpened ()
+		{
+			throw new NotImplementedException ();
+		}
+
+		protected override void OnOpening ()
+		{
+			throw new NotImplementedException ();
+		}
 	}
 	// introduced for silverlight sdk compatibility
 	internal class OperationFormatStyleHelper
@@ -105,39 +177,34 @@ namespace System.ServiceModel
 	// introduced for silverlight sdk compatibility
 	internal interface IDuplexHelper { }
 
-	[FriendAccessAllowed ()]
-	internal class DiagnosticUtility
+	internal static class DiagnosticUtility
 	{
-		[FriendAccessAllowed ()]
-		internal class ExceptionUtility
+		internal static class ExceptionUtility
 		{
-			public static Exception ThrowHelperArgument (string message) { throw new NotImplementedException (); }
-			
-			public static Exception ThrowHelperArgument (string paramName, string message) { throw new NotImplementedException (); }
-			
-			public static Exception ThrowHelperArgumentNull (string arg)
+			internal static ArgumentException ThrowHelperArgument (string message)
 			{
-				return new ArgumentNullException (arg);
+				return (ArgumentException)ThrowHelperError (new ArgumentException (message));
 			}
 
-			[FriendAccessAllowed]
-			internal static Exception ThrowHelperCallback (Exception e) { throw new NotImplementedException (); }
-			
-			[FriendAccessAllowed]
-			internal static Exception ThrowHelperCallback (string message, Exception innerException) { throw new NotImplementedException (); }
-			
-			public static Exception ThrowHelperError (Exception error)
+			internal static ArgumentException ThrowHelperArgument (string paramName, string message)
 			{
-				return error;
+				return (ArgumentException)ThrowHelperError (new ArgumentException (message, paramName));
 			}
-			
-			[FriendAccessAllowed]
-			internal static Exception ThrowHelperFatal (string message, Exception innerException) { throw new NotImplementedException (); }
-			
-			[FriendAccessAllowed]
-			internal static Exception ThrowHelperInternal (bool fatal) { throw new NotImplementedException (); }
-			
-			public static Exception ThrowHelperWarning (Exception e) { throw new NotImplementedException (); }
+
+			internal static ArgumentNullException ThrowHelperArgumentNull (string paramName)
+			{
+				return (ArgumentNullException)ThrowHelperError (new ArgumentNullException (paramName));
+			}
+
+			internal static Exception ThrowHelperError (Exception exception)
+			{
+				return exception;
+			}
+
+			internal static Exception ThrowHelperWarning (Exception exception)
+			{
+				return exception;
+			}
 		}
 	}
 }

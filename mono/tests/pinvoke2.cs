@@ -9,7 +9,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Reflection.Emit;
 
-public class Tests {
+public unsafe class Tests {
 
 	public int int_field;
 
@@ -172,6 +172,13 @@ public class Tests {
 		}
 	}
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BStrStruct
+    {
+        [MarshalAs(UnmanagedType.BStr)]
+        public string bstr;
+    }
+
 	[DllImport ("libnot-found", EntryPoint="not_found")]
 	public static extern int mono_library_not_found ();
 
@@ -307,6 +314,9 @@ public class Tests {
 	[DllImport ("libtest", EntryPoint="mono_test_return_vtype")]
 	public static extern SimpleStruct mono_test_return_vtype (IntPtr i);
 
+	[DllImport ("libtest", EntryPoint="mono_test_return_vtype")]
+	public static extern SimpleStructGen<string> mono_test_return_vtype_gen (IntPtr i);
+
 	[DllImport ("libtest", EntryPoint="mono_test_marshal_stringbuilder")]
 	public static extern void mono_test_marshal_stringbuilder (StringBuilder sb, int len);
 
@@ -328,8 +338,11 @@ public class Tests {
 	[DllImport ("libtest", EntryPoint="mono_test_marshal_stringbuilder_out_unicode", CharSet=CharSet.Unicode)]
 	public static extern void mono_test_marshal_stringbuilder_out_unicode (out StringBuilder sb);
 
-	[DllImport ("libtest", EntryPoint="mono_test_last_error", SetLastError=true)]
-	public static extern void mono_test_last_error (int err);
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_stringbuilder_utf16_tolower", CharSet=CharSet.Unicode)]
+	public static extern void mono_test_marshal_stringbuilder_utf16_tolower (StringBuilder sb, int len);
+
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_stringbuilder_utf16_tolower", CharSet=CharSet.Unicode)]
+	public static extern void mono_test_marshal_stringbuilder_utf16_tolower_in ([In] StringBuilder sb, int len);
 
 	[DllImport ("libtest", EntryPoint="mono_test_asany")]
 	public static extern int mono_test_asany ([MarshalAs (UnmanagedType.AsAny)] object o, int what);
@@ -472,6 +485,7 @@ public class Tests {
 		SimpleStruct ss = new  SimpleStruct ();
 		ss.b = true;
 		ss.d = "TEST";
+		ss.d2 = "OK";
 		
 		return mono_test_marshal_struct (ss);
 	}
@@ -480,6 +494,7 @@ public class Tests {
 		SimpleStructGen<string> ss = new  SimpleStructGen<string> ();
 		ss.b = true;
 		ss.d = "TEST";
+		ss.d2 = "OK";
 		
 		return mono_test_marshal_struct_gen (ss);
 	}
@@ -842,6 +857,15 @@ public class Tests {
 		return 1;
 	}
 
+	public static int test_0_return_vtype_gen () {
+		SimpleStructGen<string> ss = mono_test_return_vtype_gen (new IntPtr (5));
+
+		if (!ss.a && ss.b && !ss.c && ss.d == "TEST" && ss.d2 == "TEST2")
+			return 0;
+
+		return 1;
+	}
+
 	public static int test_0_marshal_stringbuilder () {
 		StringBuilder sb = new StringBuilder(255);
 		sb.Append ("ABCD");
@@ -935,6 +959,28 @@ public class Tests {
 		return 0;
 	}
 
+	public static int test_0_marshal_stringbuilder_utf16_tolower () {
+		StringBuilder sb = new StringBuilder (3);
+		sb.Append ("ABC").Append ("DEF");
+		
+		mono_test_marshal_stringbuilder_utf16_tolower (sb, sb.Length);
+		if (sb.ToString () != "abcdef")
+			return 1;
+
+		return 0;
+	}
+
+	public static int test_0_marshal_stringbuilder_utf16_tolower_in () {
+		StringBuilder sb = new StringBuilder (3);
+		sb.Append ("ABC").Append ("DEF");
+		
+		mono_test_marshal_stringbuilder_utf16_tolower_in (sb, sb.Length);
+		if (sb.ToString () != "ABCDEF")
+			return 1;
+
+		return 0;
+	}
+
 	public static int test_0_marshal_empty_string_array () {
 		return mono_test_marshal_empty_string_array (null);
 	}
@@ -959,14 +1005,6 @@ public class Tests {
 		if (sb2.ToString () != "ABC")
 			return 6;
 		return 0;
-	}
-
-	public static int test_0_last_error () {
-		mono_test_last_error (5);
-		if (Marshal.GetLastWin32Error () == 5)
-			return 0;
-		else
-			return 1;
 	}
 
 	public static int test_0_entry_point_not_found () {
@@ -1049,6 +1087,9 @@ public class Tests {
 		}
 		catch (ArgumentException) {
 		}
+
+		if (mono_test_asany (new IntPtr(5), 5) != 0)
+			return 7;
 
 		return 0;
 	}
@@ -1431,6 +1472,13 @@ public class Tests {
 
 	public static int test_0_stdcall_name_mangling () {
 		return mono_test_stdcall_name_mangling (0, 1, 2) == 3 ? 0 : 1;
+	}
+
+	/* Test multiple calls to stdcall wrapper, xamarin bug 30146 */
+	public static int test_0_stdcall_many_calls () {
+		for (int i=0; i<256; i++)
+			mono_test_stdcall_name_mangling (0, 0, 0);
+		return 0;
 	}
 
 	/* Float test */
@@ -1840,8 +1888,11 @@ public class Tests {
 		return 1;
 	}
 
-	[DllImport ("libtest", EntryPoint="mono_test_has_thiscall")]
-	public static extern int mono_test_has_thiscall ();
+	[DllImport ("libtest", EntryPoint="mono_test_has_thiscall_globals")]
+	public static extern int mono_test_has_thiscall_globals ();
+
+	[DllImport ("libtest", EntryPoint="mono_test_has_thiscall_pointers")]
+	public static extern int mono_test_has_thiscall_pointers ();
 
 	[DllImport ("libtest", EntryPoint = "_mono_test_native_thiscall1", CallingConvention=CallingConvention.ThisCall)]
 	public static extern int mono_test_native_thiscall (int a);
@@ -1863,7 +1914,7 @@ public class Tests {
 
 	public static int test_0_native_thiscall ()
 	{
-		if (mono_test_has_thiscall () == 0)
+		if (mono_test_has_thiscall_globals () == 0)
 			return 0;
 
 		if (mono_test_native_thiscall (1968329802) != 1968329802)
@@ -1896,6 +1947,216 @@ public class Tests {
 			return 1;
 		else
 			return 0;
+    }
+
+	[UnmanagedFunctionPointer(CallingConvention.ThisCall)]
+	public delegate int ThisCallDelegate1 (int a);
+
+	[DllImport ("libtest", EntryPoint = "_mono_test_managed_thiscall1", CallingConvention=CallingConvention.StdCall)]
+	public static extern int mono_test_managed_thiscall (ThisCallDelegate1 fn, int a);
+
+	[UnmanagedFunctionPointer(CallingConvention.ThisCall)]
+	public delegate int ThisCallDelegate2 (int a, int b);
+
+	[DllImport ("libtest", EntryPoint = "_mono_test_managed_thiscall2", CallingConvention=CallingConvention.StdCall)]
+	public static extern int mono_test_managed_thiscall (ThisCallDelegate2 fn, int a, int b);
+
+	[UnmanagedFunctionPointer(CallingConvention.ThisCall)]
+	public delegate int ThisCallDelegate3 (int a, int b, int c);
+
+	[DllImport ("libtest", EntryPoint = "_mono_test_managed_thiscall3", CallingConvention=CallingConvention.StdCall)]
+	public static extern int mono_test_managed_thiscall (ThisCallDelegate3 fn, int a, int b, int c);
+
+	[UnmanagedFunctionPointer(CallingConvention.ThisCall)]
+	public delegate int ThisCallDelegateS1 (TinyStruct a);
+
+	[DllImport ("libtest", EntryPoint = "_mono_test_managed_thiscall1", CallingConvention=CallingConvention.StdCall)]
+	public static extern int mono_test_managed_thiscall (ThisCallDelegateS1 fn, int a);
+
+	[UnmanagedFunctionPointer(CallingConvention.ThisCall)]
+	public delegate int ThisCallDelegateS2 (TinyStruct a, int b);
+
+	[DllImport ("libtest", EntryPoint = "_mono_test_managed_thiscall2", CallingConvention=CallingConvention.StdCall)]
+	public static extern int mono_test_managed_thiscall (ThisCallDelegateS2 fn, int a, int b);
+
+	[UnmanagedFunctionPointer(CallingConvention.ThisCall)]
+	public delegate int ThisCallDelegateS3 (TinyStruct a, int b, int c);
+
+	[DllImport ("libtest", EntryPoint = "_mono_test_managed_thiscall3", CallingConvention=CallingConvention.StdCall)]
+	public static extern int mono_test_managed_thiscall (ThisCallDelegateS3 fn, int a, int b, int c);
+
+	public static int thiscall_test_fn1 (int a)
+	{
+		if (a != 517457506)
+			return 0;
+		return 263895844;
+	}
+
+	public static int thiscall_test_fn1 (TinyStruct a)
+	{
+		return thiscall_test_fn1 (a.i);
+	}
+
+	public static int thiscall_test_fn2 (int a, int b)
+	{
+		if (a != 562348159)
+			return 0;
+		if (b != -1982007353)
+			return 1;
+		return -1877791296;
+	}
+
+	public static int thiscall_test_fn2 (TinyStruct a, int b)
+	{
+		return thiscall_test_fn2 (a.i, b);
+	}
+
+	public static int thiscall_test_fn3 (int a, int b, int c)
+	{
+		if (a != -316986071)
+			return 0;
+		if (b != 1233912683)
+			return 1;
+		if (c != 1244266772)
+			return 2;
+		return 1545254036;
+	}
+
+	public static int thiscall_test_fn3 (TinyStruct a, int b, int c)
+	{
+		return thiscall_test_fn3 (a.i, b, c);
+	}
+
+	public static int test_0_managed_thiscall ()
+	{
+		if (mono_test_has_thiscall_pointers () == 0)
+			return 0;
+
+		if (mono_test_managed_thiscall (new ThisCallDelegate1 (thiscall_test_fn1), 517457506) != 263895844)
+			return 1;
+
+		if (mono_test_managed_thiscall (new ThisCallDelegate2 (thiscall_test_fn2), 562348159, -1982007353) != -1877791296)
+			return 2;
+
+		if (mono_test_managed_thiscall (new ThisCallDelegate3 (thiscall_test_fn3), -316986071, 1233912683, 1244266772) != 1545254036)
+			return 3;
+
+		if (mono_test_managed_thiscall (new ThisCallDelegateS1 (thiscall_test_fn1), 517457506) != 263895844)
+			return 4;
+
+		if (mono_test_managed_thiscall (new ThisCallDelegateS2 (thiscall_test_fn2), 562348159, -1982007353) != -1877791296)
+			return 5;
+
+		if (mono_test_managed_thiscall (new ThisCallDelegateS3 (thiscall_test_fn3), -316986071, 1233912683, 1244266772) != 1545254036)
+			return 6;
+
+		return 0;
+	}
+
+    [StructLayout(LayoutKind.Explicit, Size = 12)]
+	public struct FixedArrayStruct {
+        [FieldOffset(0)]
+        public fixed int array[3];
+	}
+
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_fixed_array")]
+	public static extern int mono_test_marshal_fixed_array (FixedArrayStruct s);
+
+	public static unsafe int test_6_fixed_array_struct () {
+		var s = new FixedArrayStruct ();
+		s.array [0] = 1;
+		s.array [1] = 2;
+		s.array [2] = 3;
+
+		return mono_test_marshal_fixed_array (s);
+	}
+
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_pointer_array")]
+	public static extern int mono_test_marshal_pointer_array (int*[] arr);
+
+	public static unsafe int test_0_pointer_array () {
+		var arr = new int [10];
+		for (int i = 0; i < arr.Length; i++)
+			arr [i] = -1;
+		var arr2 = new int*[10];
+		for (int i = 0; i < arr2.Length; i++) {
+			GCHandle handle = GCHandle.Alloc(arr[i], GCHandleType.Pinned);
+			fixed (int *ptr = &arr[i]) {
+				arr2[i] = ptr;
+			}
+		}
+		return mono_test_marshal_pointer_array (arr2);
+	}
+
+    [StructLayout(LayoutKind.Sequential)]
+	public struct FixedBufferChar {
+        public fixed char array[16];
+		public char c;
+	}
+
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_fixed_buffer_char")]
+	public static extern int mono_test_marshal_fixed_buffer_char (ref FixedBufferChar s);
+
+	public static unsafe int test_0_fixed_buffer_char () {
+		var s = new FixedBufferChar ();
+		s.array [0] = 'A';
+		s.array [1] = 'B';
+		s.array [2] = 'C';
+		s.c = 'D';
+
+		int res = mono_test_marshal_fixed_buffer_char (ref s);
+		if (res != 0)
+			return 1;
+		if (s.array [0] != 'E' || s.array [1] != 'F' || s.c != 'G')
+			return 2;
+		return 0;
+	}
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+	public struct FixedBufferUnicode {
+        public fixed char array[16];
+		public char c;
+	}
+
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_fixed_buffer_unicode")]
+	public static extern int mono_test_marshal_fixed_buffer_unicode (ref FixedBufferUnicode s);
+
+	public static unsafe int test_0_fixed_buffer_unicode () {
+		var s = new FixedBufferUnicode ();
+		s.array [0] = 'A';
+		s.array [1] = 'B';
+		s.array [2] = 'C';
+		s.c = 'D';
+
+		int res = mono_test_marshal_fixed_buffer_unicode (ref s);
+		if (res != 0)
+			return 1;
+		if (s.array [0] != 'E' || s.array [1] != 'F' || s.c != 'G')
+			return 2;
+		return 0;
+	}
+
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_bstr")]
+	public static extern int mono_test_marshal_bstr ([In] ref BStrStruct p);
+
+	public static int test_0_bstr () {
+		var p = new BStrStruct { bstr = "Hello" };
+
+		mono_test_marshal_bstr (ref p);
+
+		return 0;
+	}
+
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_return_array")]
+	public static extern int[] mono_test_marshal_return_array ();
+
+	public static int test_0_return_array () {
+		try {
+			var arr = mono_test_marshal_return_array ();
+			return 1;
+		} catch (MarshalDirectiveException) {
+			return 0;
+		}
 	}
 }
 

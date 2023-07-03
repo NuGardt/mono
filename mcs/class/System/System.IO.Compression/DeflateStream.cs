@@ -32,12 +32,11 @@
 
 using System;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Remoting.Messaging;
-
-#if MONOTOUCH
-using MonoTouch;
-#endif
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace System.IO.Compression
 {
@@ -52,13 +51,18 @@ namespace System.IO.Compression
 		bool disposed;
 		DeflateStreamNative native;
 
-		public DeflateStream (Stream compressedStream, CompressionMode mode) :
-			this (compressedStream, mode, false, false)
+		public DeflateStream (Stream stream, CompressionMode mode) :
+			this (stream, mode, false, false)
 		{
 		}
 
-		public DeflateStream (Stream compressedStream, CompressionMode mode, bool leaveOpen) :
-			this (compressedStream, mode, leaveOpen, false)
+		public DeflateStream (Stream stream, CompressionMode mode, bool leaveOpen) :
+			this (stream, mode, leaveOpen, false)
+		{
+		}
+
+		internal DeflateStream (Stream stream, CompressionMode mode, bool leaveOpen, int windowsBits) :
+			this (stream, mode, leaveOpen, true)
 		{
 		}
 
@@ -90,14 +94,24 @@ namespace System.IO.Compression
 		{
 		}
 
+		internal DeflateStream (Stream stream, CompressionLevel compressionLevel, bool leaveOpen, int windowsBits)
+			: this (stream, compressionLevel, leaveOpen, true)
+		{
+		}
+
 		internal DeflateStream (Stream stream, CompressionLevel compressionLevel, bool leaveOpen, bool gzip)
 			: this (stream, CompressionMode.Compress, leaveOpen, gzip)
 		{
 		}		
 
+		~DeflateStream () => Dispose (false);
+
 		protected override void Dispose (bool disposing)
 		{
-			native.Dispose (disposing);
+			if (disposing)
+				GC.SuppressFinalize (this);
+
+			native?.Dispose (disposing);
 
 			if (disposing && !disposed) {
 				disposed = true;
@@ -124,23 +138,36 @@ namespace System.IO.Compression
 			}
 		}
 
-		public override int Read (byte[] dest, int dest_offset, int count)
+		internal ValueTask<int> ReadAsyncMemory (Memory<byte> destination, CancellationToken cancellationToken)
+		{
+			return base.ReadAsync(destination, cancellationToken);
+		}
+
+		internal int ReadCore (Span<byte> destination)
+		{
+			var buffer = new byte [destination.Length];
+			int count = Read(buffer, 0, buffer.Length);
+			buffer.AsSpan(0, count).CopyTo(destination);
+			return count;
+		}
+
+		public override int Read (byte[] array, int offset, int count)
 		{
 			if (disposed)
 				throw new ObjectDisposedException (GetType ().FullName);
-			if (dest == null)
+			if (array == null)
 				throw new ArgumentNullException ("Destination array is null.");
 			if (!CanRead)
 				throw new InvalidOperationException ("Stream does not support reading.");
-			int len = dest.Length;
-			if (dest_offset < 0 || count < 0)
+			int len = array.Length;
+			if (offset < 0 || count < 0)
 				throw new ArgumentException ("Dest or count is negative.");
-			if (dest_offset > len)
+			if (offset > len)
 				throw new ArgumentException ("destination offset is beyond array size");
-			if ((dest_offset + count) > len)
+			if ((offset + count) > len)
 				throw new ArgumentException ("Reading would overrun buffer");
 
-			return ReadInternal (dest, dest_offset, count);
+			return ReadInternal (array, offset, count);
 		}
 
 		unsafe void WriteInternal (byte[] array, int offset, int count)
@@ -154,16 +181,26 @@ namespace System.IO.Compression
 			}
 		}
 
-		public override void Write (byte[] src, int src_offset, int count)
+		internal ValueTask WriteAsyncMemory (ReadOnlyMemory<byte> source, CancellationToken cancellationToken)
+		{
+			return base.WriteAsync(source, cancellationToken);
+		}
+
+		internal void WriteCore (ReadOnlySpan<byte> source)
+		{
+			Write (source.ToArray (), 0, source.Length);
+		}
+
+		public override void Write (byte[] array, int offset, int count)
 		{
 			if (disposed)
 				throw new ObjectDisposedException (GetType ().FullName);
 
-			if (src == null)
-				throw new ArgumentNullException ("src");
+			if (array == null)
+				throw new ArgumentNullException ("array");
 
-			if (src_offset < 0)
-				throw new ArgumentOutOfRangeException ("src_offset");
+			if (offset < 0)
+				throw new ArgumentOutOfRangeException ("offset");
 
 			if (count < 0)
 				throw new ArgumentOutOfRangeException ("count");
@@ -171,10 +208,10 @@ namespace System.IO.Compression
 			if (!CanWrite)
 				throw new NotSupportedException ("Stream does not support writing");
 
-			if (src_offset > src.Length - count)
+			if (offset > array.Length - count)
 				throw new ArgumentException ("Buffer too small. count/offset wrong.");
 
-			WriteInternal (src, src_offset, count);
+			WriteInternal (array, offset, count);
 		}
 
 		public override void Flush ()
@@ -187,8 +224,8 @@ namespace System.IO.Compression
 			}
 		}
 
-		public override IAsyncResult BeginRead (byte [] buffer, int offset, int count,
-							AsyncCallback cback, object state)
+		public override IAsyncResult BeginRead (byte [] array, int offset, int count,
+							AsyncCallback asyncCallback, object asyncState)
 		{
 			if (disposed)
 				throw new ObjectDisposedException (GetType ().FullName);
@@ -196,8 +233,8 @@ namespace System.IO.Compression
 			if (!CanRead)
 				throw new NotSupportedException ("This stream does not support reading");
 
-			if (buffer == null)
-				throw new ArgumentNullException ("buffer");
+			if (array == null)
+				throw new ArgumentNullException ("array");
 
 			if (count < 0)
 				throw new ArgumentOutOfRangeException ("count", "Must be >= 0");
@@ -205,15 +242,15 @@ namespace System.IO.Compression
 			if (offset < 0)
 				throw new ArgumentOutOfRangeException ("offset", "Must be >= 0");
 
-			if (count + offset > buffer.Length)
+			if (count + offset > array.Length)
 				throw new ArgumentException ("Buffer too small. count/offset wrong.");
 
 			ReadMethod r = new ReadMethod (ReadInternal);
-			return r.BeginInvoke (buffer, offset, count, cback, state);
+			return r.BeginInvoke (array, offset, count, asyncCallback, asyncState);
 		}
 
-		public override IAsyncResult BeginWrite (byte [] buffer, int offset, int count,
-							AsyncCallback cback, object state)
+		public override IAsyncResult BeginWrite (byte [] array, int offset, int count,
+							AsyncCallback asyncCallback, object asyncState)
 		{
 			if (disposed)
 				throw new ObjectDisposedException (GetType ().FullName);
@@ -221,8 +258,8 @@ namespace System.IO.Compression
 			if (!CanWrite)
 				throw new InvalidOperationException ("This stream does not support writing");
 
-			if (buffer == null)
-				throw new ArgumentNullException ("buffer");
+			if (array == null)
+				throw new ArgumentNullException ("array");
 
 			if (count < 0)
 				throw new ArgumentOutOfRangeException ("count", "Must be >= 0");
@@ -230,43 +267,43 @@ namespace System.IO.Compression
 			if (offset < 0)
 				throw new ArgumentOutOfRangeException ("offset", "Must be >= 0");
 
-			if (count + offset > buffer.Length)
+			if (count + offset > array.Length)
 				throw new ArgumentException ("Buffer too small. count/offset wrong.");
 
 			WriteMethod w = new WriteMethod (WriteInternal);
-			return w.BeginInvoke (buffer, offset, count, cback, state);			
+			return w.BeginInvoke (array, offset, count, asyncCallback, asyncState);			
 		}
 
-		public override int EndRead(IAsyncResult async_result)
+		public override int EndRead(IAsyncResult asyncResult)
 		{
-			if (async_result == null)
-				throw new ArgumentNullException ("async_result");
+			if (asyncResult == null)
+				throw new ArgumentNullException ("asyncResult");
 
-			AsyncResult ares = async_result as AsyncResult;
+			AsyncResult ares = asyncResult as AsyncResult;
 			if (ares == null)
-				throw new ArgumentException ("Invalid IAsyncResult", "async_result");
+				throw new ArgumentException ("Invalid IAsyncResult", "asyncResult");
 
 			ReadMethod r = ares.AsyncDelegate as ReadMethod;
 			if (r == null)
-				throw new ArgumentException ("Invalid IAsyncResult", "async_result");
+				throw new ArgumentException ("Invalid IAsyncResult", "asyncResult");
 
-			return r.EndInvoke (async_result);
+			return r.EndInvoke (asyncResult);
 		}
 
-		public override void EndWrite (IAsyncResult async_result)
+		public override void EndWrite (IAsyncResult asyncResult)
 		{
-			if (async_result == null)
-				throw new ArgumentNullException ("async_result");
+			if (asyncResult == null)
+				throw new ArgumentNullException ("asyncResult");
 
-			AsyncResult ares = async_result as AsyncResult;
+			AsyncResult ares = asyncResult as AsyncResult;
 			if (ares == null)
-				throw new ArgumentException ("Invalid IAsyncResult", "async_result");
+				throw new ArgumentException ("Invalid IAsyncResult", "asyncResult");
 
 			WriteMethod w = ares.AsyncDelegate as WriteMethod;
 			if (w == null)
-				throw new ArgumentException ("Invalid IAsyncResult", "async_result");
+				throw new ArgumentException ("Invalid IAsyncResult", "asyncResult");
 
-			w.EndInvoke (async_result);
+			w.EndInvoke (asyncResult);
 			return;
 		}
 
@@ -316,10 +353,11 @@ namespace System.IO.Compression
 		UnmanagedReadOrWrite feeder; // This will be passed to unmanaged code and used there
 
 		Stream base_stream;
-		IntPtr z_stream;
+		SafeDeflateStreamHandle z_stream;
 		GCHandle data;
 		bool disposed;
 		byte [] io_buffer;
+		Exception last_error;
 
 		private DeflateStreamNative ()
 		{
@@ -331,7 +369,7 @@ namespace System.IO.Compression
 			dsn.data = GCHandle.Alloc (dsn);
 			dsn.feeder = mode == CompressionMode.Compress ? new UnmanagedReadOrWrite (UnmanagedWrite) : new UnmanagedReadOrWrite (UnmanagedRead);
 			dsn.z_stream = CreateZStream (mode, gzip, dsn.feeder, GCHandle.ToIntPtr (dsn.data));
-			if (dsn.z_stream == IntPtr.Zero) {
+			if (dsn.z_stream.IsInvalid) {
 				dsn.Dispose (true);
 				return null;
 			}
@@ -350,16 +388,18 @@ namespace System.IO.Compression
 			if (disposing && !disposed) {
 				disposed = true;
 				GC.SuppressFinalize (this);
+			} else {
+				// When we are in the finalizer we don't want to access the underlying stream anymore
+				base_stream = Stream.Null;
+			}
 			
-				io_buffer = null;
-			
-				IntPtr zz = z_stream;
-				z_stream = IntPtr.Zero;
-				if (zz != IntPtr.Zero)
-					CloseZStream (zz); // This will Flush() the remaining output if any
+			io_buffer = null;
+
+			if (z_stream != null && !z_stream.IsInvalid) {
+				z_stream.Dispose();
 			}
 
-			if (data.IsAllocated) {
+			if (data != null && data.IsAllocated) {
 				data.Free ();
 			}
 		}
@@ -383,9 +423,7 @@ namespace System.IO.Compression
 			CheckResult (res, "WriteInternal");
 		}
 
-#if MONOTOUCH
-		[MonoPInvokeCallback (typeof (UnmanagedReadOrWrite))]
-#endif
+		[Mono.Util.MonoPInvokeCallback (typeof (UnmanagedReadOrWrite))]
 		static int UnmanagedRead (IntPtr buffer, int length, IntPtr data)
 		{
 			GCHandle s = GCHandle.FromIntPtr (data);
@@ -401,16 +439,22 @@ namespace System.IO.Compression
 				io_buffer = new byte [BufferSize];
 
 			int count = Math.Min (length, io_buffer.Length);
-			int n = base_stream.Read (io_buffer, 0, count);
+			int n;
+
+			try {
+				n = base_stream.Read (io_buffer, 0, count);
+			} catch (Exception ex) {
+				last_error = ex;
+				return -12;
+			}
+
 			if (n > 0)
 				Marshal.Copy (io_buffer, 0, buffer, n);
 
 			return n;
 		}
 
-#if MONOTOUCH
-		[MonoPInvokeCallback (typeof (UnmanagedReadOrWrite))]
-#endif
+		[Mono.Util.MonoPInvokeCallback (typeof (UnmanagedReadOrWrite))]
 		static int UnmanagedWrite (IntPtr buffer, int length, IntPtr data)
 		{
 			GCHandle s = GCHandle.FromIntPtr (data);
@@ -419,6 +463,7 @@ namespace System.IO.Compression
 				return -1;
 			return self.UnmanagedWrite (buffer, length);
 		}
+
 
 		int UnmanagedWrite (IntPtr buffer, int length)
 		{
@@ -429,7 +474,12 @@ namespace System.IO.Compression
 
 				int count = Math.Min (length, io_buffer.Length);
 				Marshal.Copy (buffer, io_buffer, 0, count);
-				base_stream.Write (io_buffer, 0, count);
+				try {
+					base_stream.Write (io_buffer, 0, count);
+				} catch (Exception ex) {
+					last_error = ex;
+					return -12;
+				}
 				unsafe {
 					buffer = new IntPtr ((byte *) buffer.ToPointer () + count);
 				}
@@ -439,10 +489,14 @@ namespace System.IO.Compression
 			return total;
 		}
 
-		static void CheckResult (int result, string where)
+		void CheckResult (int result, string where)
 		{
 			if (result >= 0)
 				return;
+
+			var throw_me = Interlocked.Exchange (ref last_error, null);
+			if (throw_me != null)
+				throw throw_me;
 
 			string error;
 			switch (result) {
@@ -478,26 +532,134 @@ namespace System.IO.Compression
 			throw new IOException (error + " " + where);
 		}
 
-#if MONOTOUCH || MONODROID
-		const string LIBNAME = "__Internal";
-#else
-		const string LIBNAME = "MonoPosixHelper";
-#endif
+#if ORBIS
+		static SafeDeflateStreamHandle CreateZStream (CompressionMode compress, bool gzip, UnmanagedReadOrWrite feeder, IntPtr data)
+		{
+			throw new PlatformNotSupportedException ();
+		}
 
-		[DllImport (LIBNAME, CallingConvention=CallingConvention.Cdecl)]
-		static extern IntPtr CreateZStream (CompressionMode compress, bool gzip, UnmanagedReadOrWrite feeder, IntPtr data);
+		static int CloseZStream (IntPtr stream)
+		{
+			throw new PlatformNotSupportedException ();
+		}
 
-		[DllImport (LIBNAME, CallingConvention=CallingConvention.Cdecl)]
+		static int Flush (SafeDeflateStreamHandle stream)
+		{
+			throw new PlatformNotSupportedException ();
+		}
+
+		static int ReadZStream (SafeDeflateStreamHandle stream, IntPtr buffer, int length)
+		{
+			throw new PlatformNotSupportedException ();
+		}
+
+		static int WriteZStream (SafeDeflateStreamHandle stream, IntPtr buffer, int length)
+		{
+			throw new PlatformNotSupportedException ();
+		}
+#elif MONOTOUCH || MONODROID || WASM
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		static extern IntPtr CreateZStream (int compress, bool gzip, IntPtr feeder, IntPtr data);
+
+		static SafeDeflateStreamHandle CreateZStream (CompressionMode compress, bool gzip, UnmanagedReadOrWrite feeder, IntPtr data)
+		{
+			SafeDeflateStreamHandle res;
+			try {} finally {
+				res = new SafeDeflateStreamHandle (CreateZStream ((int) compress, gzip, Marshal.GetFunctionPointerForDelegate<UnmanagedReadOrWrite> (feeder), data));
+			}
+
+			return res;
+		}
+
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		static extern int CloseZStream (IntPtr stream);
 
-		[DllImport (LIBNAME, CallingConvention=CallingConvention.Cdecl)]
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		static extern int Flush (IntPtr stream);
 
-		[DllImport (LIBNAME, CallingConvention=CallingConvention.Cdecl)]
+		static int Flush (SafeDeflateStreamHandle stream)
+		{
+			bool release = false;
+			try {
+				stream.DangerousAddRef (ref release);
+				return Flush (stream.DangerousGetHandle ());
+			} finally {
+				if (release)
+					stream.DangerousRelease ();
+			}
+		}
+
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		static extern int ReadZStream (IntPtr stream, IntPtr buffer, int length);
 
-		[DllImport (LIBNAME, CallingConvention=CallingConvention.Cdecl)]
+		static int ReadZStream (SafeDeflateStreamHandle stream, IntPtr buffer, int length)
+		{
+			bool release = false;
+			try {
+				stream.DangerousAddRef (ref release);
+				return ReadZStream (stream.DangerousGetHandle (), buffer, length);
+			} finally {
+				if (release)
+					stream.DangerousRelease ();
+			}
+		}
+
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		static extern int WriteZStream (IntPtr stream, IntPtr buffer, int length);
+
+		static int WriteZStream (SafeDeflateStreamHandle stream, IntPtr buffer, int length)
+		{
+			bool release = false;
+			try {
+				stream.DangerousAddRef (ref release);
+				return WriteZStream (stream.DangerousGetHandle (), buffer, length);
+			} finally {
+				if (release)
+					stream.DangerousRelease ();
+			}
+		}
+#else
+		[DllImport ("MonoPosixHelper", CallingConvention=CallingConvention.Cdecl)]
+		static extern SafeDeflateStreamHandle CreateZStream (CompressionMode compress, bool gzip, UnmanagedReadOrWrite feeder, IntPtr data);
+
+		[DllImport ("MonoPosixHelper", CallingConvention=CallingConvention.Cdecl)]
+		static extern int CloseZStream (IntPtr stream);
+
+		[DllImport ("MonoPosixHelper", CallingConvention=CallingConvention.Cdecl)]
+		static extern int Flush (SafeDeflateStreamHandle stream);
+
+		[DllImport ("MonoPosixHelper", CallingConvention=CallingConvention.Cdecl)]
+		static extern int ReadZStream (SafeDeflateStreamHandle stream, IntPtr buffer, int length);
+
+		[DllImport ("MonoPosixHelper", CallingConvention=CallingConvention.Cdecl)]
+		static extern int WriteZStream (SafeDeflateStreamHandle stream, IntPtr buffer, int length);
+#endif
+
+		sealed class SafeDeflateStreamHandle : SafeHandle
+		{
+			public override bool IsInvalid
+			{
+				get { return handle == IntPtr.Zero; }
+			}
+
+			private SafeDeflateStreamHandle() : base(IntPtr.Zero, true)
+			{
+			}
+
+			internal SafeDeflateStreamHandle(IntPtr handle) : base (handle, true)
+			{
+			}
+
+			override protected bool ReleaseHandle()
+			{
+				try {
+					DeflateStreamNative.CloseZStream(handle);
+				} catch {
+					;
+				}
+				return true;
+			}
+		}
 	}
 }
 

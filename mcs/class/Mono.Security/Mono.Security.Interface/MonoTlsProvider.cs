@@ -30,7 +30,6 @@ using System.Net;
 using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using Mono.Security.Protocol.Tls;
 
 namespace Mono.Security.Interface
 {
@@ -130,64 +129,15 @@ namespace Mono.Security.Interface
 			get { return false; }
 		}
 
-		internal virtual X509Certificate2Impl GetNativeCertificate (
-			byte[] data, string password, X509KeyStorageFlags flags)
-		{
-			throw new InvalidOperationException ();
-		}
-
-		internal virtual X509Certificate2Impl GetNativeCertificate (
-			X509Certificate certificate)
-		{
-			throw new InvalidOperationException ();
-		}
-
 #endregion
 
-#region Certificate Validation
+#region Misc
 
-		/*
-		 * Allows a TLS provider to provide a custom system certificiate validator.
-		 */
-		internal virtual bool HasCustomSystemCertificateValidator {
-			get { return false; }
-		}
-
-		/*
-		 * If @serverMode is true, then we're a server and want to validate a certificate
-		 * that we received from a client.
-		 *
-		 * On OS X and Mobile, the @chain will be initialized with the @certificates, but not actually built.
-		 *
-		 * Returns `true` if certificate validation has been performed and `false` to invoke the
-		 * default system validator.
-		 */
-		internal virtual bool InvokeSystemCertificateValidator (
-			ICertificateValidator2 validator, string targetHost, bool serverMode,
-			X509CertificateCollection certificates, bool wantsChain, ref X509Chain chain,
-			out bool success, ref MonoSslPolicyErrors errors, ref int status11)
-		{
-			throw new InvalidOperationException ();
-		}
-
-#endregion
-
-#region Manged SSPI
-
-		/*
-		 * The managed SSPI implementation from the new TLS code.
-		 */
-
-		internal abstract bool SupportsTlsContext {
+		internal abstract bool SupportsCleanShutdown {
 			get;
 		}
 
-		internal abstract IMonoTlsContext CreateTlsContext (
-			string hostname, bool serverMode, TlsProtocols protocolFlags,
-			X509Certificate serverCertificate, X509CertificateCollection clientCertificates,
-			bool remoteCertRequired, MonoEncryptionPolicy encryptionPolicy,
-			MonoTlsSettings settings);
-
 #endregion
+
 	}
 }

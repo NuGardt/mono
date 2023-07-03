@@ -92,7 +92,14 @@ namespace PEAPI {
 	/// </summary>
 	public enum ImplAttr { IL, Native, Runtime = 0x03, Unmanaged = 0x04,
 		ForwardRef = 0x10, PreserveSig = 0x0080, InternalCall = 0x1000, 
-		Synchronised = 0x0020, Synchronized = 0x0020, NoInLining = 0x0008, Optil = 0x0002}
+		Synchronised = 0x0020, Synchronized = 0x0020, NoInLining = 0x0008, NoOptimization = 0x0040, Optil = 0x0002,
+		AggressiveInlining = 0x0100
+	}
+
+	/// <summary>
+	/// Storage location for initial field data
+	/// </summary>
+	public enum DataSegment { Data, TLS, CIL }
 
 	/// <summary>
 	/// Modes for a parameter
@@ -1161,8 +1168,7 @@ namespace PEAPI {
 
 		internal override uint SortKey ()
 		{
-			return (theClass.Row << MetaData.CIxShiftMap[(uint)CIx.TypeDefOrRef])
-				| theClass.GetCodedIx (CIx.TypeDefOrRef);
+			throw new Exception ("Should not be used.");
 		}
 
 	}
@@ -1324,6 +1330,10 @@ namespace PEAPI {
 			output.WriteCodedIndex(CIx.MethodDefOrRef,header);
 		}
 
+		internal override uint SortKey()
+		{
+			return parent.Row;
+		}
 	}
 
 	/**************************************************************************/  
@@ -1634,6 +1644,7 @@ namespace PEAPI {
 	public class ClassDef : Class {
 
 		Class superType;
+		bool setSuperType;
 		ArrayList fields = new ArrayList();
 		ArrayList methods = new ArrayList();
 		ArrayList events;
@@ -1649,9 +1660,6 @@ namespace PEAPI {
 				MetaData md) : base(nsName, name, md) 
 		{
 			metaData = md;
-			if (! ((nsName == "" && name == "<Module>") || (nsName == "System" && name == "Object")) ) {
-				superType = metaData.mscorlib.GetSpecialSystemClass(PrimitiveType.Object);
-			}
 			flags = (uint)attrSet;
 			tabIx = MDTable.TypeDef;
 		}
@@ -1659,6 +1667,7 @@ namespace PEAPI {
 		internal void SetSuper(Class sClass) 
 		{
 			superType = sClass;
+			setSuperType = true;
 			if (! (sClass is GenericTypeInst))
 				typeIndexChecked = false;
 		}
@@ -1670,12 +1679,13 @@ namespace PEAPI {
 			else  
 				superType = metaData.mscorlib.ValueType();
 
+			setSuperType = true;
 			typeIndex = PrimitiveType.ValueType.GetTypeIndex ();
 		}
 
 		public void SpecialNoSuper() 
 		{
-			superType = null;
+			setSuperType = true;
 		}
 
 		/// <summary>
@@ -1917,8 +1927,13 @@ namespace PEAPI {
 
 		internal sealed override void BuildTables(MetaData md) 
 		{
-			if (done) return;
-			if ((flags & (uint)TypeAttr.Interface) != 0) { superType = null; }
+			if (done) 
+				return;
+			
+			if ((flags & (uint)TypeAttr.Interface) != 0) {
+				superType = null;
+				setSuperType = true;
+			}
 			// Console.WriteLine("Building tables for " + name);
 			if (layout != null) md.AddToTable(MDTable.ClassLayout,layout);
 			// Console.WriteLine("adding methods " + methods.Count);
@@ -1951,6 +1966,10 @@ namespace PEAPI {
 							((Property)properties[0]).Row,MDTable.Property));
 			}
 			// Console.WriteLine("End of building tables");
+
+			if (!setSuperType)
+				superType = metaData.mscorlib.GetSpecialSystemClass(PrimitiveType.Object);
+
 			done = true;
 		}
 
@@ -5045,7 +5064,7 @@ namespace PEAPI {
 		private byte heapSizes = 0;
 		MetaDataElement entryPoint;
 		BinaryWriter output;
-		public MSCorLib mscorlib;
+		MSCorLib _mscorlib;
 		private TypeSpec[] systemTypeSpecs = new TypeSpec[PrimitiveType.NumSystemTypes];
 		long mdStart;
 		private ArrayList cattr_list;
@@ -5070,8 +5089,14 @@ namespace PEAPI {
 			for (int i=0; i < lgeCIx.Length; i++) {
 				lgeCIx[i] = false;
 			}
-			mscorlib = new MSCorLib(this);
 		}
+
+		public MSCorLib mscorlib {
+			get {
+				return _mscorlib ?? (_mscorlib = new MSCorLib (this));
+			}
+		}
+
 
 		internal TypeSpec GetPrimitiveTypeSpec(int ix) 
 		{
@@ -5527,6 +5552,7 @@ namespace PEAPI {
 			SortTable(metaDataTables[(int)MDTable.FieldMarshal]);
 			SortTable(metaDataTables[(int)MDTable.DeclSecurity]);
 			SortTable(metaDataTables[(int)MDTable.MethodSemantics]);
+			SortTable(metaDataTables[(int)MDTable.MethodImpl]);
 			SortTable(metaDataTables[(int)MDTable.ImplMap]);
 			if (metaDataTables[(int)MDTable.GenericParam] != null) {
 				SortTable(metaDataTables[(int)MDTable.GenericParam]);
@@ -5536,7 +5562,6 @@ namespace PEAPI {
 				  }*/
 			}
 			SortTable(metaDataTables[(int)MDTable.GenericParamConstraint]);
-			SortTable(metaDataTables[(int)MDTable.InterfaceImpl]);
 			SortTable(metaDataTables[(int)MDTable.CustomAttribute]);
 
 		}
@@ -5633,21 +5658,30 @@ namespace PEAPI {
 		char[] name;
 		Hashtable htable = new Hashtable();
 		Hashtable btable = new Hashtable (new ByteArrayHashCodeProvider (), new ByteArrayComparer ());
+		bool addInitByte = false;
+		bool initByteAdded = false;
 
 		internal MetaDataStream(char[] name, bool addInitByte) : base(new MemoryStream()) 
 		{
-			if (addInitByte) { Write((byte)0); size = 1; }
+			this.addInitByte = addInitByte;
 			this.name = name;
 			sizeOfHeader = StreamHeaderSize + (uint)name.Length;
 		}
 
 		internal MetaDataStream(char[] name, System.Text.Encoding enc, bool addInitByte) : base(new MemoryStream(),enc) 
 		{
-			if (addInitByte) { Write((byte)0); size = 1; }
+			this.addInitByte = addInitByte;
 			this.name = name;
 			sizeOfHeader = StreamHeaderSize + (uint)name.Length;
 		}
 
+		void AddInitByte () {
+			if (addInitByte && !initByteAdded) {
+				Write((byte)0);
+				size += 1;
+				initByteAdded = true;
+			}
+		}
 		public uint Start {
 			get { return start; }
 			set { start = value; }
@@ -5681,6 +5715,7 @@ namespace PEAPI {
 
 		internal uint Add(string str, bool prependSize) 
 		{
+			AddInitByte ();
 			Object val = htable[str];
 			uint index = 0;
 			if (val == null) { 
@@ -5698,6 +5733,7 @@ namespace PEAPI {
 		}
 		internal uint Add (byte[] str, bool prependSize) 
 		{
+			AddInitByte ();
 			Object val = btable [str];
 			uint index = 0;
 			if (val == null) {
@@ -5715,6 +5751,7 @@ namespace PEAPI {
 
 		internal uint Add(Guid guid, bool prependSize) 
 		{
+			AddInitByte ();
 			byte [] b = guid.ToByteArray ();
 			if (prependSize) CompressNum ((uint) b.Length);
 			Write(guid.ToByteArray());
@@ -5724,6 +5761,7 @@ namespace PEAPI {
 
 		internal uint Add(byte[] blob) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			CompressNum((uint)blob.Length);
 			Write(blob);
@@ -5733,6 +5771,7 @@ namespace PEAPI {
 
 		internal uint Add(byte val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (1);
 			Write(val);
@@ -5742,6 +5781,7 @@ namespace PEAPI {
 
 		internal uint Add(sbyte val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (1);
 			Write(val);
@@ -5751,6 +5791,7 @@ namespace PEAPI {
 
 		internal uint Add(ushort val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (2);
 			Write(val);
@@ -5760,6 +5801,7 @@ namespace PEAPI {
 
 		internal uint Add(short val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (2);
 			Write(val);
@@ -5769,6 +5811,7 @@ namespace PEAPI {
 
 		internal uint Add(uint val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (4);
 			Write(val);
@@ -5778,6 +5821,7 @@ namespace PEAPI {
 
 		internal uint Add(int val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (4);
 			Write (val);
@@ -5787,6 +5831,7 @@ namespace PEAPI {
 
 		internal uint Add(ulong val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (8);
 			Write(val);
@@ -5796,6 +5841,7 @@ namespace PEAPI {
 
 		internal uint Add(long val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (8);
 			Write(val);
@@ -5805,6 +5851,7 @@ namespace PEAPI {
 
 		internal uint Add(float val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (4);
 			Write(val);
@@ -5814,6 +5861,7 @@ namespace PEAPI {
 
 		internal uint Add(double val, bool prependSize) 
 		{
+			AddInitByte ();
 			uint ix = size;
 			if (prependSize) CompressNum (8);
 			Write(val);

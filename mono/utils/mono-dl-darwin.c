@@ -1,5 +1,6 @@
-/*
- * mono-dl.c: Interface to the dynamic linker
+/**
+ * \file
+ * Interface to the dynamic linker
  *
  * Author:
  *    Mono Team (http://www.mono-project.com)
@@ -61,5 +62,11 @@ mono_dl_get_system_dir (void)
 	return NULL;
 #endif
 }
+
+#else
+
+#include <mono/utils/mono-compiler.h>
+
+MONO_EMPTY_SOURCE_FILE (mono_dl_darwin);
 
 #endif

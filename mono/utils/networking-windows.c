@@ -1,5 +1,6 @@
-/*
- * networking-windows.c: Windows-specific networking implementations
+/**
+ * \file
+ * Windows-specific networking implementations
  *
  * Author:
  *	Alexander Köplinger (alex.koeplinger@outlook.com)
@@ -22,7 +23,7 @@ mono_networking_init (void)
 	WSADATA wsadata;
 	int err;
 
-	err = WSAStartup (MAKEWORD (2,0), &wsadata);
+	err = WSAStartup (2 /* 2.0 */, &wsadata);
 	if(err)
 		g_error ("%s: Couldn't initialise networking", __func__);
 }
@@ -32,5 +33,9 @@ mono_networking_shutdown (void)
 {
 	WSACleanup ();
 }
+
+#else
+
+MONO_EMPTY_SOURCE_FILE (networking_windows);
 
 #endif /* defined(HOST_WIN32) */

@@ -1,4 +1,5 @@
-/*
+/**
+ * \file
  * Author:
  *   Dietmar Maurer (dietmar@ximian.com)
  *
@@ -12,11 +13,14 @@
 
 MONO_BEGIN_DECLS
 
-MONO_API MonoDomain * 
+MONO_API MONO_RT_EXTERNAL_ONLY MonoDomain * 
 mono_jit_init              (const char *file);
 
-MONO_API MonoDomain * 
+MONO_API MONO_RT_EXTERNAL_ONLY MonoDomain * 
 mono_jit_init_version      (const char *root_domain_name, const char *runtime_version);
+
+MONO_API MonoDomain * 
+mono_jit_init_version_for_test_only      (const char *root_domain_name, const char *runtime_version);
 
 MONO_API int
 mono_jit_exec              (MonoDomain *domain, MonoAssembly *assembly, 
@@ -53,11 +57,29 @@ typedef enum {
 	 * equivalent to mono_jit_set_aot_only (true) */
 	MONO_AOT_MODE_FULL,
 	/* Same as full, but use only llvm compiled code */
-	MONO_AOT_MODE_LLVMONLY
+	MONO_AOT_MODE_LLVMONLY,
+	/* Uses Interpreter, JIT is disabled and not allowed,
+	 * equivalent to "--full-aot --interpreter" */
+	MONO_AOT_MODE_INTERP,
+	/* Same as INTERP, but use only llvm compiled code */
+	MONO_AOT_MODE_INTERP_LLVMONLY,
+	/* Use only llvm compiled code, fall back to the interpeter */
+	MONO_AOT_MODE_LLVMONLY_INTERP,
+	/* Same as --interp */
+	MONO_AOT_MODE_INTERP_ONLY,
+	/* Sentinel value used internally by the runtime. We use a large number to avoid clashing with some internal values. */
+	MONO_AOT_MODE_LAST = 1000,
 } MonoAotMode;
 
 MONO_API void
 mono_jit_set_aot_mode      (MonoAotMode mode);
+
+/*
+ * Returns whether the runtime was invoked for the purpose of AOT-compiling an
+ * assembly, i.e. no managed code will run.
+ */
+MONO_API mono_bool
+mono_jit_aot_compiling (void);
 
 /* Allow embedders to decide wherther to actually obey breakpoint instructions
  * in specific methods (works for both break IL instructions and Debugger.Break ()
@@ -83,13 +105,14 @@ mono_jit_parse_options     (int argc, char * argv[]);
 
 MONO_API char*       mono_get_runtime_build_info    (void);
 
-/* The following APIs are not stable. Avoid if possible. */
+MONO_API MONO_RT_EXTERNAL_ONLY void
+mono_set_use_llvm (mono_bool use_llvm);
 
-MONO_API MonoJitInfo *
-mono_get_jit_info_from_method (MonoDomain *domain, MonoMethod *method);
+MONO_API MONO_RT_EXTERNAL_ONLY void
+mono_aot_register_module (void **aot_info);
 
-MONO_API void *
-mono_aot_get_method (MonoDomain *domain, MonoMethod *method);
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoDomain* mono_jit_thread_attach (MonoDomain *domain);
 
 MONO_END_DECLS
 

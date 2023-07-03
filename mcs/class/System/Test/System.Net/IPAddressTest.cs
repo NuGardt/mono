@@ -145,16 +145,8 @@ public class IPAddressTest
 		"0xff.0x7f.0x20.0xf", "255.127.32.15",
 		"0.0.0.0", IPAddress.Any.ToString(),
 		"255.255.255.255", IPAddress.Broadcast.ToString(),
-		"12.1.1.3 abc", "12.1.1.3",
-		"12.1 .1.2", "12.0.0.1",
-		"12.1 .zzzz.2", "12.0.0.1",
 		"12.1.7", "12.1.0.7",
 		"12", "0.0.0.12",
-		"12.5.3 foo.67.test.test.7FFFFFFFFFfaFFF789FFFFFFFFFFFFFFF", "12.5.0.3",
-		"12.1 foo.bar.test.test.baf", "12.0.0.1",
-		"12.1.4.6 foo.bar.test.test.baf", "12.1.4.6",
-		"12.3 foo.bar.test.test.4", "12.0.0.3",
-		"12 foo.bar.test.test.baf", "0.0.0.12",
 		"65536", "0.1.0.0",
 		"65535", "0.0.255.255",
 		"20.65535", "20.0.255.255",
@@ -187,6 +179,14 @@ public class IPAddressTest
 		"12...",
 		"  ",
 		"7848198702",
+		"12.1.1.3 abc",
+		"12.1 .1.2",
+		"12.1 .zzzz.2",
+		"12.5.3 foo.67.test.test.7FFFFFFFFFfaFFF789FFFFFFFFFFFFFFF",
+		"12.1 foo.bar.test.test.baf",
+		"12.1.4.6 foo.bar.test.test.baf",
+		"12.3 foo.bar.test.test.4",
+		"12 foo.bar.test.test.baf",
 	};
 
 	static byte [] ipv4MappedIPv6Prefix = new byte [] { 0,0, 0,0, 0,0, 0,0, 0,0, 0xFF,0xFF };
@@ -197,8 +197,8 @@ public class IPAddressTest
 		Assert.AreEqual ((long) 0, IPAddress.Any.Address, "#1");
 		Assert.AreEqual ((long) 0xFFFFFFFF, IPAddress.Broadcast.Address, "#2");
 		long loopback = IPAddress.HostToNetworkOrder (BitConverter.IsLittleEndian ? 
-							      0x7f000001 : 
-							      0x0100007f);
+								  0x7f000001 : 
+								  0x0100007f);
 		Assert.AreEqual (loopback, IPAddress.Loopback.Address, "#3");
 		Assert.AreEqual ((long) 0xFFFFFFFF, IPAddress.None.Address, "#4");
 	}
@@ -241,9 +241,6 @@ public class IPAddressTest
 	[Test]
 	public void IsLoopbackV6 ()
 	{
-		if (!Socket.SupportsIPv6)
-			Assert.Ignore ("IPv6 must be enabled in machine.config");
-
 		IPAddress ip = IPAddress.IPv6Loopback;
 		Assert.IsTrue (IPAddress.IsLoopback (ip), "#1");
 
@@ -277,24 +274,16 @@ public class IPAddressTest
 	[Test]
 	public void Address ()
 	{
-		// hm, lame, anything is accepted by ms.net
-		/*
 		try {
 			IPAddress ip1 = new IPAddress (0x0000000100000000);
-			Assertion.Fail ("#1");
+			Assert.Fail ("#1");
 		} catch (ArgumentOutOfRangeException) {}
+		
 		IPAddress ip = IPAddress.Parse ("127.0.0.1");
 		ip.Address = 0;
 		ip.Address = 0xffffffff;
-		try {
-			ip.Address = -1;
-			Assertion.Fail ("#2");
-		} catch (ArgumentOutOfRangeException) {}
-		try {
-			ip.Address = 0x0000000100000000;
-			Assertion.Fail ("#3");
-		} catch (ArgumentOutOfRangeException) {}
-		*/
+		ip.Address = -1;
+		ip.Address = 0x0000000100000000;
 	}
 
 	[Test]
@@ -340,7 +329,7 @@ public class IPAddressTest
 				Assert.Fail ("#1:" + i + " (" + ipAddress + ")");
 			} catch (FormatException ex) {
 				Assert.AreEqual (typeof (FormatException), ex.GetType (), "#2:" + i);
-				Assert.IsNull (ex.InnerException, "#3:" + i);
+				Assert.IsNotNull (ex.InnerException, "#3:" + i);
 				Assert.IsNotNull (ex.Message, "#4:" + i);
 			}
 		}
@@ -545,7 +534,7 @@ public class IPAddressTest
 		IPAddress i;
 		Assert.IsTrue (IPAddress.TryParse ("0.0.0.0", out i), "#1");
 		Assert.IsTrue (IPAddress.TryParse ("127.0.0.1", out i), "#2");
-		Assert.IsFalse (IPAddress.TryParse ("www.mono-project.com", out i), "#3");
+		Assert.IsFalse (IPAddress.TryParse ("www.example.com", out i), "#3");
 		Assert.IsTrue (IPAddress.TryParse ("0001:0002:0003:0004:0005:0006:0007:0008", out i), "#4");
 		Assert.IsTrue (IPAddress.TryParse ("1:2:3:4:5:6:7:8", out i), "#5");
 		Assert.IsTrue (IPAddress.TryParse ("1::8", out i), "#6");
@@ -620,9 +609,6 @@ public class IPAddressTest
 	[Test]
 	public void ParseWrongV6 ()
 	{
-		if (!Socket.SupportsIPv6)
-			Assert.Ignore ("IPv6 must be enabled in machine.config");
-
 		for (int i = 0; i < ipv6ParseWrong.Length; i++) {
 			string ipAddress = ipv6ParseWrong [i];
 
@@ -631,13 +617,11 @@ public class IPAddressTest
 				Assert.Fail ("#1:" + i + " (" + ipAddress + ")");
 			} catch (FormatException ex) {
 				Assert.AreEqual (typeof (FormatException), ex.GetType (), "#2:" + i);
-				Assert.IsNull (ex.InnerException, "#3:" + i);
+				Assert.AreEqual(typeof(SocketException), ex.InnerException.GetType (), "#3:" + i);
 				Assert.IsNotNull (ex.Message, "#4:" + i);
 			}
 		}
 	}
-
-#if NET_4_5
 
 	[Test]
 	public void MapToIPv6 ()
@@ -673,8 +657,6 @@ public class IPAddressTest
 		return true;
 	}
 
-#endif
-
 	[Test]
 	public void EqualsFromBytes ()
 	{
@@ -685,7 +667,6 @@ public class IPAddressTest
 		}
 
 	}
-
 }
 }
 

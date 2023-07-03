@@ -109,8 +109,8 @@ public class StringTest
 		if (!Environment.Is64BitProcess)
 			Assert.Ignore("This test cannot run on a 32-bit system.");
 
-		// Require 6 GB physical RAM, for the 4GB string plus 2GB headroom
-		var pc = new PerformanceCounter ("Mono Memory", "Total Physical Memory");
+		// Require 6 GB available RAM, for the 4GB string plus 2GB headroom
+		var pc = new PerformanceCounter ("Mono Memory", "Available Physical Memory");
 
 		if (pc.RawValue < 6L*1024L*1024L*1024L)
 			Assert.Ignore("This machine may not have enough RAM to run this test.");
@@ -312,7 +312,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#A2");
 			Assert.IsNull (ex.InnerException, "#A3");
 			Assert.IsNotNull (ex.Message, "#A4");
-			Assert.AreEqual ("startIndex", ex.ParamName, "#A5");
+			Assert.AreEqual ("value", ex.ParamName, "#A5");
 		}
 
 		try {
@@ -324,7 +324,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#B2");
 			Assert.IsNull (ex.InnerException, "#B3");
 			Assert.IsNotNull (ex.Message, "#B4");
-			Assert.AreEqual ("startIndex", ex.ParamName, "#B5");
+			Assert.AreEqual ("value", ex.ParamName, "#B5");
 		}
 	}
 
@@ -348,15 +348,7 @@ public class StringTest
 	[Test] // ctor (SByte*, Int32, Int32)
 	public unsafe void Constructor7_Value_Null ()
 	{
-		try {
-			new String ((sbyte*) null, 0, 0);
-			Assert.Fail ("#A1");
-		} catch (ArgumentNullException ex) {
-			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#A2");
-			Assert.IsNull (ex.InnerException, "#A3");
-			Assert.IsNotNull (ex.Message, "#A4");
-			Assert.AreEqual ("value", ex.ParamName, "#A5");
-		}
+		Assert.AreEqual (string.Empty, new String ((sbyte*) null, 0, 0));
 
 		try {
 			new String ((sbyte*) null, 0, 1);
@@ -368,15 +360,7 @@ public class StringTest
 			Assert.AreEqual ("value", ex.ParamName, "#B5");
 		}
 
-		try {
-			new String ((sbyte*) null, 1, 0);
-			Assert.Fail ("#C1");
-		} catch (ArgumentNullException ex) {
-			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#C2");
-			Assert.IsNull (ex.InnerException, "#C3");
-			Assert.IsNotNull (ex.Message, "#C4");
-			Assert.AreEqual ("value", ex.ParamName, "#C5");
-		}
+		Assert.AreEqual (string.Empty, new String ((sbyte*) null, 1, 0));
 	}
 
 	[Test] // ctor (SByte*, Int32, Int32, Encoding)
@@ -443,7 +427,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#A2");
 			Assert.IsNull (ex.InnerException, "#A3");
 			Assert.IsNotNull (ex.Message, "#A4");
-			Assert.AreEqual ("startIndex", ex.ParamName, "#A5");
+			Assert.AreEqual ("value", ex.ParamName, "#A5");
 		}
 
 		try {
@@ -455,7 +439,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#B2");
 			Assert.IsNull (ex.InnerException, "#B3");
 			Assert.IsNotNull (ex.Message, "#B4");
-			Assert.AreEqual ("startIndex", ex.ParamName, "#B5");
+			Assert.AreEqual ("value", ex.ParamName, "#B5");
 		}
 
 		try {
@@ -511,15 +495,7 @@ public class StringTest
 	[Test] // ctor (SByte*, Int32, Int32, Encoding)
 	public unsafe void Constructor8_Value_Null ()
 	{
-		try {
-			new String ((sbyte*) null, 0, 0, null);
-			Assert.Fail ("#A1");
-		} catch (ArgumentNullException ex) {
-			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#A2");
-			Assert.IsNull (ex.InnerException, "#A3");
-			Assert.IsNotNull (ex.Message, "#A4");
-			Assert.AreEqual ("value", ex.ParamName, "#A5");
-		}
+		Assert.AreEqual (string.Empty, new String ((sbyte*) null, 0, 0, null));
 
 		try {
 			new String ((sbyte*) null, 0, 1, null);
@@ -531,25 +507,16 @@ public class StringTest
 			Assert.AreEqual ("value", ex.ParamName, "#B5");
 		}
 
-		try {
-			new String ((sbyte*) null, 1, 0, null);
-			Assert.Fail ("#C1");
-		} catch (ArgumentNullException ex) {
-			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#C2");
-			Assert.IsNull (ex.InnerException, "#C3");
-			Assert.IsNotNull (ex.Message, "#C4");
-			Assert.AreEqual ("value", ex.ParamName, "#C5");
-		}
+		Assert.AreEqual (string.Empty, new String ((sbyte*) null, 1, 0, null));
 
 		Assert.AreEqual (String.Empty, new String ((sbyte*) null, 0, 0, Encoding.Default), "#D");
 
 		try {
 			new String ((sbyte*) null, 0, 1, Encoding.Default);
 			Assert.Fail ("#E1");
-		} catch (ArgumentOutOfRangeException ex) {
+		} catch (ArgumentNullException ex) {
 			// Pointer startIndex and length do not refer to a
 			// valid string
-			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#E2");
 			Assert.IsNull (ex.InnerException, "#E3");
 			Assert.IsNotNull (ex.Message, "#E4");
 			//Assert.AreEqual ("value", ex.ParamName, "#E5");
@@ -578,6 +545,7 @@ public class StringTest
 	}
 
 	[Test] // bug #316666
+	[Category ("ManagedCollator")]
 	public void CompareNotWorking ()
 	{
 		Assert.AreEqual (String.Compare ("A", "a"), 1, "A03");
@@ -1003,6 +971,7 @@ public class StringTest
 	}
 
 	[Test] // EndsWith (String, Boolean, CultureInfo)
+	[Category ("ManagedCollator")]
 	public void EndsWith3 ()
 	{
 		string s;
@@ -1304,6 +1273,7 @@ public class StringTest
 	}
 
 	[Test]
+	[Category ("ManagedCollator")]
 	public void IndexOf ()
 	{
 		string s1 = "original";
@@ -1418,6 +1388,7 @@ public class StringTest
 	}
 
 	[Test] // IndexOf (String, Int32)
+	[Category ("ManagedCollator")]
 	public void IndexOf4 ()
 	{
 		string s = "testing123456";
@@ -1448,6 +1419,7 @@ public class StringTest
 	}
 
 	[Test] // IndexOf (String, StringComparison)
+	[Category ("ManagedCollator")]
 	public void IndexOf5 ()
 	{
 		string s = "testing123456";
@@ -1651,6 +1623,7 @@ public class StringTest
 	}
 
 	[Test]
+	[Category ("ManagedCollator")]
 	public void IndexOfStringComparisonCurrentCulture_Empty ()
 	{
 		Assert.AreEqual (1, "Mono".IndexOf ("", 1, StringComparison.CurrentCultureIgnoreCase));
@@ -1797,6 +1770,7 @@ public class StringTest
 	}
 
 	[Test] // IndexOf (String, Int32, Int32)
+	[Category ("ManagedCollator")]
 	public void IndexOf7 ()
 	{
 		string s = "testing123456test";
@@ -2117,7 +2091,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#2");
 			Assert.IsNull (ex.InnerException, "#3");
 			Assert.IsNotNull (ex.Message, "#4");
-			Assert.IsNull (ex.ParamName, "#5");
+			Assert.AreEqual ("anyOf", ex.ParamName, "#5");
 		}
 	}
 
@@ -2164,7 +2138,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#2");
 			Assert.IsNull (ex.InnerException, "#3");
 			Assert.IsNotNull (ex.Message, "#4");
-			Assert.IsNull (ex.ParamName, "#5");
+			Assert.AreEqual ("anyOf", ex.ParamName, "#5");
 		}
 	}
 
@@ -2182,7 +2156,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#2");
 			Assert.IsNull (ex.InnerException, "#3");
 			Assert.IsNotNull (ex.Message, "#4");
-			Assert.IsNull (ex.ParamName, "#5");
+			Assert.AreEqual ("startIndex", ex.ParamName, "#5");
 		}
 	}
 
@@ -2200,7 +2174,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#2");
 			Assert.IsNull (ex.InnerException, "#3");
 			Assert.IsNotNull (ex.Message, "#4");
-			Assert.IsNull (ex.ParamName, "#5");
+			Assert.AreEqual ("startIndex", ex.ParamName, "#5");
 		}
 	}
 
@@ -2249,7 +2223,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#2");
 			Assert.IsNull (ex.InnerException, "#3");
 			Assert.IsNotNull (ex.Message, "#4");
-			Assert.IsNull (ex.ParamName, "#5");
+			Assert.AreEqual ("anyOf", ex.ParamName, "#5");
 		}
 	}
 
@@ -2299,7 +2273,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#2");
 			Assert.IsNull (ex.InnerException, "#3");
 			Assert.IsNotNull (ex.Message, "#4");
-			Assert.IsNull (ex.ParamName, "#5");
+			Assert.AreEqual ("startIndex", ex.ParamName, "#5");
 		}
 	}
 
@@ -2317,7 +2291,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentOutOfRangeException), ex.GetType (), "#2");
 			Assert.IsNull (ex.InnerException, "#3");
 			Assert.IsNotNull (ex.Message, "#4");
-			Assert.IsNull (ex.ParamName, "#5");
+			Assert.AreEqual ("startIndex", ex.ParamName, "#5");
 		}
 	}
 
@@ -2332,6 +2306,7 @@ public class StringTest
 	}
 
 	[Test]
+	[Category ("ManagedCollator")]
 	public void IndexOfIsCultureAwareWhileContainsIsNot ()
 	{
 		string a = "encyclopædia";
@@ -2698,7 +2673,6 @@ public class StringTest
 	}
 
 	[Test]
-	[ExpectedException (typeof (ArgumentException))]
 	public void LastIndexOf_StringComparison ()
 	{
 		" ".LastIndexOf (string.Empty, 0, 1, (StringComparison)Int32.MinValue);
@@ -2907,7 +2881,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#A2");
 			Assert.IsNull (ex.InnerException, "#A3");
 			Assert.IsNotNull (ex.Message, "#A4");
-			Assert.IsNull (ex.ParamName, "#A5");
+			Assert.AreEqual ("anyOf", ex.ParamName, "#A5");
 		}
 
 		try {
@@ -2917,7 +2891,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#B2");
 			Assert.IsNull (ex.InnerException, "#B3");
 			Assert.IsNotNull (ex.Message, "#B4");
-			Assert.IsNull (ex.ParamName, "#B5");
+			Assert.AreEqual ("anyOf", ex.ParamName, "#B5");
 		}
 
 		try {
@@ -2927,7 +2901,7 @@ public class StringTest
 			Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#C2");
 			Assert.IsNull (ex.InnerException, "#C3");
 			Assert.IsNotNull (ex.Message, "#C4");
-			Assert.IsNull (ex.ParamName, "#C5");
+			Assert.AreEqual ("anyOf", ex.ParamName, "#C5");
 		}
 
 		char[] c1 = {'a', 'e', 'i', 'o', 'u'};
@@ -3132,7 +3106,7 @@ public class StringTest
 
 		Assert.AreEqual ("oinal", s1.Remove(1, 3), "#D1");
 		Assert.AreEqual (s1, s1.Remove (0, 0), "#D2");
-		Assert.IsTrue (!object.ReferenceEquals (s1, s1.Remove (0, 0)), "#D3");
+		Assert.IsTrue (object.ReferenceEquals (s1, s1.Remove (0, 0)), "#D3");
 		Assert.AreEqual ("riginal", s1.Remove (0, 1), "#D4");
 		Assert.AreEqual ("origina", s1.Remove (7, 1), "#D5");
 	}
@@ -3247,6 +3221,10 @@ public class StringTest
 
 		// Test replacing null characters (bug #67395)
 		Assert.AreEqual ("is this ok ?", "is \0 ok ?".Replace ("\0", "this"), "should not strip content after nullchar");
+
+		// System.String.Replace fails with NotImplementedException https://github.com/mono/mono/issues/20948
+		Assert.AreEqual ("Original", s1.Replace("o", "O", StringComparison.CurrentCulture), "Replace(string, string, StringComparison)");
+		Assert.AreEqual ("Original", s1.Replace("o", "O", false, CultureInfo.CurrentCulture), "Replace(string, string, bool, CultureInfo)");
 	}
 
 	[Test]
@@ -4485,7 +4463,7 @@ public class StringTest
 		Assert.AreEqual (String.Empty, String.Concat (String.Empty, String.Empty, String.Empty), "Concat(string,string,string)");
 		Assert.AreEqual (String.Empty, String.Concat ((object) null, (object) (object) null, (object) null, (object) null), "Concat(null,null,null,null)-object");
 		Assert.AreSame (String.Empty, String.Concat ((string) null, (string) (string) null, (string) null, (string) null), "Concat(null,null,null,null)-string");
-		Assert.AreNotSame (String.Empty, String.Concat (String.Empty, String.Empty, String.Empty, String.Empty), "Concat(string,string,string,string)");
+		Assert.AreSame (String.Empty, String.Concat (String.Empty, String.Empty, String.Empty, String.Empty), "Concat(string,string,string,string)");
 		Assert.AreEqual (String.Empty, String.Concat (new object [] { String.Empty, String.Empty }), "Concat(object[])");
 		Assert.AreEqual (String.Empty, String.Concat (new string [] { String.Empty, String.Empty }), "Concat(string[])");
 

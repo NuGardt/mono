@@ -560,35 +560,7 @@ namespace System.Windows.Forms
 			if (Assembly.GetEntryAssembly () == null)
 				throw new NotSupportedException ("The method 'Restart' is not supported by this application type.");
 
-			string mono_path = null;
-
-			//Get mono path
-			PropertyInfo gac = typeof (Environment).GetProperty ("GacPath", BindingFlags.Static | BindingFlags.NonPublic);
-			MethodInfo get_gac = null;
-			if (gac != null)
-				get_gac = gac.GetGetMethod (true);
-
-			if (get_gac != null) {
-				string gac_path = Path.GetDirectoryName ((string)get_gac.Invoke (null, null));
-				string mono_prefix = Path.GetDirectoryName (Path.GetDirectoryName (gac_path));
-
-				if (XplatUI.RunningOnUnix) {
-					mono_path = Path.Combine (mono_prefix, "bin/mono");
-					if (!File.Exists (mono_path))
-						mono_path = "mono";
-				} else {
-					mono_path = Path.Combine (mono_prefix, "bin\\mono.bat");
-
-					if (!File.Exists (mono_path))
-						mono_path = Path.Combine (mono_prefix, "bin\\mono.exe");
-
-					if (!File.Exists (mono_path))
-						mono_path = Path.Combine (mono_prefix, "mono\\mono\\mini\\mono.exe");
-
-					if (!File.Exists (mono_path))
-						throw new FileNotFoundException (string.Format ("Windows mono path not found: '{0}'", mono_path));
-				}
-			}
+			string mono_path = MonoToolsLocator.Mono;
 
 			//Get command line arguments
 			StringBuilder argsBuilder = new StringBuilder ();
@@ -862,8 +834,7 @@ namespace System.Windows.Forms
 				case Msg.WM_SYSCHAR:
 				case Msg.WM_KEYUP:
 				case Msg.WM_SYSKEYUP:
-					Control c;
-					c = Control.FromHandle(msg.hwnd);
+					Control c = Control.FromHandle(msg.hwnd);
 
 					// If we have a control with keyboard capture (usually a *Strip)
 					// give it the message, and then drop the message
@@ -905,32 +876,39 @@ namespace System.Windows.Forms
 				case Msg.WM_RBUTTONDOWN:
 					if (keyboard_capture != null) {
 						Control c2 = Control.FromHandle (msg.hwnd);
+						var menuStrip = keyboard_capture.GetTopLevelToolStrip () as ToolStrip;
 
-						// the target is not a winforms control (an embedded control, perhaps), so
+						// The target is not a winforms control (an embedded control, perhaps), so
 						// release everything
 						if (c2 == null) {
 							ToolStripManager.FireAppClicked ();
 							goto default;
 						}
 
-						// If we clicked a ToolStrip, we have to make sure it isn't
-						// the one we are on, or any of its parents or children
-						// If we clicked off the dropped down menu, release everything
-						if (c2 is ToolStrip) {
-							if ((c2 as ToolStrip).GetTopLevelToolStrip () != keyboard_capture.GetTopLevelToolStrip ())
-								ToolStripManager.FireAppClicked ();
-						} else {
-							if (c2.Parent != null)
-								if (c2.Parent is ToolStripDropDownMenu)
-									if ((c2.Parent as ToolStripDropDownMenu).GetTopLevelToolStrip () == keyboard_capture.GetTopLevelToolStrip ())
-										goto default;
-							if (c2.TopLevelControl == null)
-								goto default;
-								
-							ToolStripManager.FireAppClicked ();
+						// Skip clicks on owner windows, eg. expanded ComboBox
+						if (Control.IsChild (keyboard_capture.Handle, msg.hwnd)) {
+							goto default;
 						}
+
+						// Close any active toolstrips drop-downs if we click outside of them,
+						// but also don't close them all if we click outside of the top-most
+						// one, but into its owner.
+						Point c2_point = c2.PointToScreen (new Point (
+							(int)(short)(m.LParam.ToInt32() & 0xffff),
+							(int)(short)(m.LParam.ToInt32() >> 16)));
+						while (keyboard_capture != null && !keyboard_capture.ClientRectangle.Contains (keyboard_capture.PointToClient (c2_point))) {
+							keyboard_capture.Dismiss ();
+						}
+
+						var iter_OwnerItem = (c2 as ToolStripDropDown)?.OwnerItem;
+						while (iter_OwnerItem != null && iter_OwnerItem.Owner != menuStrip) {
+							iter_OwnerItem = iter_OwnerItem.OwnerItem;
+						}
+						var menuStripIsOwnerOf_c2 = (iter_OwnerItem != null);
+						
+						if (c2 != menuStrip && !menuStripIsOwnerOf_c2)
+							menuStrip.Dismiss ();
 					}
-					
 					goto default;
 
 				case Msg.WM_QUIT:
@@ -969,8 +947,8 @@ namespace System.Windows.Forms
 
 				EnableFormsForModalLoop (toplevels, context);
 				
-				if (context.MainForm != null && context.MainForm.IsHandleCreated) {
-					XplatUI.SetModal (context.MainForm.Handle, false);
+				if (old != null && old.IsHandleCreated) {
+					XplatUI.SetModal (old.Handle, false);
 				}
 				#if DebugRunLoop
 					Console.WriteLine ("   Done with the SetModal");

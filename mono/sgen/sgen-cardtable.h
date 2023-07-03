@@ -1,4 +1,5 @@
-/*
+/**
+ * \file
  * Copyright 2001-2003 Ximian, Inc
  * Copyright 2003-2010 Novell, Inc.
  *
@@ -9,6 +10,7 @@
 
 /*WARNING: This function returns the number of cards regardless of overflow in case of overlapping cards.*/
 mword sgen_card_table_number_of_cards_in_range (mword address, mword size);
+guint8* sgen_find_next_card (guint8 *card_data, guint8 *end);
 
 void sgen_card_table_reset_region (mword start, mword end);
 void* sgen_card_table_align_pointer (void *ptr);
@@ -26,6 +28,7 @@ void sgen_card_table_update_mod_union (guint8 *dest, char *obj, mword obj_size, 
 void sgen_card_table_preclean_mod_union (guint8 *cards, guint8 *cards_preclean, size_t num_cards);
 
 guint8* sgen_get_card_table_configuration (int *shift_bits, gpointer *mask);
+guint8* sgen_get_target_card_table_configuration (int *shift_bits, target_mgreg_t *mask);
 
 void sgen_card_table_init (SgenRememberedSet *remset);
 
@@ -44,6 +47,10 @@ void sgen_card_table_init (SgenRememberedSet *remset);
 
 #if SIZEOF_VOID_P * 8 > CARD_TABLE_BITS
 #define SGEN_HAVE_OVERLAPPING_CARDS	1
+#endif
+
+#if TARGET_SIZEOF_VOID_P * 8 > CARD_TABLE_BITS
+#define SGEN_TARGET_HAVE_OVERLAPPING_CARDS	1
 #endif
 
 extern guint8 *sgen_cardtable;

@@ -62,23 +62,6 @@ namespace MonoTests.System.Net {
 			}
 		}
 
-		public static HttpListener CreateAndStartListener (string prefix)
-		{
-			HttpListener listener = new HttpListener ();
-			listener.Prefixes.Add (prefix);
-			listener.Start ();
-			return listener;
-		}
-
-		public static HttpListener CreateAndStartListener (string prefix, AuthenticationSchemes authSchemes)
-		{
-			HttpListener listener = new HttpListener ();
-			listener.AuthenticationSchemes = authSchemes;
-			listener.Prefixes.Add (prefix);
-			listener.Start ();
-			return listener;
-		}
-
 		public static MyNetworkStream CreateNS (int port)
 		{
 			return CreateNS (IPAddress.Loopback, port, 5000);
@@ -146,30 +129,37 @@ namespace MonoTests.System.Net {
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test1 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test1/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test1/");
 			NetworkStream ns = CreateNS (port);
 			Send (ns, "GET / HTTP/1.1\r\n\r\n"); // No host
 			string response = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 400", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 400"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test2 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test2/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test2/");
 			NetworkStream ns = CreateNS (port);
 			Send (ns, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"); // no prefix
 			string response = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 400", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 400"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test3 ()
 		{
 			StringBuilder bad = new StringBuilder ();
@@ -196,60 +186,67 @@ namespace MonoTests.System.Net {
 			bad.Append ('}');
 
 			foreach (char b in bad.ToString ()){
-				var port = NetworkHelpers.FindFreePort ();
-				HttpListener listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test3/");
+				HttpListener listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test3/");
 				NetworkStream ns = CreateNS (port);
 				Send (ns, String.Format ("MA{0} / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", b)); // bad method
 				
 				string response = Receive (ns, 512);
 				ns.Close ();
 				listener.Close ();
-				StringAssert.StartsWith ("HTTP/1.1 400", response, String.Format ("Failed on {0}", (int) b));
+				Assert.IsTrue(response.StartsWith ("HTTP/1.1 400"), String.Format ("Failed on {0}", (int) b));
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test4 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test4/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test4/");
 			NetworkStream ns = CreateNS (port);
 			Send (ns, "POST /test4/ HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"); // length required
 			string response = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 411", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 411"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test5 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test5/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test5/");
 			NetworkStream ns = CreateNS (port);
 			Send (ns, "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nTransfer-Encoding: pepe\r\n\r\n"); // not implemented
 			string response = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 501", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 501"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test6 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test6/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test6/");
 			NetworkStream ns = CreateNS (port);
 			 // not implemented! This is against the RFC. Should be a bad request/length required
 			Send (ns, "POST /test6/ HTTP/1.1\r\nHost: 127.0.0.1\r\nTransfer-Encoding: identity\r\n\r\n");
 			string response = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 501", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 501"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test7 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test7/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test7/");
 			NetworkStream ns = CreateNS (port);
 			Send (ns, "POST /test7/ HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\n123");
 			HttpListenerContext ctx = _listener.GetContext ();
@@ -257,15 +254,17 @@ namespace MonoTests.System.Net {
 			ctx.Response.Close ();
 			string response = Receive (ns, 1024);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 200", response);
-			StringAssert.Contains ("Transfer-Encoding: chunked", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 200"));
+			Assert.IsTrue(response.Contains ("Transfer-Encoding: chunked"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test8 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test8/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test8/");
 			NetworkStream ns = CreateNS (port);
 			// Just like Test7, but 1.0
 			Send (ns, "POST /test8/ HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\n123");
@@ -274,31 +273,35 @@ namespace MonoTests.System.Net {
 			ctx.Response.Close ();
 			string response = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 200", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 200"));
 			Assert.IsTrue (-1 == response.IndexOf ("Transfer-Encoding: chunked"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test9 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
 			// 1.0 + "Transfer-Encoding: chunked"
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test9/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test9/");
 			NetworkStream ns = CreateNS (port);
 			Send (ns, "POST /test9/ HTTP/1.0\r\nHost: 127.0.0.1\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n123\r\n0\r\n\r\n");
 			bool timeout;
 			string response = ReceiveWithTimeout (ns, 512, 1000, out timeout);
 			ns.Close ();
 			Assert.IsFalse (timeout);
-			StringAssert.StartsWith ("HTTP/1.1 411", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 411"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test10 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
 			// Same as Test9, but now we shutdown the socket for sending.
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test10/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test10/");
 			MyNetworkStream ns = CreateNS (port);
 			Send (ns, "POST /test10/ HTTP/1.0\r\nHost: 127.0.0.1\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n123\r\n0\r\n\r\n");
 			ns.GetSocket ().Shutdown (SocketShutdown.Send);
@@ -306,59 +309,68 @@ namespace MonoTests.System.Net {
 			string response = ReceiveWithTimeout (ns, 512, 1000, out timeout);
 			ns.Close ();
 			Assert.IsFalse (timeout);
-			StringAssert.StartsWith ("HTTP/1.1 411", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 411"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test11 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
 			// 0.9
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test11/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test11/");
 			MyNetworkStream ns = CreateNS (port);
 			Send (ns, "POST /test11/ HTTP/0.9\r\nHost: 127.0.0.1\r\n\r\n123");
 			ns.GetSocket ().Shutdown (SocketShutdown.Send);
 			string input = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 400", input);
+			Assert.IsTrue(input.StartsWith ("HTTP/1.1 400"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test12 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
 			// 0.9
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test12/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test12/");
 			MyNetworkStream ns = CreateNS (port);
 			Send (ns, "POST /test12/ HTTP/0.9\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\n123");
 			ns.GetSocket ().Shutdown (SocketShutdown.Send);
 			string input = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 400", input);
+			Assert.IsTrue(input.StartsWith ("HTTP/1.1 400"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test13 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
 			// 0.9
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test13/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test13/");
 			MyNetworkStream ns = CreateNS (port);
 			Send (ns, "GEt /test13/ HTTP/0.9\r\nHost: 127.0.0.1\r\n\r\n");
 			ns.GetSocket ().Shutdown (SocketShutdown.Send);
 			string input = Receive (ns, 512);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 400", input);
+			Assert.IsTrue(input.StartsWith ("HTTP/1.1 400"));
 		}
 
 		HttpListenerRequest test14_request;
 		ManualResetEvent test_evt;
 		bool test14_error;
 		[Test]
+		[Category("MultiThreaded")]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test14 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test14/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test14/");
 			MyNetworkStream ns = CreateNS (port);
 			Send (ns, "POST /test14/ HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\n123");
 			HttpListenerContext c = _listener.GetContext ();
@@ -391,11 +403,13 @@ namespace MonoTests.System.Net {
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test15 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
 			// 2 separate writes -> 2 packets. Body size > 8kB
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test15/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test15/");
 			MyNetworkStream ns = CreateNS (port);
 			Send (ns, "POST /test15/ HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: 8888\r\n\r\n");
 			Thread.Sleep (800);
@@ -413,11 +427,13 @@ namespace MonoTests.System.Net {
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test16 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
 			// 1 single write with headers + body (size > 8kB)
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test16/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test16/");
 			MyNetworkStream ns = CreateNS (port);
 			StringBuilder sb = new StringBuilder ();
 			sb.Append ("POST /test16/ HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: 8888\r\n\r\n");
@@ -437,10 +453,12 @@ namespace MonoTests.System.Net {
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test17 ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/test17/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/test17/");
 			NetworkStream ns = CreateNS (port);
 			Send (ns, "RANDOM /test17/ HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 3\r\n\r\n123");
 			HttpListenerContext ctx = _listener.GetContext ();
@@ -448,15 +466,17 @@ namespace MonoTests.System.Net {
 			ctx.Response.Close ();
 			string response = Receive (ns, 1024);
 			ns.Close ();
-			StringAssert.StartsWith ("HTTP/1.1 200", response);
-			StringAssert.Contains ("Transfer-Encoding: chunked", response);
+			Assert.IsTrue(response.StartsWith ("HTTP/1.1 200"));
+			Assert.IsTrue(response.Contains ("Transfer-Encoding: chunked"));
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test_MultipleClosesOnOuputStreamAllowed ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + port + "/MultipleCloses/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/MultipleCloses/");
 			NetworkStream ns = CreateNS (port);
 			Send (ns, "GET /MultipleCloses/ HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
 
@@ -483,10 +503,13 @@ namespace MonoTests.System.Net {
 		}
 
 		[Test]
+		[Category("MultiThreaded")]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveCookiesFromClient ()
 		{
-			sendCookiePort = NetworkHelpers.FindFreePort ();			
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + sendCookiePort + "/SendCookie/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out sendCookiePort, "/SendCookie/");
 			Thread clientThread = new Thread (new ThreadStart (SendCookie));
 			clientThread.Start ();
 
@@ -529,10 +552,13 @@ namespace MonoTests.System.Net {
 		}
 
 		[Test]
+		[Category("MultiThreaded")]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SendCookiestoClient ()
 		{
-			receiveCookiePort = NetworkHelpers.FindFreePort ();
-			_listener = CreateAndStartListener ("http://127.0.0.1:" + receiveCookiePort + "/ReceiveCookie/");
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out receiveCookiePort, "/ReceiveCookie/");
 			Thread clientThread = new Thread (new ThreadStart (ReceiveCookie));
 			clientThread.Start ();
 
@@ -580,11 +606,16 @@ namespace MonoTests.System.Net {
 		}
 
 		[Test]
+		[Category("MultiThreaded")]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void MultiResponses ()
 		{
-			echoServerPort = NetworkHelpers.FindFreePort ();
+			echoServerStarted = new ManualResetEvent (false);
 			Thread srv = new Thread (new ThreadStart (EchoServer));
 			srv.Start ();
+			echoServerStarted.WaitOne ();
 			Thread.Sleep (200);
 
 			for (int i = 0; i < 10; i++) {
@@ -611,11 +642,11 @@ namespace MonoTests.System.Net {
 		}
 
 		int echoServerPort;
+		ManualResetEvent echoServerStarted;
 		void EchoServer ()
 		{
-			_listener = new HttpListener ();
-			_listener.Prefixes.Add ("http://*:" + echoServerPort + "/foobar/");
-			_listener.Start ();
+			_listener = NetworkHelpers.CreateAndStartHttpListener ("http://*:", out echoServerPort, "/foobar/");
+			echoServerStarted.Set ();
 
 			manualReset = new ManualResetEvent (false);
 
@@ -647,10 +678,12 @@ namespace MonoTests.System.Net {
 	[TestFixture]
 	public class HttpListenerBugs {
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void TestNonChunkedAsync ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			HttpListener listener = HttpListener2Test.CreateAndStartListener ("http://127.0.0.1:" + port + "/");
+			HttpListener listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/");
 
 			listener.BeginGetContext (callback, listener);
 			
@@ -701,10 +734,12 @@ namespace MonoTests.System.Net {
 		// a documented pattern to close the connection
 		// 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test_MultipleConnections ()
 		{
-			var port = NetworkHelpers.FindFreePort ();			
-			HttpListener listener = HttpListener2Test.CreateAndStartListener ("http://127.0.0.1:" + port + "/multiple/");
+			HttpListener listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/multiple/");
 
 			// First one
 			NetworkStream ns = HttpListener2Test.CreateNS (port);
@@ -731,41 +766,45 @@ namespace MonoTests.System.Net {
 		// Test case for bug 341443, an pretty old bug, filed on November of 2007.
 		//
 		[Test]
+		[Category("MultiThreaded")]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test_HostInUri ()
 		{
 			var wait = new ManualResetEvent (false);
 			var wait2 = new ManualResetEvent (false);
-			var port = NetworkHelpers.FindFreePort ();
+			var port = 0;
 			
 			Thread t = new Thread (delegate (object a) {
 				wait.WaitOne ();
 
 				NetworkStream ns = HttpListener2Test.CreateNS (port);
-				HttpListener2Test.Send (ns, "GET http://www.google.com/ HTTP/1.1\r\nHost: www.google.com\r\nContent-Length: 3\r\n\r\n123456");
+				HttpListener2Test.Send (ns, "GET http://www.example.com/ HTTP/1.1\r\nHost: www.example.com\r\nContent-Length: 3\r\n\r\n123456");
 
 				wait2.WaitOne ();
 				ns.Close ();
 			});
 			t.Start ();
 				
-			HttpListener listener = HttpListener2Test.CreateAndStartListener ("http://*:" + port + "/");
+			HttpListener listener = NetworkHelpers.CreateAndStartHttpListener ("http://*:", out port, "/");
 			wait.Set ();
 			HttpListenerContext ctx = listener.GetContext ();
 			
-			Assert.AreEqual ("http://www.google.com:" + port + "/", ctx.Request.Url.ToString ());
-			Assert.AreEqual ("http://www.google.com/", ctx.Request.RawUrl);
+			Assert.AreEqual ("http://www.example.com:" + port + "/", ctx.Request.Url.ToString ());
+			Assert.AreEqual ("http://www.example.com/", ctx.Request.RawUrl);
 			wait2.Set ();
 
 			listener.Close ();
 		}
 
 		[Test] // bug #513849
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ClosePort ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			var h = new HttpListener ();
-			h.Prefixes.Add ("http://127.0.0.1:" + port + "/");
-			h.Start ();
+			var h = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/");
 			h.BeginGetContext (null, null);
 			h.Stop ();
 			TcpListener t = new TcpListener (IPAddress.Parse ("127.0.0.1"), port);
@@ -783,6 +822,9 @@ namespace MonoTests.System.Net {
 		// does not also listen to another interface.
 		//
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BindToSingleInterface ()
 		{
 			IPAddress [] machineAddress = null;
@@ -794,10 +836,15 @@ namespace MonoTests.System.Net {
 				Assert.Ignore ("Hostname couldn't be resolved.");
 			}
 			
-			int port = NetworkHelpers.FindFreePort ();;
-			var h = new HttpListener ();
-			h.Prefixes.Add ("http://" + machineAddress [0] + ":" + port + "/");
-			h.Start ();
+			IPAddress ma = null;;
+			// Listen on the first IPV4 interface
+			foreach (IPAddress a in machineAddress) {
+				if (a.AddressFamily == AddressFamily.InterNetwork) {
+					ma = a;
+					break;
+				}
+			}
+			var h = NetworkHelpers.CreateAndStartHttpListener ("http://" + ma + ":", out var port, "/");
 
 			try {
 				var c = new TcpClient ("localhost", port);
@@ -809,22 +856,24 @@ namespace MonoTests.System.Net {
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BindToAllInterfaces ()
 		{
-			var h = new HttpListener ();
-			int port = NetworkHelpers.FindFreePort ();
-			h.Prefixes.Add ("http://*:" + port + "/");
-			h.Start ();
+			var h = NetworkHelpers.CreateAndStartHttpListener ("http://*:", out var port, "/");
 			var c = new TcpClient ("localhost", port);
 			h.Stop ();
 		}
 
 		// Test case for bug #31209
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Test_EmptyLineAtStart ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
-			var listener = HttpListener2Test.CreateAndStartListener ("http://127.0.0.1:" + port + "/");
+			var listener = NetworkHelpers.CreateAndStartHttpListener ("http://127.0.0.1:", out var port, "/");
 			var ns = HttpListener2Test.CreateNS (port);
 
 			HttpListener2Test.Send (ns, "\r\nGET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");

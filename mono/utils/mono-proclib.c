@@ -1,4 +1,5 @@
-/*
+/**
+ * \file
  * Copyright 2008-2011 Novell Inc
  * Copyright 2011 Xamarin Inc
  * Licensed under the MIT license. See LICENSE file in the project root for full license information.
@@ -7,6 +8,7 @@
 #include "config.h"
 #include "utils/mono-proclib.h"
 #include "utils/mono-time.h"
+#include "utils/mono-errno.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,14 +21,20 @@
 #include <sched.h>
 #endif
 
-#ifdef HOST_WIN32
-#include <windows.h>
-#include <process.h>
-#endif
+#include <utils/mono-mmap.h>
+#include <utils/strenc-internals.h>
+#include <utils/strenc.h>
+#include <utils/mono-error-internals.h>
+#include <utils/mono-io-portability.h>
+#include <utils/mono-logger-internals.h>
 
 #if defined(_POSIX_VERSION)
+#ifdef HAVE_SYS_ERRNO_H
 #include <sys/errno.h>
+#endif
+#ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h>
+#endif
 #include <errno.h>
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
@@ -34,7 +42,15 @@
 #ifdef HAVE_SYS_SYSCTL_H
 #include <sys/sysctl.h>
 #endif
+#ifdef HAVE_SYS_RESOURCE_H
 #include <sys/resource.h>
+#endif
+#endif
+#if defined(__HAIKU__)
+#include <os/kernel/OS.h>
+#endif
+#if defined(_AIX)
+#include <procinfo.h>
 #endif
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 #include <sys/proc.h>
@@ -48,6 +64,10 @@
 #    define kinfo_starttime_member kp_proc.p_starttime
 #    define kinfo_pid_member kp_proc.p_pid
 #    define kinfo_name_member kp_proc.p_comm
+#elif defined(__NetBSD__)
+#    define kinfo_starttime_member p_ustart_sec
+#    define kinfo_pid_member p_pid
+#    define kinfo_name_member p_comm
 #elif defined(__OpenBSD__)
 // Can not figure out how to get the proc's start time on OpenBSD
 #    undef kinfo_starttime_member 
@@ -61,12 +81,26 @@
 #define USE_SYSCTL 1
 #endif
 
+#ifdef HAVE_SCHED_GETAFFINITY
+#  ifndef GLIBC_HAS_CPU_COUNT
+static int
+CPU_COUNT(cpu_set_t *set)
+{
+	int i, count = 0;
+
+	for (int i = 0; i < CPU_SETSIZE; i++)
+		if (CPU_ISSET(i, set))
+			count++;
+	return count;
+}
+#  endif
+#endif
+
 /**
  * mono_process_list:
- * @size: a pointer to a location where the size of the returned array is stored
- *
- * Return an array of pid values for the processes currently running on the system.
- * The size of the array is stored in @size.
+ * \param size a pointer to a location where the size of the returned array is stored
+ * \returns an array of pid values for the processes currently running on the system.
+ * The size of the array is stored in \p size.
  */
 gpointer*
 mono_process_list (int *size)
@@ -76,7 +110,7 @@ mono_process_list (int *size)
 #ifdef KERN_PROC2
 	int mib [6];
 	size_t data_len = sizeof (struct kinfo_proc2) * 400;
-	struct kinfo_proc2 *processes = malloc (data_len);
+	struct kinfo_proc2 *processes = g_malloc (data_len);
 #else
 	int mib [4];
 	size_t data_len = sizeof (struct kinfo_proc) * 16;
@@ -101,7 +135,7 @@ mono_process_list (int *size)
 
 	res = sysctl (mib, 6, processes, &data_len, NULL, 0);
 	if (res < 0) {
-		free (processes);
+		g_free (processes);
 		return NULL;
 	}
 #else
@@ -112,13 +146,13 @@ mono_process_list (int *size)
 		mib [2] = KERN_PROC_ALL;
 		mib [3] = 0;
 
-		res = sysctl (mib, 4, NULL, &data_len, NULL, 0);
+		res = sysctl (mib, 3, NULL, &data_len, NULL, 0);
 		if (res)
 			return NULL;
-		processes = (struct kinfo_proc *) malloc (data_len);
-		res = sysctl (mib, 4, processes, &data_len, NULL, 0);
+		processes = (struct kinfo_proc *) g_malloc (data_len);
+		res = sysctl (mib, 3, processes, &data_len, NULL, 0);
 		if (res < 0) {
-			free (processes);
+			g_free (processes);
 			if (errno != ENOMEM)
 				return NULL;
 			limit --;
@@ -136,14 +170,62 @@ mono_process_list (int *size)
 	buf = (void **) g_realloc (buf, res * sizeof (void*));
 	for (i = 0; i < res; ++i)
 		buf [i] = GINT_TO_POINTER (processes [i].kinfo_pid_member);
-	free (processes);
+	g_free (processes);
 	if (size)
 		*size = res;
 	return buf;
 #elif defined(__HAIKU__)
-	/* FIXME: Add back the code from 9185fcc305e43428d0f40f3ee37c8a405d41c9ae */
-	g_assert_not_reached ();
-	return NULL;
+	int32 cookie = 0;
+	int32 i = 0;
+	team_info ti;
+	system_info si;
+
+	get_system_info(&si);
+	void **buf = g_calloc(si.used_teams, sizeof(void*));
+
+	while (get_next_team_info(&cookie, &ti) == B_OK && i < si.used_teams) {
+		buf[i++] = GINT_TO_POINTER (ti.team);
+	}
+	*size = i;
+
+	return buf;
+#elif defined(_AIX)
+	void **buf = NULL;
+	struct procentry64 *procs = NULL;
+	int count = 0;
+	int i = 0;
+	pid_t pid = 1; // start at 1, 0 is a null process (???)
+
+	// count number of procs + compensate for new ones forked in while we do it.
+	// (it's not an atomic operation) 1000000 is the limit IBM ps seems to use
+	// when I inspected it under truss. the second call we do to getprocs64 will
+	// then only allocate what we need, instead of allocating some obscenely large
+	// array on the heap.
+	count = getprocs64(NULL, sizeof (struct procentry64), NULL, 0, &pid, 1000000);
+	if (count < 1)
+		goto cleanup;
+	count += 10;
+	pid = 1; // reset the pid cookie
+
+	// 5026 bytes is the ideal size for the C struct. you may not like it, but
+	// this is what peak allocation looks like
+	procs = g_calloc (count, sizeof (struct procentry64));
+	// the man page recommends you do this in a loop, but you can also just do it
+	// in one shot; again, like what ps does. let the returned count (in case it's
+	// less) be what we then allocate the array of pids from (in case of ANOTHER
+	// system-wide race condition with processes)
+	count = getprocs64 (procs, sizeof (struct procentry64), NULL, 0, &pid, count);
+	if (count < 1 || procs == NULL)
+		goto cleanup;
+	buf = g_calloc (count, sizeof (void*));
+	for (i = 0; i < count; i++) {
+		buf[i] = GINT_TO_POINTER (procs[i].pi_pid);
+	}
+	*size = i;
+
+cleanup:
+	g_free (procs);
+	return buf;
 #else
 	const char *name;
 	void **buf = NULL;
@@ -183,7 +265,7 @@ get_pid_status_item_buf (int pid, const char *item, char *rbuf, int blen, MonoPr
 	char buf [256];
 	char *s;
 	FILE *f;
-	int len = strlen (item);
+	size_t len = strlen (item);
 
 	g_snprintf (buf, sizeof (buf), "/proc/%d/status", pid);
 	f = fopen (buf, "r");
@@ -204,7 +286,7 @@ get_pid_status_item_buf (int pid, const char *item, char *rbuf, int blen, MonoPr
 		while (g_ascii_isspace (*s)) s++;
 		fclose (f);
 		len = strlen (s);
-		strncpy (rbuf, s, MIN (len, blen));
+		memcpy (rbuf, s, MIN (len, blen));
 		rbuf [MIN (len, blen) - 1] = 0;
 		if (error)
 			*error = MONO_PROCESS_ERROR_NONE;
@@ -259,12 +341,11 @@ sysctl_kinfo_proc (gpointer pid, KINFO_PROC* processi)
 
 /**
  * mono_process_get_name:
- * @pid: pid of the process
- * @buf: byte buffer where to store the name of the prcoess
- * @len: size of the buffer @buf
- *
- * Return the name of the process identified by @pid, storing it
- * inside @buf for a maximum of len bytes (including the terminating 0).
+ * \param pid pid of the process
+ * \param buf byte buffer where to store the name of the prcoess
+ * \param len size of the buffer \p buf
+ * \returns the name of the process identified by \p pid, storing it
+ * inside \p buf for a maximum of len bytes (including the terminating 0).
  */
 char*
 mono_process_get_name (gpointer pid, char *buf, int len)
@@ -275,14 +356,22 @@ mono_process_get_name (gpointer pid, char *buf, int len)
 	memset (buf, 0, len);
 
 	if (sysctl_kinfo_proc (pid, &processi))
-		strncpy (buf, processi.kinfo_name_member, len - 1);
+		memcpy (buf, processi.kinfo_name_member, len - 1);
 
+	return buf;
+#elif defined(_AIX)
+	struct procentry64 proc;
+	pid_t newpid = GPOINTER_TO_INT (pid);
+
+	if (getprocs64 (&proc, sizeof (struct procentry64), NULL, 0, &newpid, 1) == 1) {
+		g_strlcpy (buf, proc.pi_comm, len - 1);
+	}
 	return buf;
 #else
 	char fname [128];
 	FILE *file;
 	char *p;
-	int r;
+	size_t r;
 	sprintf (fname, "/proc/%d/cmdline", GPOINTER_TO_INT (pid));
 	buf [0] = 0;
 	file = fopen (fname, "r");
@@ -317,15 +406,23 @@ mono_process_get_times (gpointer pid, gint64 *start_time, gint64 *user_time, gin
 		{
 			KINFO_PROC processi;
 
-			if (sysctl_kinfo_proc (pid, &processi))
+			if (sysctl_kinfo_proc (pid, &processi)) {
+#if defined(__NetBSD__)
+				struct timeval tv;
+				tv.tv_sec = processi.kinfo_starttime_member;
+				tv.tv_usec = processi.p_ustart_usec;
+				*start_time = mono_100ns_datetime_from_timeval(tv);
+#else
 				*start_time = mono_100ns_datetime_from_timeval (processi.kinfo_starttime_member);
+#endif
+			}
 		}
 #endif
 
 		if (*start_time == 0) {
 			static guint64 boot_time = 0;
 			if (!boot_time)
-				boot_time = mono_100ns_datetime () - ((guint64)mono_msec_ticks ()) * 10000;
+				boot_time = mono_100ns_datetime () - mono_msec_boottime () * 10000;
 
 			*start_time = boot_time + mono_process_get_data (pid, MONO_PROCESS_ELAPSED);
 		}
@@ -431,7 +528,8 @@ get_process_stat_item (int pid, int pos, int sum, MonoProcessError *error)
 	char buf [512];
 	char *s, *end;
 	FILE *f;
-	int len, i;
+	size_t len;
+	int i;
 	gint64 value;
 
 	g_snprintf (buf, sizeof (buf), "/proc/%d/stat", pid);
@@ -481,7 +579,7 @@ get_user_hz (void)
 {
 	static int user_hz = 0;
 	if (user_hz == 0) {
-#ifdef _SC_CLK_TCK
+#if defined (_SC_CLK_TCK) && defined (HAVE_SYSCONF)
 		user_hz = sysconf (_SC_CLK_TCK);
 #endif
 		if (user_hz == 0)
@@ -510,8 +608,8 @@ get_pid_status_item (int pid, const char *item, MonoProcessError *error, int mul
 	
 	gint64 ret;
 	task_t task;
-	struct task_basic_info t_info;
-	mach_msg_type_number_t th_count = TASK_BASIC_INFO_COUNT;
+	task_vm_info_data_t t_info;
+	mach_msg_type_number_t info_count = TASK_VM_INFO_COUNT;
 	kern_return_t mach_ret;
 
 	if (pid == getpid ()) {
@@ -527,7 +625,7 @@ get_pid_status_item (int pid, const char *item, MonoProcessError *error, int mul
 	}
 
 	do {
-		mach_ret = task_info (task, TASK_BASIC_INFO, (task_info_t)&t_info, &th_count);
+		mach_ret = task_info (task, TASK_VM_INFO, (task_info_t)&t_info, &info_count);
 	} while (mach_ret == KERN_ABORTED);
 
 	if (mach_ret != KERN_SUCCESS) {
@@ -536,12 +634,29 @@ get_pid_status_item (int pid, const char *item, MonoProcessError *error, int mul
 		RET_ERROR (MONO_PROCESS_ERROR_OTHER);
 	}
 
-	if (strcmp (item, "VmRSS") == 0 || strcmp (item, "VmHWM") == 0 || strcmp (item, "VmData") == 0)
+	if(strcmp (item, "VmData") == 0)
+		ret = t_info.internal + t_info.compressed;
+	else if (strcmp (item, "VmRSS") == 0)
 		ret = t_info.resident_size;
+	else if(strcmp (item, "VmHWM") == 0)
+		ret = t_info.resident_size_peak;
 	else if (strcmp (item, "VmSize") == 0 || strcmp (item, "VmPeak") == 0)
 		ret = t_info.virtual_size;
-	else if (strcmp (item, "Threads") == 0)
+	else if (strcmp (item, "Threads") == 0) {
+		struct task_basic_info t_info;
+		mach_msg_type_number_t th_count = TASK_BASIC_INFO_COUNT;
+		do {
+			mach_ret = task_info (task, TASK_BASIC_INFO, (task_info_t)&t_info, &th_count);
+		} while (mach_ret == KERN_ABORTED);
+
+		if (mach_ret != KERN_SUCCESS) {
+			if (pid != getpid ())
+				mach_port_deallocate (mach_task_self (), task);
+			RET_ERROR (MONO_PROCESS_ERROR_OTHER);
+		}
 		ret = th_count;
+	} else if (strcmp (item, "VmSwap") == 0)
+		ret = t_info.compressed;
 	else
 		ret = 0;
 
@@ -562,11 +677,10 @@ get_pid_status_item (int pid, const char *item, MonoProcessError *error, int mul
 
 /**
  * mono_process_get_data:
- * @pid: pid of the process
- * @data: description of data to return
- *
- * Return a data item of a process like user time, memory use etc,
- * according to the @data argumet.
+ * \param pid pid of the process
+ * \param data description of data to return
+ * \returns a data item of a process like user time, memory use etc,
+ * according to the \p data argumet.
  */
 gint64
 mono_process_get_data_with_error (gpointer pid, MonoProcessData data, MonoProcessError *error)
@@ -625,32 +739,27 @@ mono_process_get_data (gpointer pid, MonoProcessData data)
 	return mono_process_get_data_with_error (pid, data, &error);
 }
 
+#ifndef HOST_WIN32
 int
 mono_process_current_pid ()
 {
 #if defined(HAVE_UNISTD_H)
 	return (int) getpid ();
-#elif defined(HOST_WIN32)
-	return (int) GetCurrentProcessId ();
 #else
 #error getpid
 #endif
 }
+#endif /* !HOST_WIN32 */
 
 /**
  * mono_cpu_count:
- *
- * Return the number of processors on the system.
+ * \returns the number of processors on the system.
  */
+#ifndef HOST_WIN32
 int
 mono_cpu_count (void)
 {
-#ifdef HOST_WIN32
-	SYSTEM_INFO info;
-	GetSystemInfo (&info);
-	return info.dwNumberOfProcessors;
-#else
-#ifdef PLATFORM_ANDROID
+#ifdef HOST_ANDROID
 	/* Android tries really hard to save power by powering off CPUs on SMP phones which
 	 * means the normal way to query cpu count returns a wrong value with userspace API.
 	 * Instead we use /sys entries to query the actual hardware CPU count.
@@ -718,7 +827,7 @@ mono_cpu_count (void)
  * * use sched_getaffinity (+ fallback to _SC_NPROCESSORS_ONLN in case of error) on x86. This
  * ensures we're inline with what OpenJDK [4] and CoreCLR [5] do
  * * use _SC_NPROCESSORS_CONF exclusively on ARM (I think we could eventually even get rid of
- * the PLATFORM_ANDROID special case)
+ * the HOST_ANDROID special case)
  *
  * Helpful links:
  *
@@ -729,9 +838,11 @@ mono_cpu_count (void)
  * [5] https://github.com/dotnet/coreclr/blob/7058273693db2555f127ce16e6b0c5b40fb04867/src/pal/src/misc/sysinfo.cpp#L148
  */
 
-#ifdef _SC_NPROCESSORS_CONF
+
+#if defined (_SC_NPROCESSORS_CONF) && defined (HAVE_SYSCONF)
 	{
-		int count = sysconf (_SC_NPROCESSORS_CONF);
+		int count;
+		count = sysconf (_SC_NPROCESSORS_CONF);
 		if (count > 0)
 			return count;
 	}
@@ -746,7 +857,7 @@ mono_cpu_count (void)
 			return CPU_COUNT (&set);
 	}
 #endif
-#ifdef _SC_NPROCESSORS_ONLN
+#if defined (_SC_NPROCESSORS_ONLN) && defined (HAVE_SYSCONF)
 	{
 		int count = sysconf (_SC_NPROCESSORS_ONLN);
 		if (count > 0)
@@ -767,23 +878,60 @@ mono_cpu_count (void)
 			return count;
 	}
 #endif
-#endif /* HOST_WIN32 */
 	/* FIXME: warn */
 	return 1;
 }
+
+/**
+ * mono_cpu_limit:
+ * \returns the number of processors available to this process
+ */
+int
+mono_cpu_limit (void)
+{
+	int count = 0;
+	static int limit = -1;	/* Value will be cached for future calls */
+
+	/*
+	 * If 1st time through then check if user has mandated a value and use it,
+	 * otherwise we check for any cgroup limit and use the min of actual number
+	 * and that limit
+	 */ 
+	if (limit == -1) {
+		char *dotnetProcCnt = getenv ("DOTNET_PROCESSOR_COUNT");
+		if (dotnetProcCnt != NULL) {
+			errno = 0;
+			limit = (int) strtol (dotnetProcCnt, NULL, 0);
+			if ((errno == 0) && (limit > 0))	/* If it's in range and positive */
+				return limit;
+		}
+		limit = mono_cpu_count ();
+#if HAVE_CGROUP_SUPPORT
+		if (mono_get_cpu_limit (&count))
+			limit = (limit < count ? limit : count);
+#endif
+	}
+
+	/*
+	 * Just return the cached value
+	 */
+	return limit;
+
+}
+#endif /* !HOST_WIN32 */
 
 static void
 get_cpu_times (int cpu_id, gint64 *user, gint64 *systemt, gint64 *irq, gint64 *sirq, gint64 *idle)
 {
 	char buf [256];
 	char *s;
-	int hz = get_user_hz ();
+	int uhz = get_user_hz ();
 	guint64	user_ticks = 0, nice_ticks = 0, system_ticks = 0, idle_ticks = 0, irq_ticks = 0, sirq_ticks = 0;
 	FILE *f = fopen ("/proc/stat", "r");
 	if (!f)
 		return;
 	if (cpu_id < 0)
-		hz *= mono_cpu_count ();
+		uhz *= mono_cpu_limit ();
 	while ((s = fgets (buf, sizeof (buf), f))) {
 		char *data = NULL;
 		if (cpu_id < 0 && strncmp (s, "cpu", 3) == 0 && g_ascii_isspace (s [3])) {
@@ -808,22 +956,21 @@ get_cpu_times (int cpu_id, gint64 *user, gint64 *systemt, gint64 *irq, gint64 *s
 	fclose (f);
 
 	if (user)
-		*user = (user_ticks + nice_ticks) * 10000000 / hz;
+		*user = (user_ticks + nice_ticks) * 10000000 / uhz;
 	if (systemt)
-		*systemt = (system_ticks) * 10000000 / hz;
+		*systemt = (system_ticks) * 10000000 / uhz;
 	if (irq)
-		*irq = (irq_ticks) * 10000000 / hz;
+		*irq = (irq_ticks) * 10000000 / uhz;
 	if (sirq)
-		*sirq = (sirq_ticks) * 10000000 / hz;
+		*sirq = (sirq_ticks) * 10000000 / uhz;
 	if (idle)
-		*idle = (idle_ticks) * 10000000 / hz;
+		*idle = (idle_ticks) * 10000000 / uhz;
 }
 
 /**
  * mono_cpu_get_data:
- * @cpu_id: processor number or -1 to get a summary of all the processors
- * @data: type of data to retrieve
- *
+ * \param cpu_id processor number or -1 to get a summary of all the processors
+ * \param data type of data to retrieve
  * Get data about a processor on the system, like time spent in user space or idle time.
  */
 gint64
@@ -860,13 +1007,139 @@ mono_cpu_get_data (int cpu_id, MonoCpuData data, MonoProcessError *error)
 int
 mono_atexit (void (*func)(void))
 {
-#ifdef PLATFORM_ANDROID
+#if defined(HOST_ANDROID) || !defined(HAVE_ATEXIT)
 	/* Some versions of android libc doesn't define atexit () */
 	return 0;
 #else
 	return atexit (func);
 #endif
 }
+
+#ifndef HOST_WIN32
+
+gboolean
+mono_pe_file_time_date_stamp (const gunichar2 *filename, guint32 *out)
+{
+	void *map_handle;
+	guint32 map_size;
+	gpointer file_map = mono_pe_file_map (filename, &map_size, &map_handle);
+	if (!file_map)
+		return FALSE;
+
+	/* Figure this out when we support 64bit PE files */
+	if (1) {
+		IMAGE_DOS_HEADER *dos_header = (IMAGE_DOS_HEADER *)file_map;
+		if (dos_header->e_magic != IMAGE_DOS_SIGNATURE) {
+			mono_pe_file_unmap (file_map, map_handle);
+			return FALSE;
+		}
+
+		IMAGE_NT_HEADERS32 *nt_headers = (IMAGE_NT_HEADERS32 *)((guint8 *)file_map + GUINT32_FROM_LE (dos_header->e_lfanew));
+		if (nt_headers->Signature != IMAGE_NT_SIGNATURE) {
+			mono_pe_file_unmap (file_map, map_handle);
+			return FALSE;
+		}
+
+		*out = nt_headers->FileHeader.TimeDateStamp;
+	} else {
+		g_assert_not_reached ();
+	}
+
+	mono_pe_file_unmap (file_map, map_handle);
+	return TRUE;
+}
+
+gpointer
+mono_pe_file_map (const gunichar2 *filename, guint32 *map_size, void **handle)
+{
+	gchar *filename_ext = NULL;
+	gchar *located_filename = NULL;
+	guint64 fsize = 0;
+	gpointer file_map = NULL;
+	ERROR_DECL (error);
+	MonoFileMap *filed = NULL;
+
+	/* According to the MSDN docs, a search path is applied to
+	 * filename.  FIXME: implement this, for now just pass it
+	 * straight to open
+	 */
+
+	filename_ext = mono_unicode_to_external_checked (filename, error);
+	// This block was added to diagnose https://github.com/mono/mono/issues/14730, remove after resolved
+	if (G_UNLIKELY (filename_ext == NULL)) {
+		GString *raw_bytes = g_string_new (NULL);
+		const gunichar2 *p = filename;
+		while (*p)
+			g_string_append_printf (raw_bytes, "%04X ", *p++);
+		g_assertf (filename_ext != NULL, "%s: unicode conversion returned NULL; %s; input was: %s", __func__, mono_error_get_message (error), raw_bytes->str);
+		g_string_free (raw_bytes, TRUE);
+	}
+	if (filename_ext == NULL) {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: unicode conversion returned NULL; %s", __func__, mono_error_get_message (error));
+		mono_error_cleanup (error);
+		goto exit;
+	}
+
+	if ((filed = mono_file_map_open (filename_ext)) == NULL && IS_PORTABILITY_SET) {
+		gint saved_errno = errno;
+
+		located_filename = mono_portability_find_file (filename_ext, TRUE);
+		if (!located_filename) {
+			mono_set_errno (saved_errno);
+
+			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error opening file %s (3): %s", __func__, filename_ext, strerror (errno));
+			goto exit;
+		}
+
+		if ((filed = mono_file_map_open (located_filename)) == NULL) {
+			mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error opening file %s (3): %s", __func__, located_filename, strerror (errno));
+			goto exit;
+		}
+	}
+	else if (filed == NULL) {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error opening file %s (3): %s", __func__, filename_ext, strerror (errno));
+		goto exit;
+	}
+
+	fsize = mono_file_map_size (filed);
+	if (fsize == 0) {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error stat()ing file %s: %s", __func__, filename_ext, strerror (errno));
+		goto exit;
+	}
+	g_assert (fsize <= G_MAXUINT32);
+	*map_size = fsize;
+
+	/* Check basic file size */
+	if (fsize < sizeof(IMAGE_DOS_HEADER)) {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: File %s is too small: %" PRId64, __func__, filename_ext, fsize);
+
+		goto exit;
+	}
+
+	file_map = mono_file_map (fsize, MONO_MMAP_READ | MONO_MMAP_PRIVATE, mono_file_map_fd (filed), 0, handle);
+	if (file_map == NULL) {
+		mono_trace (G_LOG_LEVEL_DEBUG, MONO_TRACE_IO_LAYER_PROCESS, "%s: Error mmap()int file %s: %s", __func__, filename_ext, strerror (errno));
+		goto exit;
+	}
+exit:
+	if (filed)
+		mono_file_map_close (filed);
+	g_free (located_filename);
+	g_free (filename_ext);
+	return file_map;
+}
+
+void
+mono_pe_file_unmap (gpointer file_map, void *handle)
+{
+	gint res;
+
+	res = mono_file_unmap (file_map, handle);
+	if (G_UNLIKELY (res != 0))
+		g_error ("%s: mono_file_unmap failed, error: \"%s\" (%d)", __func__, g_strerror (errno), errno);
+}
+
+#endif /* HOST_WIN32 */
 
 /*
  * This function returns the cpu usage in percentage,
@@ -877,14 +1150,14 @@ mono_atexit (void (*func)(void))
  * battery and performance reasons, shut down cores and
  * lie about the number of active cores.
  */
+#ifndef HOST_WIN32
 gint32
 mono_cpu_usage (MonoCpuUsageState *prev)
 {
 	gint32 cpu_usage = 0;
+#ifdef HAVE_GETRUSAGE
 	gint64 cpu_total_time;
 	gint64 cpu_busy_time;
-
-#ifndef HOST_WIN32
 	struct rusage resource_usage;
 	gint64 current_time;
 	gint64 kernel_time;
@@ -900,35 +1173,17 @@ mono_cpu_usage (MonoCpuUsageState *prev)
 	user_time = resource_usage.ru_utime.tv_sec * 1000 * 1000 * 10 + resource_usage.ru_utime.tv_usec * 10;
 
 	cpu_busy_time = (user_time - (prev ? prev->user_time : 0)) + (kernel_time - (prev ? prev->kernel_time : 0));
-	cpu_total_time = (current_time - (prev ? prev->current_time : 0)) * mono_cpu_count ();
+	cpu_total_time = (current_time - (prev ? prev->current_time : 0)) * mono_cpu_limit ();
 
 	if (prev) {
 		prev->kernel_time = kernel_time;
 		prev->user_time = user_time;
 		prev->current_time = current_time;
 	}
-#else
-	guint64 idle_time;
-	guint64 kernel_time;
-	guint64 user_time;
-
-	if (!GetSystemTimes ((FILETIME*) &idle_time, (FILETIME*) &kernel_time, (FILETIME*) &user_time)) {
-		g_error ("GetSystemTimes() failed, error code is %d\n", GetLastError ());
-		return -1;
-	}
-
-	cpu_total_time = (gint64)((user_time - (prev ? prev->user_time : 0)) + (kernel_time - (prev ? prev->kernel_time : 0)));
-	cpu_busy_time = (gint64)(cpu_total_time - (idle_time - (prev ? prev->idle_time : 0)));
-
-	if (prev) {
-		prev->idle_time = idle_time;
-		prev->kernel_time = kernel_time;
-		prev->user_time = user_time;
-	}
-#endif
 
 	if (cpu_total_time > 0 && cpu_busy_time > 0)
 		cpu_usage = (gint32)(cpu_busy_time * 100 / cpu_total_time);
-
+#endif
 	return cpu_usage;
 }
+#endif /* !HOST_WIN32 */

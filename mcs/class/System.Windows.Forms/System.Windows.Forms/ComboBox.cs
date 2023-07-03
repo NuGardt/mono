@@ -98,7 +98,8 @@ namespace System.Windows.Forms
 			items = new ObjectCollection (this);
 			DropDownStyle = ComboBoxStyle.DropDown;
 			item_height = FontHeight + 2;
-			background_color = ThemeEngine.Current.ColorControl;
+			background_color = ThemeEngine.Current.ColorWindow;
+			foreground_color = ThemeEngine.Current.ColorWindowText;
 			border_style = BorderStyle.None;
 
 			drop_down_height = default_drop_down_height;
@@ -111,7 +112,9 @@ namespace System.Windows.Forms
 			MouseWheel += new MouseEventHandler (OnMouseWheelCB);
 			MouseEnter += new EventHandler (OnMouseEnter);
 			MouseLeave += new EventHandler (OnMouseLeave);
-			KeyDown +=new KeyEventHandler(OnKeyDownCB);
+			KeyDown += new KeyEventHandler (OnKeyDownCB);
+
+			can_cache_preferred_size = true;
 		}
 
 		#region events
@@ -764,7 +767,8 @@ namespace System.Windows.Forms
 
 				// set directly the passed value
 				if (dropdown_style != ComboBoxStyle.DropDownList)
-					textbox_ctrl.Text = value;
+					if (textbox_ctrl != null)
+						textbox_ctrl.Text = value;
 			}
 		}
 
@@ -1111,7 +1115,7 @@ namespace System.Windows.Forms
 		{
 			base.OnHandleCreated (e);
 
-			SetBoundsInternal (Left, Top, Width, PreferredHeight, BoundsSpecified.None);
+			SetBoundsCore (Left, Top, Width, PreferredHeight, BoundsSpecified.None);
 
 			if (textbox_ctrl != null)
 				Controls.AddImplicit (textbox_ctrl);
@@ -1691,7 +1695,7 @@ namespace System.Windows.Forms
 			}
 		}
 
-		void SetSelectedIndex (int value, bool supressAutoScroll)
+		void SetSelectedIndex (int value, bool supressAutoScroll, bool triggerEvents = true)
 		{
 			if (selected_index == value)
 				return;
@@ -1714,9 +1718,11 @@ namespace System.Windows.Forms
 			if (listbox_ctrl != null)
 				listbox_ctrl.HighlightedIndex = value;
 
-			OnSelectedValueChanged (EventArgs.Empty);
-			OnSelectedIndexChanged (EventArgs.Empty);
-			OnSelectedItemChanged (EventArgs.Empty);
+			if (triggerEvents) {
+				OnSelectedValueChanged (EventArgs.Empty);
+				OnSelectedIndexChanged (EventArgs.Empty);
+				OnSelectedItemChanged (EventArgs.Empty);
+			}
 		}
 
 		// If no item is currently selected, and an item is found matching the text 
@@ -1875,6 +1881,8 @@ namespace System.Windows.Forms
 
 		internal void SetControlText (string s, bool suppressTextChanged, bool supressAutoScroll)
 		{
+			if (textbox_ctrl == null)
+				return;
 			if (suppressTextChanged)
 				process_textchanged_event = false;
 			if (supressAutoScroll)
@@ -2128,9 +2136,7 @@ namespace System.Windows.Forms
 					throw new ArgumentOutOfRangeException ("index");
 					
 				if (index < owner.SelectedIndex)
-					--owner.SelectedIndex;
-				else if (index == owner.SelectedIndex)
-					owner.SelectedIndex = -1;
+					owner.SetSelectedIndex (owner.SelectedIndex - 1, false, false);
 
 				object removed = object_items [index];
 
@@ -2419,6 +2425,7 @@ namespace System.Windows.Forms
 
 				SetStyle (ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint, true);
 				SetStyle (ControlStyles.ResizeRedraw | ControlStyles.Opaque, true);
+				SetTopLevel (true);
 
 				this.is_visible = false;
 
@@ -2534,9 +2541,8 @@ namespace System.Windows.Forms
 					}
 				}
 
-				var borderWidth = Hwnd.GetBorderWidth (CreateParams);
 				var borderAdjustment = dropdown_style == ComboBoxStyle.Simple ? new Size (0, 0) :
-					new Size (borderWidth.top + borderWidth.bottom, borderWidth.left + borderWidth.right);
+					SizeFromClientSize(Size.Empty);
 				Size = new Size (width, height + borderAdjustment.Height);
 				textarea_drawable = new Rectangle (ClientRectangle.Location,
 					new Size (width - borderAdjustment.Width, height));
@@ -2773,6 +2779,7 @@ namespace System.Windows.Forms
 				if (this.Location.Y + this.Height >= scrn_rect.Bottom)
 					this.Location = new Point (this.Location.X, this.Location.Y - (this.Height + owner.TextArea.Height));
 				Show ();
+				XplatUI.SetOwner (Handle, owner.Handle);
 
 				Refresh ();
 				owner.OnDropDown (EventArgs.Empty);

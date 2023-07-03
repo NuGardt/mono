@@ -30,11 +30,14 @@ using System.Collections.Generic;
 
 namespace System.Diagnostics.Tracing
 {
-	public abstract class EventListener : IDisposable
+	public class EventListener : IDisposable
 	{
-		protected EventListener ()
+		public EventListener ()
 		{
 		}
+
+		//public event System.EventHandler<EventSourceCreatedEventArgs> EventSourceCreated;
+		//public event System.EventHandler<EventWrittenEventArgs> EventWritten;
 
 		public static int EventSourceIndex(EventSource eventSource)
 		{
@@ -61,11 +64,18 @@ namespace System.Diagnostics.Tracing
 		{
 		}
 
-		protected internal abstract void OnEventWritten (EventWrittenEventArgs eventData);
+		protected internal virtual void OnEventWritten (EventWrittenEventArgs eventData)
+		{
+		}
 
 		public virtual void Dispose()
 		{
 		}
+
+#pragma warning disable CS0067
+		public event EventHandler<EventSourceCreatedEventArgs> EventSourceCreated;
+		public event EventHandler<EventWrittenEventArgs> EventWritten;
+#pragma warning restore CS0067
 	}
 }
 

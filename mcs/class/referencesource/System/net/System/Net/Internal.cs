@@ -24,6 +24,7 @@ namespace System.Net {
     using System.Net.NetworkInformation;
     using System.Runtime.Serialization;
     using Microsoft.Win32;
+    using System.Collections.Generic;
 
     internal static class IntPtrHelper {
         /*
@@ -142,7 +143,9 @@ namespace System.Net {
 
         private static void DemandCallback(object state)
         {
+#if MONO_FEATURE_CAS
             ((CodeAccessPermission) state).Demand();
+#endif
         }
 
         // This is for checking if a hostname probably refers to this machine without going to DNS.
@@ -172,7 +175,6 @@ namespace System.Net {
         private static volatile IPAddress[] _LocalAddresses;
         private static object _LocalAddressesLock;
 
-#if MONO_NOT_IMPLEMENTED
 #if !FEATURE_PAL
 
         private static volatile NetworkAddressChangePolled s_AddressChange;
@@ -285,6 +287,19 @@ namespace System.Net {
         }
 
 #else // !FEATURE_PAL
+
+        internal static bool IsAddressLocal(IPAddress ipAddress) {
+            IPAddress[] localAddresses = NclUtilities.LocalAddresses;
+            for (int i = 0; i < localAddresses.Length; i++)
+            {
+                if (ipAddress.Equals(localAddresses[i], false))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private const int HostNameBufferLength = 256;
         internal static string _LocalDomainName;
 
@@ -293,6 +308,11 @@ namespace System.Net {
         //
         private static IPHostEntry GetLocalHost()
         {
+#if MONO
+#pragma warning disable 618
+            return Dns.GetHostByName (Dns.GetHostName ());
+#pragma warning restore
+#else
             //
             // IPv6 Changes: If IPv6 is enabled, we can't simply use the
             //               old IPv4 gethostbyname(null). Instead we need
@@ -335,6 +355,7 @@ namespace System.Net {
 
                 return Dns.NativeToHostEntry(nativePointer);
             }
+#endif
 
         } // GetLocalHost
 
@@ -400,7 +421,6 @@ namespace System.Net {
             }
         }
 #endif // !FEATURE_PAL
-#endif
 
         private static object LocalAddressesLock
         {
@@ -426,7 +446,7 @@ namespace System.Net {
     }
     
     //
-    // A simple [....] point, useful for deferring work.  Just an int value with helper methods.
+    // A simple sync point, useful for deferring work.  Just an int value with helper methods.
     // This is used by HttpWebRequest to syncronize Reads/Writes while waiting for a 100-Continue response.
     //
     internal struct InterlockedGate
@@ -935,7 +955,7 @@ namespace System.Net {
         // There are threading tricks a malicious app can use to create an ArraySegment with mismatched 
         // array/offset/count.  Copy locally and make sure they're valid before using them.
         internal static void ValidateSegment(ArraySegment<byte> segment) {
-            if (segment == null || segment.Array == null) {
+            if (/*segment == null ||*/ segment.Array == null) {
                 throw new ArgumentNullException("segment");
             }
             // Length zero is explicitly allowed
@@ -948,7 +968,7 @@ namespace System.Net {
 
     internal static class ExceptionHelper
     {
-#if !DISABLE_CAS_USE
+#if MONO_FEATURE_CAS
         internal static readonly KeyContainerPermission KeyContainerPermissionOpen = new KeyContainerPermission(KeyContainerPermissionFlags.Open);
         internal static readonly WebPermission WebPermissionUnrestricted = new WebPermission(NetworkAccess.Connect);
         internal static readonly SecurityPermission UnmanagedPermission = new SecurityPermission(SecurityPermissionFlag.UnmanagedCode);
@@ -969,6 +989,10 @@ namespace System.Net {
             }
         }
 
+#if MONO
+        internal static WebException TimeoutException => new WebException(SR.net_timeout);
+#endif
+
         internal static NotSupportedException MethodNotSupportedException {
             get {
                 return new NotSupportedException(SR.GetString(SR.net_MethodNotSupportedException));
@@ -981,7 +1005,6 @@ namespace System.Net {
             }
         }
 
-#if MONO_FEATURE_WEB_STACK
         internal static WebException IsolatedException {
             get {
                 return new WebException(NetRes.GetWebStatusString("net_requestaborted", WebExceptionStatus.KeepAliveFailure),WebExceptionStatus.KeepAliveFailure, WebExceptionInternalStatus.Isolated, null);
@@ -1005,7 +1028,6 @@ namespace System.Net {
                 return new WebException(NetRes.GetWebStatusString("net_requestaborted", WebExceptionStatus.RequestProhibitedByCachePolicy), WebExceptionStatus.RequestProhibitedByCachePolicy);
             }
         }
-#endif
     }
 
     internal enum WindowsInstallationType
@@ -1390,6 +1412,7 @@ typedef struct _SCHANNEL_CRED
             ValidateManual  = 0x08,
             NoDefaultCred   = 0x10,
             ValidateAuto    = 0x20,
+            SendAuxRecord   = 0x00200000,
             UseStrongCrypto = 0x00400000,
         }
 
@@ -1450,7 +1473,8 @@ typedef struct _SCHANNEL_CRED
 
 #endif // !FEATURE_PAL
 
-    [StructLayout(LayoutKind.Sequential)]
+#if false
+	[StructLayout(LayoutKind.Sequential)]
     internal unsafe struct SecurityBufferStruct {
         public int          count;
         public BufferType   type;
@@ -1524,6 +1548,7 @@ typedef struct _SCHANNEL_CRED
             GlobalLog.Print("    securityBufferArray = 0x" + (new IntPtr(UnmanagedPointer)).ToString("x"));
         }
     } // SecurityBufferDescriptor
+#endif
 
     internal  enum    CertificateEncoding {
         Zero                     = 0,
@@ -1893,7 +1918,6 @@ typedef struct _SCHANNEL_CRED
         WriteWait = 2,
     }
 
-#if MONO_FEATURE_WEB_STACK
     //
     // HttpVerb - used to define various per Verb Properties
     //
@@ -1964,7 +1988,6 @@ typedef struct _SCHANNEL_CRED
         }
     }
 
-
     //
     // HttpProtocolUtils - A collection of utility functions for HTTP usage.
     //
@@ -1998,7 +2021,6 @@ typedef struct _SCHANNEL_CRED
             return D.ToUniversalTime().ToString("R", dateFormat);
         }
     }
-#endif
 
 #if !FEATURE_PAL
     // Proxy class for linking between ICertificatePolicy <--> ICertificateDecider

@@ -391,7 +391,8 @@ namespace System.Runtime.InteropServices{
         }
         public TypeLibVarFlags Value { get {return _val;} } 
     }   
-
+#endif
+    
     [Serializable]
     [System.Runtime.InteropServices.ComVisible(true)]
     public enum VarEnum
@@ -444,7 +445,7 @@ namespace System.Runtime.InteropServices{
 
     [Serializable]
     [System.Runtime.InteropServices.ComVisible(true)]
-    // Note that this enum should remain in-[....] with the CorNativeType enum in corhdr.h
+    // Note that this enum should remain in-sync with the CorNativeType enum in corhdr.h
     public enum UnmanagedType
     {
         Bool = 0x2,         // 4 byte boolean value (true != 0, false == 0)
@@ -522,7 +523,10 @@ namespace System.Runtime.InteropServices{
         
         [System.Runtime.InteropServices.ComVisible(false)]
         HString          = 0x2f,        // Windows Runtime HSTRING
-    }
+
+        [System.Runtime.InteropServices.ComVisible(false)]
+        LPUTF8Str        = 0x30,        // UTF8 string
+}
 
 #if !MONO
     [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Field | AttributeTargets.ReturnValue, Inherited = false)]
@@ -645,10 +649,7 @@ namespace System.Runtime.InteropServices{
 #endif
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, Inherited = false)]
     [System.Runtime.InteropServices.ComVisible(true)]
-#if !MONOTOUCH
-    public
-#endif
-    sealed class ComImportAttribute : Attribute
+    public sealed class ComImportAttribute : Attribute
     {
         internal static Attribute GetCustomAttribute(RuntimeType type)
         {
@@ -799,7 +800,7 @@ namespace System.Runtime.InteropServices{
             PInvokeAttributes flags = 0;
 
 #if MONO
-            ((MonoMethod)method).GetPInvoke(out flags, out entryPoint, out dllName);
+            ((RuntimeMethodInfo)method).GetPInvoke(out flags, out entryPoint, out dllName);
 #else
             scope.GetPInvokeMap(token, out flags, out entryPoint, out dllName);
 #endif
@@ -881,6 +882,7 @@ namespace System.Runtime.InteropServices{
         public bool ThrowOnUnmappableChar;
 
     }
+
 
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = false)]
     [System.Runtime.InteropServices.ComVisible(true)]
@@ -1066,8 +1068,7 @@ namespace System.Runtime.InteropServices{
         public Type SourceInterface { get {return _SourceInterface;} }       
         public Type EventProvider { get {return _EventProvider;} }
     }
-#endif
-#if FEATURE_COMINTEROP || MOBILE_LEGACY
+
     [AttributeUsage(AttributeTargets.Assembly, Inherited = false)] 
     [System.Runtime.InteropServices.ComVisible(true)]
     public sealed class TypeLibVersionAttribute : Attribute
@@ -1147,7 +1148,7 @@ namespace System.Runtime.InteropServices{
         }
     }
 
-    [AttributeUsage(AttributeTargets.Method, Inherited = false, AllowMultiple = false)]
+    [AttributeUsage(AttributeTargets.Method, Inherited=false)]
     [System.Runtime.InteropServices.ComVisible(false)]
     public sealed class ManagedToNativeComInteropStubAttribute : Attribute
     {
@@ -1163,6 +1164,5 @@ namespace System.Runtime.InteropServices{
         public Type ClassType { get { return _classType; } }
         public String MethodName { get { return _methodName; } }
     }    
-#endif
 #endif
 }

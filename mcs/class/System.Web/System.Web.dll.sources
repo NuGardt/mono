@@ -2,6 +2,7 @@ Assembly/AssemblyInfo.cs
 ../../build/common/Consts.cs
 ../../build/common/Locale.cs
 ../../build/common/MonoTODOAttribute.cs
+../System/System/MonoToolsLocator.cs
 ../System.Windows.Forms/System.Resources/AssemblyNamesTypeResolutionService.cs
 ../System.Windows.Forms/System.Resources/ByteArrayFromResXHandler.cs
 ../System.Windows.Forms/System.Resources/ResXNullRef.cs
@@ -17,6 +18,8 @@ Assembly/AssemblyInfo.cs
 ../System.Windows.Forms/System.Resources/TypeConverterFromResXHandler.cs
 ../System.Windows.Forms/System.Resources/ResXFileRef.cs
 
+ReferenceSources/TelemetryLogger.cs
+
 Mono.Web.Util/ISectionSettingsMapper.cs
 Mono.Web.Util/MembershipSectionMapper.cs
 Mono.Web.Util/RoleManagerSectionMapper.cs
@@ -24,7 +27,6 @@ Mono.Web.Util/SettingsMapping.cs
 Mono.Web.Util/SettingsMappingManager.cs
 Mono.Web.Util/SettingsMappingWhat.cs
 
-ReferenceSources/SR.cs
 System.Web/ApplicationShutdownReason.cs
 System.Web/BeginEventHandler.cs
 System.Web.Caching/AggregateCacheDependency.cs
@@ -290,6 +292,7 @@ System.Web.Hosting/AppManagerAppDomainFactory.cs
 System.Web.Hosting/ApplicationInfo.cs
 System.Web.Hosting/ApplicationHost.cs
 System.Web.Hosting/ApplicationManager.cs
+../referencesource/System.Web/Hosting/BackgroundWorkScheduler.cs
 System.Web.Hosting/BareApplicationHost.cs
 System.Web.Hosting/DefaultVirtualDirectory.cs
 System.Web.Hosting/DefaultVirtualFile.cs
@@ -441,7 +444,7 @@ System.Web.Security/AnonymousIdentificationEventHandler.cs
 System.Web.Security/AnonymousIdentificationModule.cs
 System.Web.Security/CookieProtection.cs
 System.Web.Security/DefaultAuthenticationEventArgs.cs
-System.Web.Security/DefaultAuthenticationEventHandler.cs
+../referencesource/System.Web/Security/GenericAuthenticationEventHandler.cs
 System.Web.Security/DefaultAuthenticationModule.cs
 System.Web.Security/FileAuthorizationModule.cs
 System.Web.Security/FormsAuthentication.cs
@@ -530,7 +533,7 @@ System.Web.UI/CodeBuilder.cs
 System.Web.UI/CodeConstructType.cs
 System.Web.UI/CodeRenderBuilder.cs
 System.Web.UI/CollectionBuilder.cs
-System.Web.UI/CompilationMode.cs
+../referencesource/System.Web/UI/PagesConfiguration.cs
 System.Web.UI/CompiledBindableTemplateBuilder.cs
 System.Web.UI/CompiledTemplateBuilder.cs
 System.Web.UI/ComplexPropertyEntry.cs
@@ -556,7 +559,7 @@ System.Web.UI/DataSourceCacheDurationConverter.cs
 ../referencesource/System.Web/UI/DataSourceCacheExpiry.cs
 ../referencesource/System.Web/UI/DataSourceCapabilities.cs
 System.Web.UI/DataSourceControl.cs
-System.Web.UI/DataSourceControlBuilder.cs
+../referencesource/System.Web/UI/DataSourceControlBuilder.cs
 ../referencesource/System.Web/UI/DataSourceOperation.cs
 System.Web.UI/DataSourceSelectArguments.cs
 System.Web.UI/DataSourceView.cs
@@ -565,8 +568,8 @@ System.Web.UI/DataSourceViewSelectCallback.cs
 System.Web.UI/DesignerDataBoundLiteralControl.cs
 System.Web.UI/DesignTimeParseData.cs
 System.Web.UI/DesignTimeTemplateParser.cs
-System.Web.UI/EmptyControlCollection.cs
-System.Web.UI/EventEntry.cs
+../referencesource/System.Web/UI/EmptyControlCollection.cs
+../referencesource/System.Web/UI/EventEntry.cs
 System.Web.UI/ExpressionBindingCollection.cs
 System.Web.UI/ExpressionBinding.cs
 System.Web.UI/ExtractTemplateValuesMethod.cs
@@ -629,16 +632,15 @@ System.Web.UI/HtmlTextWriter.cs
 ../referencesource/System.Web/UI/IDataSource.cs
 ../referencesource/System.Web/UI/IDataSourceViewSchemaAccessor.cs
 ../referencesource/System.Web/UI/IDReferencePropertyAttribute.cs
-../referencesource/System.Web/UI/WebControls/IEditableTextControl.cs
 ../referencesource/System.Web/UI/IExpressionsAccessor.cs
 ../referencesource/System.Web/UI/IFilterResolutionService.cs
 System.Web.UI/IgnoreUnknownContentAttribute.cs
 ../referencesource/System.Web/UI/IHierarchicalDataSource.cs
 ../referencesource/System.Web/UI/IHierarchicalEnumerable.cs
 ../referencesource/System.Web/UI/IHierarchyData.cs
-System.Web.UI/ImageClickEventArgs.cs
+../referencesource/System.Web/UI/ImageClickEventArgs.cs
 ../referencesource/System.Web/UI/ImageClickEventHandler.cs
-System.Web.UI/IndexedString.cs
+../referencesource/System.Web/UI/IndexedString.cs
 ../referencesource/System.Web/UI/INamingContainer.cs
 ../referencesource/System.Web/UI/INonBindingContainer.cs
 ../referencesource/System.Web/UI/INavigateUIData.cs
@@ -687,7 +689,7 @@ System.Web.UI/PageTheme.cs
 System.Web.UI/PageThemeBuilder.cs
 System.Web.UI/PageThemeFileParser.cs
 System.Web.UI/PageThemeParser.cs
-System.Web.UI/Pair.cs
+../referencesource/System.Web/UI/Pair.cs
 System.Web.UI/ParseChildrenAttribute.cs
 System.Web.UI/PartialCachingAttribute.cs
 System.Web.UI/PartialCachingControl.cs
@@ -977,7 +979,7 @@ System.Web.UI.WebControls/Login.cs
 ../referencesource/System.Web/UI/WebControls/LoginFailureAction.cs
 System.Web.UI.WebControls/LoginName.cs
 System.Web.UI.WebControls/LoginStatus.cs
-System.Web.UI.WebControls/LoginTextLayout.cs
+../referencesource/System.Web/UI/WebControls/Logintextlayout.cs
 System.Web.UI.WebControls/LoginView.cs
 ../referencesource/System.Web/UI/WebControls/LogoutAction.cs
 System.Web.UI.WebControls/MailDefinition.cs
@@ -1003,7 +1005,7 @@ System.Web.UI.WebControls/ObjectDataSource.cs
 ../referencesource/System.Web/UI/WebControls/ObjectDataSourceDisposingEventArgs.cs
 ../referencesource/System.Web/UI/WebControls/ObjectDataSourceDisposingEventHandler.cs
 ../referencesource/System.Web/UI/WebControls/ObjectDataSourceEventArgs.cs
-System.Web.UI.WebControls/ObjectDataSourceEventHandler.cs
+../referencesource/System.Web/UI/WebControls/ObjectDataSourceObjectEventHandler.cs
 ../referencesource/System.Web/UI/WebControls/ObjectDataSourceFilteringEventArgs.cs
 ../referencesource/System.Web/UI/WebControls/ObjectDataSourceFilteringEventHandler.cs
 ../referencesource/System.Web/UI/WebControls/ObjectDataSourceMethodEventArgs.cs
@@ -1048,11 +1050,11 @@ System.Web.UI.WebControls/RepeatInfo.cs
 System.Web.UI.WebControls/RequiredFieldValidator.cs
 System.Web.UI.WebControls/RoleGroup.cs
 System.Web.UI.WebControls/RoleGroupCollection.cs
-System.Web.UI.WebControls/ScrollBars.cs
+../referencesource/System.Web/UI/WebControls/Scrollbars.cs
 System.Web.UI.WebControls/SelectedDatesCollection.cs
 System.Web.UI.WebControls/SendMailErrorEventArgs.cs
 ../referencesource/System.Web/UI/WebControls/SendMailErrorEventHandler.cs
-System.Web.UI.WebControls/ServerValidateEventArgs.cs
+../referencesource/System.Web/UI/WebControls/ServerValidateEventArgs.cs
 ../referencesource/System.Web/UI/WebControls/ServerValidateEventHandler.cs
 System.Web.UI.WebControls/SessionParameter.cs
 System.Web.UI.WebControls/SiteMapDataSource.cs
@@ -1088,9 +1090,9 @@ System.Web.UI.WebControls/TableCellCollection.cs
 System.Web.UI.WebControls/TableCellControlBuilder.cs
 System.Web.UI.WebControls/TableCell.cs
 System.Web.UI.WebControls/Table.cs
-System.Web.UI.WebControls/TableFooterRow.cs
+../referencesource/System.Web/UI/WebControls/TableFooterRow.cs
 System.Web.UI.WebControls/TableHeaderCell.cs
-System.Web.UI.WebControls/TableHeaderRow.cs
+../referencesource/System.Web/UI/WebControls/TableHeaderRow.cs
 ../referencesource/System.Web/UI/WebControls/TableHeaderScope.cs
 System.Web.UI.WebControls/TableItemStyle.cs
 System.Web.UI.WebControls/TableRowCollection.cs
@@ -1116,7 +1118,7 @@ System.Web.UI.WebControls/TreeNode.cs
 ../referencesource/System.Web/UI/WebControls/TreeNodeSelectAction.cs
 System.Web.UI.WebControls/TreeNodeStyleCollection.cs
 System.Web.UI.WebControls/TreeNodeStyle.cs
-System.Web.UI.WebControls/TreeNodeTypes.cs
+../referencesource/System.Web/UI/WebControls/TreeNodeType.cs
 System.Web.UI.WebControls/TreeView.cs
 ../referencesource/System.Web/UI/WebControls/TreeViewImageSet.cs
 System.Web.UI.WebControls/UnitConverter.cs
@@ -1182,8 +1184,8 @@ System.Web.UI.WebControls/WizardNavigationEventHandler.cs
 System.Web.UI.WebControls/WizardStepBase.cs
 System.Web.UI.WebControls/WizardStepCollection.cs
 System.Web.UI.WebControls/WizardStepControlBuilder.cs
-System.Web.UI.WebControls/WizardStep.cs
-System.Web.UI.WebControls/WizardStepType.cs
+../referencesource/System.Web/UI/WebControls/WizardStep.cs
+../referencesource/System.Web/UI/WebControls/WizardStepType.cs
 System.Web.UI.WebControls/XmlBuilder.cs
 System.Web.UI.WebControls/Xml.cs
 System.Web.UI.WebControls/XmlDataSource.cs
@@ -1200,6 +1202,7 @@ System.Web.UI/XhtmlMobileDocType.cs
 System.Web.UI/XhtmlTextWriter.cs
 System.Web.UI/XPathBinder.cs
 System.Web.Util/AltSerialization.cs
+../referencesource/System.Web/Util/CancellationTokenHelper.cs
 System.Web.Util/DataSourceHelper.cs
 System.Web.Util/DataSourceResolver.cs
 System.Web.Util/FileUtils.cs
@@ -1402,6 +1405,7 @@ ReferenceSources/SR.cs
 ../referencesource/System.Web/Hosting/IProcessHostSupportFunctions.cs
 ../referencesource/System.Web/Hosting/HTTP_COOKED_URL.cs
 ../referencesource/System.Web/Hosting/HostingEnvironmentException.cs
+../referencesource/System.Web/Util/Debug.cs
 ../referencesource/System.Web/Util/SynchronizationContextMode.cs
 ../referencesource/System.Web/Util/ISyncContextLock.cs
 ../referencesource/System.Web/Util/DoNotResetAttribute.cs

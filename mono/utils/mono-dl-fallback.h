@@ -1,3 +1,7 @@
+/**
+ * \file
+ */
+
 #ifndef __MONO_UTILS_DL_FALLBACK_H__
 #define __MONO_UTILS_DL_FALLBACK_H__
 
@@ -6,10 +10,14 @@
 MONO_BEGIN_DECLS
 
 enum {
-	MONO_DL_EAGER = 0,
-	MONO_DL_LAZY  = 1,
-	MONO_DL_LOCAL = 2,
-	MONO_DL_MASK  = 3
+	MONO_DL_EAGER  = 0,
+	MONO_DL_LAZY   = 1,
+	// If MONO_DL_LOCAL is set, it will trump MONO_DL_GLOBAL.
+	MONO_DL_LOCAL  = 2,
+	// MONO_DL_MASK is unused internally and no longer a full mask on netcore, given the introduction of MONO_DL_GLOBAL. Avoid.
+	MONO_DL_MASK   = 3,
+	// Only applicable when building Mono in netcore mode.
+	MONO_DL_GLOBAL = 4
 };
 
 /*

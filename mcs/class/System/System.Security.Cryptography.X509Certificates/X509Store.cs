@@ -40,7 +40,7 @@ using System.Security.Permissions;
 
 namespace System.Security.Cryptography.X509Certificates {
 
-	public sealed class X509Store {
+	public sealed class X509Store : IDisposable {
 
 		private string _name;
 		private StoreLocation _location;
@@ -87,6 +87,18 @@ namespace System.Security.Cryptography.X509Certificates {
 				break;
 			}
 			_location = storeLocation;
+		}
+
+		public X509Store (StoreName storeName, StoreLocation storeLocation, OpenFlags openFlags) 
+			: this (storeName, storeLocation)
+		{
+			_flags = openFlags;
+		}
+
+		public X509Store (string storeName, StoreLocation storeLocation, OpenFlags openFlags) 
+			: this (storeName, storeLocation)
+		{
+			_flags = openFlags;
 		}
 
 		[MonoTODO ("Mono's stores are fully managed. All handles are invalid.")]
@@ -137,7 +149,7 @@ namespace System.Security.Cryptography.X509Certificates {
 			}
 		}
 
-		private bool IsOpen {
+		public bool IsOpen {
 			get { return (store != null); }
 		}
 
@@ -208,6 +220,11 @@ namespace System.Security.Cryptography.X509Certificates {
 				list.Clear ();
 		}
 
+		public void Dispose ()
+		{
+			Close ();
+		}
+
 		public void Open (OpenFlags flags)
 		{
 			if (String.IsNullOrEmpty (_name))
@@ -232,7 +249,7 @@ namespace System.Security.Cryptography.X509Certificates {
 
 			foreach (MX.X509Certificate x in store.Certificates) {
 				var cert2 = new X509Certificate2 (x.RawData);
-				cert2.PrivateKey = x.RSA;
+				cert2.Impl.PrivateKey = x.RSA;
 				Certificates.Add (cert2);
 			}
 		}

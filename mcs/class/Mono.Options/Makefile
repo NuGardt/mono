@@ -8,6 +8,7 @@ LIBRARY_PACKAGE = none
 NO_INSTALL = yes
 
 LIB_REFS = System
+KEYFILE = ../mono.pub
 LIB_MCS_FLAGS =
 TEST_MCS_FLAGS =
 TEST_LIB_REFS = Mono.Posix System System.Core
@@ -16,6 +17,16 @@ mono_sourcelibs_DIR  = $(DESTDIR)$(mono_libdir)/mono-source-libs
 mono_options_DATA = Mono.Options/Options.cs
 
 include ../../build/library.make
+
+test-local: Mono.Options-PCL.dll
+
+clean-local: clean-pcl
+
+Mono.Options-PCL.dll: Mono.Options.dll.sources $(shell cat Mono.Options.dll.sources)
+	$(CSCOMPILE) -target:library -out:$@ -d:PCL -r:../lib/$(PROFILE)/mscorlib.dll -r:../lib/$(PROFILE)/System.dll @$<
+
+clean-pcl:
+	-rm Mono.Options-PCL.dll
 
 install-local: install-source
 
@@ -35,6 +46,7 @@ fixup-docs:
 
 DOC_EXAMPLES_OUTPUT = \
 	Documentation/en/examples/bundling.txt \
+	Documentation/en/examples/commands.txt \
 	Documentation/en/examples/context.txt \
 	Documentation/en/examples/greet.txt \
 	Documentation/en/examples/localization.txt \
@@ -44,10 +56,11 @@ $(the_libdir)/.doc-stamp: $(DOC_EXAMPLES_OUTPUT)
 
 Documentation/en/examples/Mono.Options.dll: $(the_lib)
 	cp $^ $@
-	-cp $^.mdb $@.mdb
 
 %.exe: %.cs Documentation/en/examples/Mono.Options.dll
-	$(CSCOMPILE) -debug+ -r:Mono.Posix.dll -r:System.Core.dll -lib:Documentation/en/examples -r:Mono.Options.dll -out:$@ $<
+	$(CSCOMPILE) -debug:portable -r:$(topdir)/class/lib/$(PROFILE)/Mono.Posix.dll -r:$(topdir)/class/lib/$(PROFILE)/System.Core.dll -r:$(topdir)/class/lib/$(PROFILE)/System.dll \
+	-r:$(topdir)/class/lib/$(PROFILE)/mscorlib.dll \
+	-r:$(topdir)/class/lib/$(PROFILE)/Mono.Options.dll -out:$@ $<
 
 Documentation/en/examples/locale/es/LC_MESSAGES/localization.mo: Documentation/en/examples/localization-es.po
 	msgfmt $< -o $@
@@ -60,7 +73,8 @@ Documentation/en/examples/localization.exe: Documentation/en/examples/locale/es/
 	while read line 0<&3 ; do \
 		if test -n "$$line" ; then \
 			echo "$$ $$line" | sed 's#Documentation/en/examples/##' >> $@ ; \
-			sh -c "$$line" >> $@ 2>&1 ; \
+			cmd=`echo "$$line" | sed 's,mono ,MONO_PATH="$(topdir)/class/lib/$(BUILD_TOOLS_PROFILE)$(PLATFORM_PATH_SEPARATOR)" $(RUNTIME) ,g'` ; \
+			sh -c "$$cmd" >> $@ 2>&1 ; \
 		else \
 			echo "" >> $@ ; \
 		fi ; \

@@ -7,12 +7,14 @@
 /*
  */
 
-
-#if WINFORMS_NAMESPACE
+#if MONO
+namespace System.Data.Linq
+#else
+#if Microsoft_NAMESPACE
     namespace System.Windows.Forms
 #elif DRAWING_NAMESPACE
     namespace System.Drawing
-#elif WINFORMS_PUBLIC_GRAPHICS_LIBRARY
+#elif Microsoft_PUBLIC_GRAPHICS_LIBRARY
     namespace System.Internal
 #elif SYSTEM_NAMESPACE
     namespace System
@@ -22,6 +24,7 @@
     namespace System.Data.Linq
 #else
 namespace System.Windows.Forms 
+#endif
 #endif
 {
     using System;
@@ -37,7 +40,7 @@ namespace System.Windows.Forms
     /// </devdoc>
     internal static class SecurityUtils {
 
-#if !DISABLE_CAS_USE
+#if MONO_FEATURE_CAS
         private static volatile ReflectionPermission memberAccessPermission = null;
         private static volatile ReflectionPermission restrictedMemberAccessPermission = null;
 
@@ -62,7 +65,7 @@ namespace System.Windows.Forms
 #endif
 
         private static void DemandReflectionAccess(Type type) {
-#if !DISABLE_CAS_USE
+#if MONO_FEATURE_CAS
             try {
                 MemberAccessPermission.Demand();
             }
@@ -74,7 +77,7 @@ namespace System.Windows.Forms
 
         [SecuritySafeCritical]
         private static void DemandGrantSet(Assembly assembly) {
-#if !DISABLE_CAS_USE
+#if MONO_FEATURE_CAS
             PermissionSet targetGrantSet = assembly.PermissionSet;
             targetGrantSet.AddPermission(RestrictedMemberAccessPermission);
             targetGrantSet.Demand();
@@ -82,7 +85,7 @@ namespace System.Windows.Forms
         }
 
         private static bool HasReflectionPermission(Type type) {
-#if !DISABLE_CAS_USE
+#if MONO_FEATURE_CAS
             try {
                 DemandReflectionAccess(type);
                 return true;
@@ -137,7 +140,7 @@ namespace System.Windows.Forms
             return Activator.CreateInstance(type, flags, null, args, null);
         }
 
-#if (!WINFORMS_NAMESPACE)
+#if (!Microsoft_NAMESPACE)
 
         /// <devdoc>
         ///     This helper method provides safe access to Activator.CreateInstance.

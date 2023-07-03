@@ -2,8 +2,8 @@
 // <copyright file="SqlConnection.cs" company="Microsoft">
 //     Copyright (c) Microsoft Corporation.  All rights reserved.
 // </copyright>
-// <owner current="true" primary="true">[....]</owner>
-// <owner current="true" primary="false">[....]</owner>
+// <owner current="true" primary="true">Microsoft</owner>
+// <owner current="true" primary="false">Microsoft</owner>
 //------------------------------------------------------------------------------
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("System.Data.DataSetExtensions, PublicKey="+AssemblyRef.EcmaPublicKeyFull)] // DevDiv Bugs 92166
@@ -88,7 +88,51 @@ namespace System.Data.SqlClient
                 return _ColumnEncryptionTrustedMasterKeyPaths;
             }
         }
-        
+
+        /// <summary>
+        /// Defines whether query metadata caching is enabled.
+        /// </summary>
+        static private bool _ColumnEncryptionQueryMetadataCacheEnabled = true;
+
+        [
+        DefaultValue(null),
+        ResCategoryAttribute(Res.DataCategory_Data),
+        ResDescriptionAttribute(Res.TCE_SqlConnection_ColumnEncryptionQueryMetadataCacheEnabled),
+        ]
+        static public bool ColumnEncryptionQueryMetadataCacheEnabled 
+        {
+            get
+            {
+                return _ColumnEncryptionQueryMetadataCacheEnabled;
+            }
+            set
+            {
+                _ColumnEncryptionQueryMetadataCacheEnabled = value;
+            }
+        }
+
+        /// <summary>
+        /// Defines whether query metadata caching is enabled.
+        /// </summary>
+        static private TimeSpan _ColumnEncryptionKeyCacheTtl = TimeSpan.FromHours(2);
+
+        [
+        DefaultValue(null),
+        ResCategoryAttribute(Res.DataCategory_Data),
+        ResDescriptionAttribute(Res.TCE_SqlConnection_ColumnEncryptionKeyCacheTtl),
+        ]
+        static public TimeSpan ColumnEncryptionKeyCacheTtl
+        {
+            get
+            {
+                return _ColumnEncryptionKeyCacheTtl;
+            }
+            set
+            {
+                _ColumnEncryptionKeyCacheTtl = value;
+            }
+        }
+
         /// <summary>
         /// This function should only be called once in an app. This does shallow copying of the dictionary so that 
         /// the app cannot alter the custom provider list once it has been set.
@@ -437,7 +481,15 @@ namespace System.Data.SqlClient
             get {
                 return ((SqlConnectionString)ConnectionOptions).TypeSystemAssemblyVersion;
             }
-        }        
+        }     
+        
+        internal PoolBlockingPeriod PoolBlockingPeriod
+        {
+            get
+            {
+                return ((SqlConnectionString)ConnectionOptions).PoolBlockingPeriod;
+            }
+        }   
 
         internal int ConnectRetryInterval {
             get {
@@ -1045,6 +1097,10 @@ namespace System.Data.SqlClient
                 }
                 finally {
                     SqlStatistics.StopTimer(statistics);
+                    //dispose windows identity once connection is closed.
+                    if (_lastIdentity != null) {
+                        _lastIdentity.Dispose();
+                    }
                 }
             }
             finally {
@@ -1443,14 +1499,16 @@ namespace System.Data.SqlClient
             }
 
            if (_impersonateIdentity != null) {
-                if (_impersonateIdentity.User == DbConnectionPoolIdentity.GetCurrentWindowsIdentity().User) {
-                    return TryOpenInner(retry);
-                }
-                else {
-                    using (WindowsImpersonationContext context = _impersonateIdentity.Impersonate()) {
-                        return TryOpenInner(retry);
-                    }                    
-                }
+               using (WindowsIdentity identity = DbConnectionPoolIdentity.GetCurrentWindowsIdentity()) {
+                   if (_impersonateIdentity.User == identity.User) {
+                       return TryOpenInner(retry);
+                   }
+                   else {
+                       using (WindowsImpersonationContext context = _impersonateIdentity.Impersonate()) {
+                           return TryOpenInner(retry);
+                       }
+                   }
+               }
             }
             else {
                 if (this.UsesIntegratedSecurity(connectionOptions) || this.UsesActiveDirectoryIntegrated(connectionOptions)) {
@@ -1650,7 +1708,7 @@ namespace System.Data.SqlClient
             // time the connection state should change to what is passed in to this function is if
             // the parser is broken, then we should be closed.  Changed to passing in
             // TdsParserState, not ConnectionState.
-            // fixed by [....]
+            // fixed by Microsoft
 
             if (breakConnection && (ConnectionState.Open == State)) {
 

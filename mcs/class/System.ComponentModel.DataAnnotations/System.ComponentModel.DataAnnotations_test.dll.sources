@@ -1,4 +1,3 @@
-../../System.Web.DynamicData/Test/Common/AssertExtensions.cs
 System.ComponentModel.DataAnnotations/AssociatedMetadataTypeTypeDescriptionProviderTests.cs
 System.ComponentModel.DataAnnotations/AssociationAttributeTest.cs
 System.ComponentModel.DataAnnotations/CustomValidationAttributeTest.cs
@@ -19,3 +18,4 @@ System.ComponentModel.DataAnnotations/PhoneAttributeTest.cs
 System.ComponentModel.DataAnnotations/CreditCardAttributeTest.cs
 System.ComponentModel.DataAnnotations/FileExtensionsAttributeTest.cs
 System.ComponentModel.DataAnnotations/CompareAttributeTest.cs
+System.ComponentModel.DataAnnotations/MaxMinLengthAttributeTest.cs

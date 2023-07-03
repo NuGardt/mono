@@ -1,5 +1,6 @@
-/*
- * abcremoval.h: Array bounds check removal
+/**
+ * \file
+ * Array bounds check removal
  *
  * Author:
  *   Massimiliano Mantione (massi@ximian.com)
@@ -14,6 +15,20 @@
 
 #include "mini.h"
 
+typedef enum {
+	MONO_VALUE_MAYBE_NULL = 0,
+	MONO_VALUE_NOT_NULL = 1,
+
+	MONO_VALUE_NULLNESS_MASK = 1,
+
+	/*
+	 * If this bit is set, and the enclosing MonoSummarizedValue is a
+	 * MONO_VARIABLE_SUMMARIZED_VALUE, then the "nullness" value is related
+	 * to the variable referenced in MonoSummarizedVariableValue. Otherwise,
+	 * the "nullness" value is constant.
+	 */
+	MONO_VALUE_IS_VARIABLE = 2,
+} MonoValueNullness;
 
 /**
  * All handled value types (expressions) in variable definitions and branch
@@ -36,6 +51,7 @@ typedef enum {
  */
 typedef struct MonoSummarizedConstantValue {
 	int value;
+	MonoValueNullness nullness;
 } MonoSummarizedConstantValue;
 
 /**
@@ -46,6 +62,7 @@ typedef struct MonoSummarizedConstantValue {
 typedef struct MonoSummarizedVariableValue {
 	int variable;
 	int delta;
+	MonoValueNullness nullness;
 } MonoSummarizedVariableValue;
 
 /**
@@ -165,6 +182,7 @@ typedef enum {
 typedef struct MonoRelationsEvaluationRange {
 	int lower;
 	int upper;
+	MonoValueNullness nullness;
 } MonoRelationsEvaluationRange;
 
 /**
@@ -179,14 +197,12 @@ typedef struct MonoRelationsEvaluationRanges {
 
 /**
  * The context of a variable evaluation.
- * status: the evaluation status
  * current_relation: the relation that is currently evaluated.
  * ranges: the result of the evaluation.
  * father: the context of the evaluation that invoked this one (used to
  *         perform the backtracking when loops are detected.
  */
 typedef struct MonoRelationsEvaluationContext {
-	MonoRelationsEvaluationStatus status;
 	MonoSummarizedValueRelation *current_relation;
 	MonoRelationsEvaluationRanges ranges;
 	struct MonoRelationsEvaluationContext *father;
@@ -198,6 +214,7 @@ typedef struct MonoRelationsEvaluationContext {
 #define MONO_MAKE_RELATIONS_EVALUATION_RANGE_WEAK(r) do{\
 		(r).lower = INT_MIN;\
 		(r).upper = INT_MAX;\
+		(r).nullness = MONO_VALUE_MAYBE_NULL; \
 	} while (0)
 #define MONO_MAKE_RELATIONS_EVALUATION_RANGES_WEAK(rs) do{\
 		MONO_MAKE_RELATIONS_EVALUATION_RANGE_WEAK ((rs).zero); \
@@ -206,6 +223,7 @@ typedef struct MonoRelationsEvaluationContext {
 #define MONO_MAKE_RELATIONS_EVALUATION_RANGE_IMPOSSIBLE(r) do{\
 		(r).lower = INT_MAX;\
 		(r).upper = INT_MIN;\
+		(r).nullness = MONO_VALUE_MAYBE_NULL; \
 	} while (0)
 #define MONO_MAKE_RELATIONS_EVALUATION_RANGES_IMPOSSIBLE(rs) do{\
 		MONO_MAKE_RELATIONS_EVALUATION_RANGE_IMPOSSIBLE ((rs).zero); \
@@ -308,7 +326,17 @@ typedef struct MonoRelationsEvaluationContext {
 typedef struct MonoVariableRelationsEvaluationArea {
 	MonoCompile *cfg;
 	MonoSummarizedValueRelation *relations;
+
+/**
+ * statuses and contexts are parallel arrays. A given index into each refers to
+ * the same context. This is a performance optimization. Clean_context was
+ * coming to dominate the running time of abcremoval. By
+ * storing the statuses together, we can memset the entire
+ * region.
+ */ 
+	MonoRelationsEvaluationStatus *statuses;
 	MonoRelationsEvaluationContext *contexts;
+
 	MonoIntegerValueKind *variable_value_kind;
 	MonoInst **defs;
 } MonoVariableRelationsEvaluationArea;

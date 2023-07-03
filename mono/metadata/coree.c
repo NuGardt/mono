@@ -1,5 +1,6 @@
-/*
- * coree.c: mscoree.dll functions
+/**
+ * \file
+ * mscoree.dll functions
  *
  * Author:
  *   Kornel Pal <http://www.kornelpal.hu/>
@@ -12,27 +13,25 @@
 
 #ifdef HOST_WIN32
 
-#include <string.h>
 #include <glib.h>
-#include <mono/io-layer/io-layer.h>
+#include <string.h>
 #include <mono/utils/mono-path.h>
+#include "utils/w32api.h"
 #include "cil-coff.h"
 #include "metadata-internals.h"
 #include "image.h"
-#include "assembly.h"
+#include "image-internals.h"
+#include "assembly-internals.h"
 #include "domain-internals.h"
 #include "appdomain.h"
 #include "object.h"
+#include "object-internals.h"
 #include "loader.h"
 #include "threads.h"
 #include "environment.h"
 #include "coree.h"
-
-#include <shellapi.h>
-
-HMODULE coree_module_handle = NULL;
-
-static gboolean init_from_coree = FALSE;
+#include "coree-internals.h"
+#include <mono/utils/w32subset.h>
 
 gchar*
 mono_get_module_file_name (HMODULE module_handle)
@@ -66,6 +65,12 @@ mono_get_module_file_name (HMODULE module_handle)
 	return file_name_utf8;
 }
 
+HMODULE coree_module_handle = NULL;
+static gboolean init_from_coree = FALSE;
+
+#if HAVE_API_SUPPORT_WIN32_COREE
+#include <shellapi.h>
+
 /* Entry point called by LdrLoadDll of ntdll.dll after _CorValidateImage. */
 BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpReserved)
 {
@@ -73,6 +78,7 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 	MonoImage* image;
 	gchar* file_name;
 	gchar* error;
+	MonoAssemblyLoadContext *alc = mono_domain_default_alc (mono_get_root_domain ());
 
 	switch (dwReason)
 	{
@@ -82,7 +88,7 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 		file_name = mono_get_module_file_name (hInst);
 
 		if (mono_get_root_domain ()) {
-			image = mono_image_open_from_module_handle (hInst, mono_path_resolve_symlinks (file_name), TRUE, NULL);
+			image = mono_image_open_from_module_handle (alc, hInst, mono_path_resolve_symlinks (file_name), TRUE, NULL);
 		} else {
 			init_from_coree = TRUE;
 			mono_runtime_load (file_name, NULL);
@@ -90,13 +96,13 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 			if (error) {
 				g_free (error);
 				g_free (file_name);
-				mono_runtime_quit ();
+				mono_runtime_quit_internal ();
 				return FALSE;
 			}
 
 			image = mono_image_open (file_name, NULL);
 			if (image) {
-				image->has_entry_point = TRUE;
+				image->storage->has_entry_point = TRUE;
 				mono_close_exe_image ();
 				/* Decrement reference count to zero. (Image will not be closed.) */
 				mono_image_close (image);
@@ -113,8 +119,11 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 		 * loader trampolines should be used and assembly loading should
 		 * probably be delayed until the first call to an exported function.
 		 */
-		if (image->tables [MONO_TABLE_ASSEMBLY].rows && ((MonoCLIImageInfo*) image->image_info)->cli_cli_header.ch_vtable_fixups.rva)
-			assembly = mono_assembly_open (file_name, NULL);
+		if (image->tables [MONO_TABLE_ASSEMBLY].rows && image->image_info->cli_cli_header.ch_vtable_fixups.rva) {
+			MonoAssemblyOpenRequest req;
+			mono_assembly_request_prepare_open (&req, MONO_ASMCTX_DEFAULT, alc);
+			assembly = mono_assembly_request_open (file_name, &req, NULL);
+		}
 
 		g_free (file_name);
 		break;
@@ -123,7 +132,7 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 			/* The process is terminating. */
 			return TRUE;
 		file_name = mono_get_module_file_name (hInst);
-		image = mono_image_loaded (file_name);
+		image = mono_image_loaded_internal (alc, file_name, FALSE);
 		if (image)
 			mono_image_close (image);
 
@@ -137,7 +146,7 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 /* Called by ntdll.dll reagardless of entry point after _CorValidateImage. */
 __int32 STDMETHODCALLTYPE _CorExeMain(void)
 {
-	MonoError error;
+	ERROR_DECL (error);
 	MonoDomain* domain;
 	MonoAssembly* assembly;
 	MonoImage* image;
@@ -159,16 +168,18 @@ __int32 STDMETHODCALLTYPE _CorExeMain(void)
 		g_free (corlib_version_error);
 		g_free (file_name);
 		MessageBox (NULL, L"Corlib not in sync with this runtime.", NULL, MB_ICONERROR);
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 		ExitProcess (1);
 	}
 
-	assembly = mono_assembly_open (file_name, NULL);
+	MonoAssemblyOpenRequest req;
+	mono_assembly_request_prepare_open (&req, MONO_ASMCTX_DEFAULT, mono_domain_default_alc (mono_get_root_domain ()));
+	assembly = mono_assembly_request_open (file_name, &req, NULL);
 	mono_close_exe_image ();
 	if (!assembly) {
 		g_free (file_name);
 		MessageBox (NULL, L"Cannot open assembly.", NULL, MB_ICONERROR);
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 		ExitProcess (1);
 	}
 
@@ -177,16 +188,16 @@ __int32 STDMETHODCALLTYPE _CorExeMain(void)
 	if (!entry) {
 		g_free (file_name);
 		MessageBox (NULL, L"Assembly doesn't have an entry point.", NULL, MB_ICONERROR);
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 		ExitProcess (1);
 	}
 
-	method = mono_get_method_checked (image, entry, NULL, NULL, &error);
+	method = mono_get_method_checked (image, entry, NULL, NULL, error);
 	if (method == NULL) {
 		g_free (file_name);
-		mono_error_cleanup (&error); /* FIXME don't swallow the error */
+		mono_error_cleanup (error); /* FIXME don't swallow the error */
 		MessageBox (NULL, L"The entry point method could not be loaded.", NULL, MB_ICONERROR);
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 		ExitProcess (1);
 	}
 
@@ -197,10 +208,11 @@ __int32 STDMETHODCALLTYPE _CorExeMain(void)
 		argv [i] = g_utf16_to_utf8 (argvw [i], -1, NULL, NULL, NULL);
 	LocalFree (argvw);
 
-	mono_runtime_run_main (method, argc, argv, NULL);
-	mono_thread_manage ();
+	mono_runtime_run_main_checked (method, argc, argv, error);
+	mono_error_raise_exception_deprecated (error); /* OK, triggers unhandled exn handler */
+	mono_thread_manage_internal ();
 
-	mono_runtime_quit ();
+	mono_runtime_quit_internal ();
 
 	/* return does not terminate the process. */
 	ExitProcess (mono_environment_exitcode_get ());
@@ -214,7 +226,7 @@ void STDMETHODCALLTYPE CorExitProcess(int exitCode)
 	if (mono_get_root_domain () && !mono_runtime_is_shutting_down ()) {
 		mono_runtime_set_shutting_down ();
 		mono_thread_suspend_all_other_threads ();
-		mono_runtime_quit ();
+		mono_runtime_quit_internal ();
 	}
 #endif
 	ExitProcess (exitCode);
@@ -497,14 +509,14 @@ typedef struct _EXPORT_FIXUP
 
 /* Has to be binary ordered. */
 static const EXPORT_FIXUP ExportFixups[] = {
-	{"CorBindToRuntime", &CorBindToRuntime},
-	{"CorBindToRuntimeEx", &CorBindToRuntimeEx},
-	{"CorExitProcess", &CorExitProcess},
-	{"_CorDllMain", &_CorDllMain},
-	{"_CorExeMain", &_CorExeMain},
-	{"_CorImageUnloading", &_CorImageUnloading},
-	{"_CorValidateImage", &_CorValidateImage},
-	{NULL, NULL}
+	{"CorBindToRuntime", {(PVOID)&CorBindToRuntime}},
+	{"CorBindToRuntimeEx", {(PVOID)&CorBindToRuntimeEx}},
+	{"CorExitProcess", {(PVOID)&CorExitProcess}},
+	{"_CorDllMain", {(PVOID)&_CorDllMain}},
+	{"_CorExeMain", {(PVOID)&_CorExeMain}},
+	{"_CorImageUnloading", {(PVOID)&_CorImageUnloading}},
+	{"_CorValidateImage", {(PVOID)&_CorValidateImage}},
+	{NULL, {NULL}}
 };
 
 #define EXPORT_FIXUP_COUNT (sizeof(ExportFixups) / sizeof(EXPORT_FIXUP) - 1)
@@ -793,7 +805,15 @@ STDAPI MonoFixupExe(HMODULE ModuleHandle)
 			ImportDesc = (IMAGE_IMPORT_DESCRIPTOR*)((DWORD_PTR)DosHeader + ImportDir->VirtualAddress);
 			while (ImportDesc->Name && ImportDesc->OriginalFirstThunk)
 			{
-				ImportModuleHandle = LoadLibraryA((PCSTR)((DWORD_PTR)DosHeader + ImportDesc->Name));
+				gchar *file_utf8 = (gchar *)((DWORD_PTR)DosHeader + ImportDesc->Name);
+
+				gunichar2 *file_utf16 = g_utf8_to_utf16 (file_utf8, (glong)strlen (file_utf8), NULL, NULL, NULL);
+				ImportModuleHandle = NULL;
+				if (file_utf16 != NULL) {
+					ImportModuleHandle = LoadLibraryW(file_utf16);
+					g_free (file_utf16);
+				}
+
 				if (ImportModuleHandle == NULL)
 					return E_FAIL;
 
@@ -805,7 +825,7 @@ STDAPI MonoFixupExe(HMODULE ModuleHandle)
 					else
 					{
 						IMAGE_IMPORT_BY_NAME* ImportByName = (IMAGE_IMPORT_BY_NAME*)((DWORD_PTR)DosHeader + ImportThunkData->u1.AddressOfData);
-						ProcAddress = (DWORD_PTR)GetProcAddress(ImportModuleHandle, ImportByName->Name);
+						ProcAddress = (DWORD_PTR)GetProcAddress(ImportModuleHandle, (PCSTR)ImportByName->Name);
 					}
 					if (ProcAddress == 0)
 						return E_FAIL;
@@ -826,8 +846,8 @@ STDAPI MonoFixupExe(HMODULE ModuleHandle)
 	return S_OK;
 }
 
-static void
-mono_set_act_ctx (const char* file_name)
+void
+mono_coree_set_act_ctx (const char* file_name)
 {
 	typedef HANDLE (WINAPI* CREATEACTCTXW_PROC) (PCACTCTXW pActCtx);
 	typedef BOOL (WINAPI* ACTIVATEACTCTX_PROC) (HANDLE hActCtx, ULONG_PTR* lpCookie);
@@ -870,7 +890,7 @@ mono_set_act_ctx (const char* file_name)
 	act_ctx.dwFlags = ACTCTX_FLAG_SET_PROCESS_DEFAULT | ACTCTX_FLAG_ASSEMBLY_DIRECTORY_VALID | ACTCTX_FLAG_RESOURCE_NAME_VALID | ACTCTX_FLAG_APPLICATION_NAME_VALID;
 	act_ctx.lpSource = full_path_utf16;
 	act_ctx.lpAssemblyDirectory = dir_name_utf16;
-	act_ctx.lpResourceName = MAKEINTRESOURCE (CREATEPROCESS_MANIFEST_RESOURCE_ID);
+	act_ctx.lpResourceName = CREATEPROCESS_MANIFEST_RESOURCE_ID;
 	act_ctx.lpApplicationName = base_name_utf16;
 
 	handle = CreateActCtx_proc (&act_ctx);
@@ -898,8 +918,9 @@ mono_load_coree (const char* exe_file_name)
 	if (coree_module_handle)
 		return;
 
+	// No GC safe transition because this is called early in driver.c
 	if (!init_from_coree && exe_file_name)
-		mono_set_act_ctx (exe_file_name);
+		mono_coree_set_act_ctx (exe_file_name);
 
 	/* ntdll.dll loads mscoree.dll from the system32 directory. */
 	required_size = GetSystemDirectory (NULL, 0);
@@ -924,8 +945,70 @@ mono_load_coree (const char* exe_file_name)
 void
 mono_fixup_exe_image (MonoImage* image)
 {
-	if (!init_from_coree && image && image->is_module_handle)
+	if (!init_from_coree && image && m_image_is_module_handle (image))
 		MonoFixupExe ((HMODULE) image->raw_data);
 }
+
+#elif !HAVE_EXTERN_DEFINED_WIN32_COREE
+BOOL STDMETHODCALLTYPE
+_CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpReserved)
+{
+	g_unsupported_api ("_CorDllMain");
+	SetLastError (ERROR_NOT_SUPPORTED);
+	return FALSE;
+}
+
+__int32 STDMETHODCALLTYPE
+_CorExeMain(void)
+{
+	g_unsupported_api ("_CorExeMain");
+	SetLastError (ERROR_NOT_SUPPORTED);
+	ExitProcess (EXIT_FAILURE);
+}
+
+STDAPI
+_CorValidateImage(PVOID *ImageBase, LPCWSTR FileName)
+{
+	g_unsupported_api ("_CorValidateImage");
+	SetLastError (ERROR_NOT_SUPPORTED);
+	return E_UNEXPECTED;
+}
+
+HMODULE WINAPI
+MonoLoadImage(LPCWSTR FileName)
+{
+	g_unsupported_api ("MonoLoadImage");
+	SetLastError (ERROR_NOT_SUPPORTED);
+	return NULL;
+}
+
+void
+mono_coree_set_act_ctx (const char *file_name)
+{
+	g_unsupported_api ("CreateActCtx, ActivateActCtx");
+	SetLastError (ERROR_NOT_SUPPORTED);
+	return;
+}
+
+void
+mono_load_coree (const char* exe_file_name)
+{
+	g_unsupported_api ("mono_load_coree");
+	SetLastError (ERROR_NOT_SUPPORTED);
+	return;
+}
+
+void
+mono_fixup_exe_image (MonoImage* image)
+{
+	return;
+}
+#endif /* HAVE_API_SUPPORT_WIN32_COREE */
+
+#else
+
+#include <mono/utils/mono-compiler.h>
+
+MONO_EMPTY_SOURCE_FILE (coree);
 
 #endif /* HOST_WIN32 */

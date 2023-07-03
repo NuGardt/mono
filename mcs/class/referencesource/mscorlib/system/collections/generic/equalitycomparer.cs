@@ -3,7 +3,7 @@
 //   Copyright (c) Microsoft Corporation.  All rights reserved.
 // 
 // ==--==
-// <OWNER>[....]</OWNER>
+// <OWNER>Microsoft</OWNER>
 // 
 
 using System;
@@ -11,6 +11,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Security;
 using System.Runtime.Serialization;
+using System.Runtime.CompilerServices;
 
 namespace System.Collections.Generic
 {
@@ -26,6 +27,7 @@ namespace System.Collections.Generic
         static volatile EqualityComparer<T> defaultComparer;
 
         public static EqualityComparer<T> Default {
+			[MethodImplAttribute (MethodImplOptions.AggressiveInlining)]
             get {
                 Contract.Ensures(Contract.Result<EqualityComparer<T>>() != null);
 
@@ -47,6 +49,12 @@ namespace System.Collections.Generic
             Contract.Ensures(Contract.Result<EqualityComparer<T>>() != null);
 
             RuntimeType t = (RuntimeType)typeof(T);
+
+			/////////////////////////////////////////////////
+			// KEEP THIS IN SYNC WITH THE DEVIRT CODE
+			// IN METHOD-TO-IR.C
+			/////////////////////////////////////////////////
+
             // Specialize type byte for performance reasons
             if (t == typeof(byte)) {
                 return (EqualityComparer<T>)(object)(new ByteEqualityComparer());

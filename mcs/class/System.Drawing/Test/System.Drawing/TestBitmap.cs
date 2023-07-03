@@ -36,17 +36,20 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Formatters.Binary;
+#if !NETCOREAPP2_0
 using System.Runtime.Serialization.Formatters.Soap;
+#endif
 using System.Security.Cryptography;
 using System.Security.Permissions;
 using System.Text;
 using System.Xml.Serialization;
 using NUnit.Framework;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.System.Drawing {
 
 	[TestFixture]
-	[SecurityPermission (SecurityAction.Deny, UnmanagedCode = true)]
 	public class TestBitmap {
 		
 		[Test]
@@ -121,30 +124,24 @@ namespace MonoTests.System.Drawing {
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void LockBits_IndexedWrite_NonIndexed ()
 		{
 			using (Bitmap bmp = new Bitmap (100, 100, PixelFormat.Format8bppIndexed)) {
 				Rectangle rect = new Rectangle (0, 0, bmp.Width, bmp.Height);
-				bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb);
+				Assert.Throws<ArgumentException> (() => bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb));
 			}
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void LockBits_NonIndexedWrite_ToIndexed ()
 		{
 			using (Bitmap bmp = new Bitmap (100, 100, PixelFormat.Format32bppRgb)) {
+ 				BitmapData bd = new BitmapData ();
 				Rectangle rect = new Rectangle (0, 0, bmp.Width, bmp.Height);
-				BitmapData bd = new BitmapData ();
-				try {
-					bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format8bppIndexed, bd);
-				}
-				catch (ArgumentException) {
-					// test to see if there's a leak or not in this case
-					Assert.AreEqual (IntPtr.Zero, bd.Scan0, "Scan0");
-					throw;
-				}
+				Assert.Throws<ArgumentException> (() => bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format8bppIndexed, bd));
+
+				// test to see if there's a leak or not in this case
+				Assert.AreEqual (IntPtr.Zero, bd.Scan0, "Scan0");
 			}
 		}
 
@@ -182,14 +179,13 @@ namespace MonoTests.System.Drawing {
 		}
 
 		[Test]
-		[ExpectedException (typeof (InvalidOperationException))]
 		public void LockBits_Double ()
 		{
 			using (Bitmap bmp = new Bitmap (10, 10, PixelFormat.Format24bppRgb)) {
 				Rectangle r = new Rectangle (4, 4, 4, 4);
 				BitmapData data = bmp.LockBits (r, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
 				try {
-					bmp.LockBits (r, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+					Assert.Throws<InvalidOperationException> (() => bmp.LockBits (r, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb));
 				}
 				finally {
 					bmp.UnlockBits (data);
@@ -198,17 +194,15 @@ namespace MonoTests.System.Drawing {
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void LockBits_Disposed ()
 		{
 			Bitmap bmp = new Bitmap (100, 100, PixelFormat.Format32bppRgb);
 			Rectangle rect = new Rectangle (0, 0, bmp.Width, bmp.Height);
 			bmp.Dispose ();
-			bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb);
+			Assert.Throws<ArgumentException> (() => bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		[Category ("Valgrind")] // this test is known to leak memory (API design limitation)
 		public void UnlockBits_Disposed ()
 		{
@@ -216,26 +210,24 @@ namespace MonoTests.System.Drawing {
 			Rectangle rect = new Rectangle (0, 0, bmp.Width, bmp.Height);
 			BitmapData data = bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb);
 			bmp.Dispose ();
-			bmp.UnlockBits (data);
+			Assert.Throws<ArgumentException> (() => bmp.UnlockBits (data));
 			// and that results in something like this when executed under Valgrind 
 			// "40,000 bytes in 1 blocks are possibly lost in loss record 88 of 92"
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void UnlockBits_Null ()
 		{
 			using (Bitmap bmp = new Bitmap (100, 100, PixelFormat.Format32bppRgb)) {
-				bmp.UnlockBits (null);
+				Assert.Throws<ArgumentException> (() => bmp.UnlockBits (null));
 			}
 		}
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void LockBits_BitmapData_Null ()
 		{
 			using (Bitmap bmp = new Bitmap (100, 100, PixelFormat.Format32bppRgb)) {
 				Rectangle rect = new Rectangle (0, 0, bmp.Width, bmp.Height);
-				bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb, null);
+				Assert.Throws<ArgumentException> (() => bmp.LockBits (rect, ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb, null));
 			}
 		}
 
@@ -300,46 +292,42 @@ namespace MonoTests.System.Drawing {
 		}
 
 		[Test]
-		[ExpectedException (typeof (InvalidOperationException))]
 		public void Format1bppIndexed ()
 		{
 			using (Bitmap bmp = new Bitmap (1, 1, PixelFormat.Format1bppIndexed)) {
 				Color c = bmp.GetPixel (0, 0);
 				Assert.AreEqual (-16777216, c.ToArgb (), "Color");
-				bmp.SetPixel (0, 0, c);
+				Assert.Throws<InvalidOperationException> (() => bmp.SetPixel (0, 0, c));
 			}
 		}
 
 		[Test]
-		[ExpectedException (typeof (InvalidOperationException))]
 		public void Format4bppIndexed ()
 		{
 			using (Bitmap bmp = new Bitmap (1, 1, PixelFormat.Format4bppIndexed)) {
 				Color c = bmp.GetPixel (0, 0);
 				Assert.AreEqual (-16777216, c.ToArgb (), "Color");
-				bmp.SetPixel (0, 0, c);
+				Assert.Throws<InvalidOperationException> (() => bmp.SetPixel (0, 0, c));
 			}
 		}
 
 		[Test]
-		[ExpectedException (typeof (InvalidOperationException))]
 		public void Format8bppIndexed ()
 		{
 			using (Bitmap bmp = new Bitmap (1, 1, PixelFormat.Format8bppIndexed)) {
 				Color c = bmp.GetPixel (0, 0);
 				Assert.AreEqual (-16777216, c.ToArgb (), "Color");
-				bmp.SetPixel (0, 0, c);
+				Assert.Throws<InvalidOperationException> (() => bmp.SetPixel (0, 0, c));
 			}
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		[Category ("NotWorking")] // libgdiplus doesn't support this format
 		public void Format16bppGrayScale ()
 		{
 			using (Bitmap bmp = new Bitmap (1, 1, PixelFormat.Format16bppGrayScale)) {
 				// and MS GDI+ support seems quite limited too
-				bmp.GetPixel (0, 0);
+				Assert.Throws<ArgumentException> (() => bmp.GetPixel (0, 0));
 			}
 		}
 
@@ -515,21 +503,12 @@ namespace MonoTests.System.Drawing {
 			
 			return sRslt;
 		}
-		
-		/* Get the input directory depending on the runtime*/
-		public static string getInFile(string file)
-		{				
-			string sRslt = Path.GetFullPath ("../System.Drawing/" + file);
-			if (!File.Exists (sRslt))
-				sRslt = "Test/System.Drawing/" + file;
-			return sRslt;
-		}
 
 		// note: this test fails when saving (for the same reason) on Mono and MS.NET
 		//[Test]
 		public void MakeTransparent() 
 		{
-			string sInFile =   getInFile("bitmaps/maketransparent.bmp");
+			string sInFile =   TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/maketransparent.bmp");
 			string sOutFile =  getOutSubDir() + "transparent.bmp";
 						
 			Bitmap	bmp = new Bitmap(sInFile);
@@ -546,7 +525,7 @@ namespace MonoTests.System.Drawing {
 		[Test]
 		public void Clone()
 		{
-			string sInFile = getInFile ("bitmaps/almogaver24bits.bmp");
+			string sInFile = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/almogaver24bits.bmp");
 			Rectangle rect = new Rectangle(0,0,50,50);						
 			Bitmap	bmp = new Bitmap(sInFile);			
 			
@@ -563,7 +542,7 @@ namespace MonoTests.System.Drawing {
 		[Test]
 		public void CloneImage()
 		{
-			string sInFile = getInFile ("bitmaps/almogaver24bits.bmp");			
+			string sInFile = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/almogaver24bits.bmp");			
 			Bitmap	bmp = new Bitmap(sInFile);			
 			
 			Bitmap bmpNew = (Bitmap) bmp.Clone ();			
@@ -577,7 +556,7 @@ namespace MonoTests.System.Drawing {
 		[Test]
 		public void Frames()
 		{
-			string sInFile = getInFile ("bitmaps/almogaver24bits.bmp");			
+			string sInFile = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/almogaver24bits.bmp");			
 			Bitmap	bmp = new Bitmap(sInFile);						
 			int cnt = bmp.GetFrameCount(FrameDimension.Page);			
 			int active = bmp.SelectActiveFrame (FrameDimension.Page, 0);
@@ -587,10 +566,9 @@ namespace MonoTests.System.Drawing {
 		}
 		
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void FileDoesNotExists ()
 		{			
-			Bitmap	bmp = new Bitmap ("FileDoesNotExists.jpg");			
+			Assert.Throws<ArgumentException> (() => new Bitmap ("FileDoesNotExists.jpg"));			
 		}
 
 		static string ByteArrayToString(byte[] arrInput)
@@ -623,7 +601,7 @@ namespace MonoTests.System.Drawing {
 				}				
 			}
 		
-			hash = new MD5CryptoServiceProvider().ComputeHash (pixels);
+			hash = MD5.Create ().ComputeHash (pixels);
 			return ByteArrayToString (hash);
 		}
 		public string RotateIndexedBmp (Bitmap src, RotateFlipType type)
@@ -673,7 +651,7 @@ namespace MonoTests.System.Drawing {
 			if (pixel_data == null)
 				return "--ERROR--";
 
-			byte[] hash = new MD5CryptoServiceProvider().ComputeHash (pixel_data);
+			byte[] hash = MD5.Create ().ComputeHash (pixel_data);
 			return ByteArrayToString (hash);
 		}
 		
@@ -685,7 +663,7 @@ namespace MonoTests.System.Drawing {
 		[Test]
 		public void Rotate()
 		{
-			string sInFile = getInFile ("bitmaps/almogaver24bits.bmp");	
+			string sInFile = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/almogaver24bits.bmp");	
 			Bitmap	bmp = new Bitmap(sInFile);
 			
 			Assert.AreEqual ("312958A3C67402E1299413794988A3", RotateBmp (bmp, RotateFlipType.Rotate90FlipNone));	
@@ -710,8 +688,8 @@ namespace MonoTests.System.Drawing {
 				Assert.Ignore("This does not work with Microsoft's GDIPLUS.DLL due to off-by-1 errors in their GdipBitmapRotateFlip function.");
 
 			string[] files = {
-			                   getInFile ("bitmaps/1bit.png"),
-			                   getInFile ("bitmaps/4bit.png")
+			                   TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/1bit.png"),
+			                   TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/4bit.png")
 			                 };
 
 			StringBuilder md5s = new StringBuilder();
@@ -1096,7 +1074,7 @@ namespace MonoTests.System.Drawing {
 		public void Serialize_Icon ()
 		{
 			// this cause a problem with resgen, see http://bugzilla.ximian.com/show_bug.cgi?id=80565
-			string filename = getInFile ("bitmaps/16x16x16.ico");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/16x16x16.ico");
 			using (Bitmap icon = new Bitmap (filename)) {
 				using (Stream s = Serialize (icon)) {
 					using (Bitmap copy = (Bitmap)Deserialize (s)) {
@@ -1110,6 +1088,7 @@ namespace MonoTests.System.Drawing {
 			}
 		}
 
+#if !NETCOREAPP2_0
 		private Stream SoapSerialize (object o)
 		{
 			MemoryStream ms = new MemoryStream ();
@@ -1127,7 +1106,7 @@ namespace MonoTests.System.Drawing {
 		[Test]
 		public void SoapSerialize_Icon ()
 		{
-			string filename = getInFile ("bitmaps/16x16x16.ico");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/16x16x16.ico");
 			using (Bitmap icon = new Bitmap (filename)) {
 				using (Stream s = SoapSerialize (icon)) {
 					using (Bitmap copy = (Bitmap) SoapDeserialize (s)) {
@@ -1146,7 +1125,7 @@ namespace MonoTests.System.Drawing {
 		[Test]
 		public void SoapSerialize_Bitmap8 ()
 		{
-			string filename = getInFile ("bitmaps/almogaver8bits.bmp");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/almogaver8bits.bmp");
 			using (Bitmap bmp = new Bitmap (filename)) {
 				using (Stream s = SoapSerialize (bmp)) {
 					using (Bitmap copy = (Bitmap) SoapDeserialize (s)) {
@@ -1163,7 +1142,7 @@ namespace MonoTests.System.Drawing {
 		[Test]
 		public void SoapSerialize_Bitmap24 ()
 		{
-			string filename = getInFile ("bitmaps/almogaver24bits.bmp");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/almogaver24bits.bmp");
 			using (Bitmap bmp = new Bitmap (filename)) {
 				using (Stream s = SoapSerialize (bmp)) {
 					using (Bitmap copy = (Bitmap) SoapDeserialize (s)) {
@@ -1176,6 +1155,7 @@ namespace MonoTests.System.Drawing {
 				}
 			}
 		}
+#endif
 
 		[Test]
 		[Category ("NotWorking")]	// http://bugzilla.ximian.com/show_bug.cgi?id=80558
@@ -1513,87 +1493,75 @@ namespace MonoTests.System.Drawing {
 		}
 
 		[Test]
-		[ExpectedException (typeof (NullReferenceException))]
 		public void BitmapImageCtor ()
 		{
-			new Bitmap ((Image) null);
+			Assert.Throws<NullReferenceException> (() => new Bitmap ((Image) null));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void BitmapImageSizeCtor ()
 		{
-			new Bitmap ((Image) null, Size.Empty);
+			Assert.Throws<ArgumentException> (() => new Bitmap ((Image) null, Size.Empty));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void BitmapImageIntIntCtor ()
 		{
-			new Bitmap ((Image) null, Int32.MinValue, Int32.MaxValue);
+			Assert.Throws<ArgumentException> (() => new Bitmap ((Image) null, Int32.MinValue, Int32.MaxValue));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void BitmapIntIntCtor ()
 		{
-			new Bitmap (Int32.MinValue, Int32.MaxValue);
+			Assert.Throws<ArgumentException> (() => new Bitmap (Int32.MinValue, Int32.MaxValue));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentNullException))]
 		public void BitmapIntIntGraphicCtor ()
 		{
-			new Bitmap (1, 1, null);
+			Assert.Throws<ArgumentNullException> (() => new Bitmap (1, 1, null));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void BitmapIntIntPixelFormatCtor ()
 		{
-			new Bitmap (Int32.MinValue, Int32.MaxValue, PixelFormat.Format1bppIndexed);
+			Assert.Throws<ArgumentException> (() => new Bitmap (Int32.MinValue, Int32.MaxValue, PixelFormat.Format1bppIndexed));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void BitmapStreamCtor ()
 		{
-			new Bitmap ((Stream) null);
+			Assert.Throws<ArgumentException> (() => new Bitmap ((Stream) null));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void BitmapStreamBoolCtor ()
 		{
-			new Bitmap ((Stream) null, true);
+			Assert.Throws<ArgumentException> (() => new Bitmap ((Stream) null, true));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentNullException))]
 		public void BitmapStringCtor ()
 		{
-			new Bitmap ((string) null);
+			Assert.Throws<ArgumentNullException> (() => new Bitmap ((string) null));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentNullException))]
 		public void BitmapStringBoolCtor ()
 		{
-			new Bitmap ((string) null, false);
+			Assert.Throws<ArgumentNullException> (() => new Bitmap ((string) null, false));
 		}
 
 		[Test]
-		[ExpectedException (typeof (NullReferenceException))]
 		public void BitmapTypeStringCtor1 ()
 		{
-			new Bitmap ((Type) null, "mono");
+			Assert.Throws<NullReferenceException> (() => new Bitmap ((Type) null, "mono"));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void BitmapTypeStringCtor2 ()
 		{
-			new Bitmap (typeof (Bitmap), null);
+			Assert.Throws<ArgumentException> (() => new Bitmap (typeof (Bitmap), null));
 		}
 
 		private void SetResolution (float x, float y)
@@ -1604,24 +1572,21 @@ namespace MonoTests.System.Drawing {
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void SetResolution_Zero ()
 		{
-			SetResolution (0.0f, 0.0f);
+			Assert.Throws<ArgumentException> (() => SetResolution (0.0f, 0.0f));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void SetResolution_Negative_X ()
 		{
-			SetResolution (-1.0f, 1.0f);
+			Assert.Throws<ArgumentException> (() => SetResolution (-1.0f, 1.0f));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void SetResolution_Negative_Y ()
 		{
-			SetResolution (1.0f, -1.0f);
+			Assert.Throws<ArgumentException> (() => SetResolution (1.0f, -1.0f));
 		}
 
 		[Test]
@@ -1637,17 +1602,15 @@ namespace MonoTests.System.Drawing {
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void SetResolution_NaN ()
 		{
-			SetResolution (Single.NaN, Single.NaN);
+			Assert.Throws<ArgumentException> (() => SetResolution (Single.NaN, Single.NaN));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void SetResolution_NegativeInfinity ()
 		{
-			SetResolution (Single.NegativeInfinity, Single.NegativeInfinity);
+			Assert.Throws<ArgumentException> (() => SetResolution (Single.NegativeInfinity, Single.NegativeInfinity));
 		}
 	}
 
@@ -1678,7 +1641,7 @@ namespace MonoTests.System.Drawing {
 		{
 			IntPtr hicon;
 			int size;
-			using (Icon icon = new Icon (TestBitmap.getInFile ("bitmaps/16x16x16.ico"))) {
+			using (Icon icon = new Icon (TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/16x16x16.ico"))) {
 				size = icon.Width;
 				using (Bitmap bitmap = Bitmap.FromHicon (icon.Handle)) {
 					HiconTest ("Icon.Handle/FromHicon", bitmap, size);
@@ -1696,7 +1659,7 @@ namespace MonoTests.System.Drawing {
 		{
 			IntPtr hicon;
 			int size;
-			using (Icon icon = new Icon (TestBitmap.getInFile ("bitmaps/32x32x16.ico"))) {
+			using (Icon icon = new Icon (TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/32x32x16.ico"))) {
 				size = icon.Width;
 				using (Bitmap bitmap = Bitmap.FromHicon (icon.Handle)) {
 					HiconTest ("Icon.Handle/FromHicon", bitmap, size);
@@ -1710,13 +1673,12 @@ namespace MonoTests.System.Drawing {
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		[Category ("NotWorking")] // libgdiplus has lost track of the original 1bpp state
 		public void Hicon48 ()
 		{
-			using (Icon icon = new Icon (TestBitmap.getInFile ("bitmaps/48x48x1.ico"))) {
+			using (Icon icon = new Icon (TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/48x48x1.ico"))) {
 				// looks like 1bbp icons aren't welcome as bitmaps ;-)
-				Bitmap.FromHicon (icon.Handle);
+				Assert.Throws<ArgumentException> (() => Bitmap.FromHicon (icon.Handle));
 			}
 		}
 
@@ -1725,7 +1687,7 @@ namespace MonoTests.System.Drawing {
 		{
 			IntPtr hicon;
 			int size;
-			using (Icon icon = new Icon (TestBitmap.getInFile ("bitmaps/64x64x256.ico"))) {
+			using (Icon icon = new Icon (TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/64x64x256.ico"))) {
 				size = icon.Width;
 				using (Bitmap bitmap = Bitmap.FromHicon (icon.Handle)) {
 					HiconTest ("Icon.Handle/FromHicon", bitmap, size);
@@ -1743,7 +1705,7 @@ namespace MonoTests.System.Drawing {
 		{
 			IntPtr hicon;
 			int size;
-			using (Icon icon = new Icon (TestBitmap.getInFile ("bitmaps/96x96x256.ico"))) {
+			using (Icon icon = new Icon (TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/96x96x256.ico"))) {
 				size = icon.Width;
 				using (Bitmap bitmap = Bitmap.FromHicon (icon.Handle)) {
 					HiconTest ("Icon.Handle/FromHicon", bitmap, size);
@@ -1760,7 +1722,7 @@ namespace MonoTests.System.Drawing {
 		public void HBitmap ()
 		{
 			IntPtr hbitmap;
-			string sInFile = TestBitmap.getInFile ("bitmaps/almogaver24bits.bmp");
+			string sInFile = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/almogaver24bits.bmp");
 			using (Bitmap bitmap = new Bitmap (sInFile)) {
 				Assert.AreEqual (PixelFormat.Format24bppRgb, bitmap.PixelFormat, "Original.PixelFormat");
 				Assert.AreEqual (0, bitmap.Palette.Entries.Length, "Original.Palette");
@@ -1785,7 +1747,7 @@ namespace MonoTests.System.Drawing {
 		public void CreateMultipleBitmapFromSameHBITMAP ()
 		{
 			IntPtr hbitmap;
-			string sInFile = TestBitmap.getInFile ("bitmaps/almogaver24bits.bmp");
+			string sInFile = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/almogaver24bits.bmp");
 			using (Bitmap bitmap = new Bitmap (sInFile)) {
 				Assert.AreEqual (PixelFormat.Format24bppRgb, bitmap.PixelFormat, "Original.PixelFormat");
 				Assert.AreEqual (0, bitmap.Palette.Entries.Length, "Original.Palette");

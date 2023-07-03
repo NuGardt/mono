@@ -1,5 +1,6 @@
-/*
- * mono-value-hash.h: A hash table which only stores values in the hash nodes.
+/**
+ * \file
+ * A hash table which only stores values in the hash nodes.
  *
  * Author:
  *   Mark Probst (mark.probst@gmail.com)
@@ -13,8 +14,6 @@
 
 #include <glib.h>
 #include "mono-compiler.h"
-
-G_BEGIN_DECLS
 
 /*
  * This is a hash table with the following features/restrictions:
@@ -51,7 +50,5 @@ mono_value_hash_table_lookup (MonoValueHashTable *table, gconstpointer key);
 void
 mono_value_hash_table_insert (MonoValueHashTable *table,
 				 gpointer key, gpointer value);
-
-G_END_DECLS
 
 #endif

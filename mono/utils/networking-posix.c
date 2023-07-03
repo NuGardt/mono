@@ -1,5 +1,6 @@
-/*
- * networking-posix.c: Modern posix networking code
+/**
+ * \file
+ * Modern posix networking code
  *
  * Author:
  *	Rodrigo Kumpera (kumpera@gmail.com)
@@ -16,6 +17,9 @@
 #ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
 #endif
+#ifdef HAVE_SYS_SOCKET_H
+#include <sys/socket.h>
+#endif
 #ifdef HAVE_NET_IF_H
 #include <net/if.h>
 #endif
@@ -25,9 +29,20 @@
 #ifdef HAVE_GETIFADDRS
 #include <ifaddrs.h>
 #endif
+#ifdef HAVE_QP2GETIFADDRS
+/* Bizarrely, IBM i implements this, but AIX doesn't, so on i, it has a different name... */
+#include <as400_types.h>
+#include <as400_protos.h>
+/* Defines to just reuse ifaddrs code */
+#define ifaddrs ifaddrs_pase
+#define freeifaddrs Qp2freeifaddrs
+#define getifaddrs Qp2getifaddrs
+#endif
 
 #include <mono/utils/networking.h>
 #include <mono/utils/mono-threads-coop.h>
+
+#if HAVE_SIOCGIFCONF || HAVE_GETIFADDRS
 
 static void*
 get_address_from_sockaddr (struct sockaddr *sa)
@@ -35,11 +50,15 @@ get_address_from_sockaddr (struct sockaddr *sa)
 	switch (sa->sa_family) {
 	case AF_INET:
 		return &((struct sockaddr_in*)sa)->sin_addr;
+#ifdef HAVE_STRUCT_SOCKADDR_IN6
 	case AF_INET6:
 		return &((struct sockaddr_in6*)sa)->sin6_addr;
+#endif
 	}
 	return NULL;
 }
+
+#endif
 
 #ifdef HAVE_GETADDRINFO
 
@@ -65,17 +84,19 @@ mono_get_address_info (const char *hostname, int port, int flags, MonoAddressInf
 
 	if (flags & MONO_HINT_CANONICAL_NAME)
 		hints.ai_flags = AI_CANONNAME;
+	if (flags & MONO_HINT_NUMERIC_HOST)
+		hints.ai_flags |= AI_NUMERICHOST;
 
 /* Some ancient libc don't define AI_ADDRCONFIG */
 #ifdef AI_ADDRCONFIG
 	if (flags & MONO_HINT_CONFIGURED_ONLY)
-		hints.ai_flags = AI_ADDRCONFIG;
+		hints.ai_flags |= AI_ADDRCONFIG;
 #endif
 	sprintf (service_name, "%d", port);
 
-	MONO_PREPARE_BLOCKING;
+	MONO_ENTER_GC_SAFE;
 	ret = getaddrinfo (hostname, service_name, &hints, &info);
-	MONO_FINISH_BLOCKING;
+	MONO_EXIT_GC_SAFE;
 
 	if (ret)
 		return 1; /* FIXME propagate the error */
@@ -91,9 +112,11 @@ mono_get_address_info (const char *hostname, int port, int flags, MonoAddressInf
 		if (cur->family == PF_INET) {
 			cur->address_len = sizeof (struct in_addr);
 			cur->address.v4 = ((struct sockaddr_in*)res->ai_addr)->sin_addr;
+#ifdef HAVE_STRUCT_SOCKADDR_IN6			
 		} else if (cur->family == PF_INET6) {
 			cur->address_len = sizeof (struct in6_addr);
 			cur->address.v6 = ((struct sockaddr_in6*)res->ai_addr)->sin6_addr;
+#endif
 		} else {
 			g_warning ("Cannot handle address family %d", cur->family);
 			res = res->ai_next;
@@ -119,7 +142,24 @@ mono_get_address_info (const char *hostname, int port, int flags, MonoAddressInf
 
 #endif
 
-#ifdef HAVE_GETPROTOBYNAME
+#if defined(__linux__) && defined(HAVE_GETPROTOBYNAME_R)
+
+static int
+fetch_protocol (const char *proto_name, int *cache, int *proto, int default_val)
+{
+	if (!*cache) {
+		struct protoent protoent_buf = { 0 };
+		struct protoent *pent = NULL;
+		char buf[1024];
+
+		getprotobyname_r (proto_name, &protoent_buf, buf, 1024, &pent);
+		*proto = pent ? pent->p_proto : default_val;
+		*cache = 1;
+	}
+	return *proto;
+}
+
+#elif HAVE_GETPROTOBYNAME
 
 static int
 fetch_protocol (const char *proto_name, int *cache, int *proto, int default_val)
@@ -133,6 +173,8 @@ fetch_protocol (const char *proto_name, int *cache, int *proto, int default_val)
 	}
 	return *proto;
 }
+
+#endif
 
 int
 mono_networking_get_tcp_protocol (void)
@@ -154,8 +196,6 @@ mono_networking_get_ipv6_protocol (void)
 	static int cache, proto;
 	return fetch_protocol ("ipv6", &cache, &proto, 41); //41 is SOL_IPV6 on linux
 }
-
-#endif
 
 #if defined (HAVE_SIOCGIFCONF)
 
@@ -251,7 +291,7 @@ done:
 	return result;
 }
 
-#elif defined(HAVE_GETIFADDRS)
+#elif defined(HAVE_GETIFADDRS) || defined(HAVE_QP2GETIFADDRS)
 
 void *
 mono_get_local_interfaces (int family, int *interface_count)

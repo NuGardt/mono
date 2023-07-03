@@ -29,322 +29,16 @@ using System.Net;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
+using ObjCRuntimeInternal;
 
 namespace Mono.Net
 {
-	internal class CFObject : IDisposable
-	{
-		public const string CoreFoundationLibrary = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
-		const string SystemLibrary = "/usr/lib/libSystem.dylib";
-
-		[DllImport (SystemLibrary)]
-		public static extern IntPtr dlopen (string path, int mode);
-
-		[DllImport (SystemLibrary)]
-		public static extern IntPtr dlsym (IntPtr handle, string symbol);
-
-		[DllImport (SystemLibrary)]
-		public static extern void dlclose (IntPtr handle);
-
-		public static IntPtr GetIndirect (IntPtr handle, string symbol)
-		{
-			return dlsym (handle, symbol);
-		}
-
-		public static IntPtr GetCFObjectHandle (IntPtr handle, string symbol)
-		{
-			var indirect = dlsym (handle, symbol);
-			if (indirect == IntPtr.Zero)
-				return IntPtr.Zero;
-
-			return Marshal.ReadIntPtr (indirect);
-		}
-
-		public CFObject (IntPtr handle, bool own)
-		{
-			Handle = handle;
-
-			if (!own)
-				Retain ();
-		}
-
-		~CFObject ()
-		{
-			Dispose (false);
-		}
-
-		public IntPtr Handle { get; private set; }
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static IntPtr CFRetain (IntPtr handle);
-
-		void Retain ()
-		{
-			CFRetain (Handle);
-		}
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static void CFRelease (IntPtr handle);
-
-		void Release ()
-		{
-			CFRelease (Handle);
-		}
-
-		protected virtual void Dispose (bool disposing)
-		{
-			if (Handle != IntPtr.Zero) {
-				Release ();
-				Handle = IntPtr.Zero;
-			}
-		}
-
-		public void Dispose ()
-		{
-			Dispose (true);
-			GC.SuppressFinalize (this);
-		}
-	}
-
-	internal class CFArray : CFObject
-	{
-		public CFArray (IntPtr handle, bool own) : base (handle, own) { }
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static IntPtr CFArrayCreate (IntPtr allocator, IntPtr values, /* CFIndex */ IntPtr numValues, IntPtr callbacks);
-		static readonly IntPtr kCFTypeArrayCallbacks;
-
-		static CFArray ()
-		{
-			var handle = dlopen (CoreFoundationLibrary, 0);
-			if (handle == IntPtr.Zero)
-				return;
-
-			try {
-				kCFTypeArrayCallbacks = GetIndirect (handle, "kCFTypeArrayCallBacks");
-			} finally {
-				dlclose (handle);
-			}
-		}
-
-		static unsafe CFArray Create (params IntPtr[] values)
-		{
-			if (values == null)
-				throw new ArgumentNullException ("values");
-
-			fixed (IntPtr *pv = values) {
-				IntPtr handle = CFArrayCreate (IntPtr.Zero, (IntPtr) pv, (IntPtr) values.Length, kCFTypeArrayCallbacks);
-
-				return new CFArray (handle, false);
-			}
-		}
-
-		public static CFArray Create (params CFObject[] values)
-		{
-			if (values == null)
-				throw new ArgumentNullException ("values");
-
-			IntPtr[] _values = new IntPtr [values.Length];
-			for (int i = 0; i < _values.Length; i++)
-				_values[i] = values[i].Handle;
-
-			return Create (_values);
-		}
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static /* CFIndex */ IntPtr CFArrayGetCount (IntPtr handle);
-
-		public int Count {
-			get { return (int) CFArrayGetCount (Handle); }
-		}
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static IntPtr CFArrayGetValueAtIndex (IntPtr handle, /* CFIndex */ IntPtr index);
-
-		public IntPtr this[int index] {
-			get {
-				return CFArrayGetValueAtIndex (Handle, (IntPtr) index);
-			}
-		}
-	}
-
-	internal class CFNumber : CFObject
-	{
-		public CFNumber (IntPtr handle, bool own) : base (handle, own) { }
-
-		[DllImport (CoreFoundationLibrary)]
-		[return: MarshalAs (UnmanagedType.I1)]
-		extern static bool CFNumberGetValue (IntPtr handle, /* CFNumberType */ IntPtr type, [MarshalAs (UnmanagedType.I1)] out bool value);
-
-		public static bool AsBool (IntPtr handle)
-		{
-			bool value;
-
-			if (handle == IntPtr.Zero)
-				return false;
-
-			CFNumberGetValue (handle, (IntPtr) 1, out value);
-
-			return value;
-		}
-
-		public static implicit operator bool (CFNumber number)
-		{
-			return AsBool (number.Handle);
-		}
-
-		[DllImport (CoreFoundationLibrary)]
-		[return: MarshalAs (UnmanagedType.I1)]
-		extern static bool CFNumberGetValue (IntPtr handle, /* CFNumberType */ IntPtr type, out int value);
-
-		public static int AsInt32 (IntPtr handle)
-		{
-			int value;
-
-			if (handle == IntPtr.Zero)
-				return 0;
-
-			// 9 == kCFNumberIntType == C int
-			CFNumberGetValue (handle, (IntPtr) 9, out value);
-
-			return value;
-		}
-
-		public static implicit operator int (CFNumber number)
-		{
-			return AsInt32 (number.Handle);
-		}
-	}
-
-	internal struct CFRange {
-		public IntPtr Location, Length;
-		
-		public CFRange (int loc, int len)
-		{
-			Location = (IntPtr) loc;
-			Length = (IntPtr) len;
-		}
-	}
-
 	internal struct CFStreamClientContext {
 		public IntPtr Version;
 		public IntPtr Info;
 		public IntPtr Retain;
 		public IntPtr Release;
 		public IntPtr CopyDescription;
-	}
-
-	internal class CFString : CFObject
-	{
-		string str;
-
-		public CFString (IntPtr handle, bool own) : base (handle, own) { }
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static IntPtr CFStringCreateWithCharacters (IntPtr alloc, IntPtr chars, /* CFIndex */ IntPtr length);
-
-		public static CFString Create (string value)
-		{
-			IntPtr handle;
-
-			unsafe {
-				fixed (char *ptr = value) {
-					handle = CFStringCreateWithCharacters (IntPtr.Zero, (IntPtr) ptr, (IntPtr) value.Length);
-				}
-			}
-
-			if (handle == IntPtr.Zero)
-				return null;
-
-			return new CFString (handle, true);
-		}
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static /* CFIndex */ IntPtr CFStringGetLength (IntPtr handle);
-
-		public int Length {
-			get {
-				if (str != null)
-					return str.Length;
-
-				return (int) CFStringGetLength (Handle);
-			}
-		}
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static IntPtr CFStringGetCharactersPtr (IntPtr handle);
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static IntPtr CFStringGetCharacters (IntPtr handle, CFRange range, IntPtr buffer);
-
-		public static string AsString (IntPtr handle)
-		{
-			if (handle == IntPtr.Zero)
-				return null;
-			
-			int len = (int) CFStringGetLength (handle);
-			
-			if (len == 0)
-				return string.Empty;
-			
-			IntPtr chars = CFStringGetCharactersPtr (handle);
-			IntPtr buffer = IntPtr.Zero;
-			
-			if (chars == IntPtr.Zero) {
-				CFRange range = new CFRange (0, len);
-				buffer = Marshal.AllocHGlobal (len * 2);
-				CFStringGetCharacters (handle, range, buffer);
-				chars = buffer;
-			}
-
-			string str;
-
-			unsafe {
-				str = new string ((char *) chars, 0, len);
-			}
-			
-			if (buffer != IntPtr.Zero)
-				Marshal.FreeHGlobal (buffer);
-
-			return str;
-		}
-
-		public override string ToString ()
-		{
-			if (str == null)
-				str = AsString (Handle);
-
-			return str;
-		}
-
-		public static implicit operator string (CFString str)
-		{
-			return str.ToString ();
-		}
-
-		public static implicit operator CFString (string str)
-		{
-			return Create (str);
-		}
-	}
-
-	internal class CFDictionary : CFObject
-	{
-		public CFDictionary (IntPtr handle, bool own) : base (handle, own) { }
-
-		[DllImport (CoreFoundationLibrary)]
-		extern static IntPtr CFDictionaryGetValue (IntPtr handle, IntPtr key);
-
-		public IntPtr GetValue (IntPtr key)
-		{
-			return CFDictionaryGetValue (Handle, key);
-		}
-
-		public IntPtr this[IntPtr key] {
-			get {
-				return GetValue (key);
-			}
-		}
 	}
 
 	internal class CFUrl : CFObject
@@ -493,6 +187,25 @@ namespace Mono.Net
 				return CFProxyType.HTTPS;
 
 			if (type == kCFProxyTypeSOCKS)
+				return CFProxyType.SOCKS;
+			
+			//in OSX 10.13 pointer comparison didn't work for kCFProxyTypeAutoConfigurationURL
+			if (CFString.Compare (type, kCFProxyTypeAutoConfigurationJavaScript) == 0)
+				return CFProxyType.AutoConfigurationJavaScript;
+
+			if (CFString.Compare (type, kCFProxyTypeAutoConfigurationURL) == 0)
+				return CFProxyType.AutoConfigurationUrl;
+
+			if (CFString.Compare (type, kCFProxyTypeFTP) == 0)
+				return CFProxyType.FTP;
+
+			if (CFString.Compare (type, kCFProxyTypeHTTP) == 0)
+				return CFProxyType.HTTP;
+
+			if (CFString.Compare (type, kCFProxyTypeHTTPS) == 0)
+				return CFProxyType.HTTPS;
+
+			if (CFString.Compare (type, kCFProxyTypeSOCKS) == 0)
 				return CFProxyType.SOCKS;
 			
 			return CFProxyType.None;
@@ -1066,4 +779,5 @@ namespace Mono.Net
 			return new CFWebProxy ();
 		}
 	}
+
 }

@@ -25,7 +25,7 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-
+#if !MOBILE && !XAMMAC_4_5
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -52,7 +52,7 @@ namespace MonoTests.System.ServiceModel.Description
 		IAsyncResult current_request;
 		int remaining, port;
 
-		static readonly string mex = File.ReadAllText ("Test/System.ServiceModel.Description/dump.xml");
+		static readonly string mex = File.ReadAllText (TestResourceHelper.GetFullPathOfResource ("Test/Resources/dump.xml"));
 
 		[SetUp]
 		public void StartupServer ()
@@ -245,7 +245,7 @@ namespace MonoTests.System.ServiceModel.Description
 			//TODO: Write test cases for the related overloads of Resolve
 			MetadataResolver.Resolve (
 				contracts,
-				new EndpointAddress ("http://localhost"),
+				new EndpointAddress ("http://doesnotexist"),
 				new MetadataExchangeClient (new EndpointAddress (url)));
 		}
 
@@ -315,7 +315,7 @@ namespace MonoTests.System.ServiceModel.Description
 			List<ContractDescription> contracts = new List<ContractDescription> ();
 			contracts.Add (contract);
 
-			MetadataResolver.Resolve (contracts, new EndpointAddress ("http://localhost"));
+			MetadataResolver.Resolve (contracts, new EndpointAddress ("http://doesnotexist"));
 		}
 
 		private void CheckIEchoServiceEndpoint (ServiceEndpointCollection endpoints)
@@ -347,7 +347,7 @@ namespace MonoTests.System.ServiceModel.Description
 		public void ResolveBadUri ()
 		{
 			MetadataResolver.Resolve (
-				typeof (IEchoService), new EndpointAddress ("http://localhost"));
+				typeof (IEchoService), new EndpointAddress ("http://doesnotexist"));
 		}
 
 		[DataContract]
@@ -375,3 +375,4 @@ namespace MonoTests.System.ServiceModel.Description
 		}
 	}
 }
+#endif

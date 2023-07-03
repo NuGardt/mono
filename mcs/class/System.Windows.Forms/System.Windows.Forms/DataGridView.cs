@@ -174,7 +174,7 @@ namespace System.Windows.Forms {
 			columnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
 			columnHeadersDefaultCellStyle = new DataGridViewCellStyle();
 			columnHeadersDefaultCellStyle.BackColor = SystemColors.Control;
-			columnHeadersDefaultCellStyle.ForeColor = SystemColors.WindowText;
+			columnHeadersDefaultCellStyle.ForeColor = SystemColors.ControlText;
 			columnHeadersDefaultCellStyle.SelectionBackColor = SystemColors.Highlight;
 			columnHeadersDefaultCellStyle.SelectionForeColor = SystemColors.HighlightText;
 			columnHeadersDefaultCellStyle.Font = this.Font;
@@ -189,7 +189,7 @@ namespace System.Windows.Forms {
 			dataMember = String.Empty;
 			defaultCellStyle = new DataGridViewCellStyle();
 			defaultCellStyle.BackColor = SystemColors.Window;
-			defaultCellStyle.ForeColor = SystemColors.ControlText;
+			defaultCellStyle.ForeColor = SystemColors.WindowText;
 			defaultCellStyle.SelectionBackColor = SystemColors.Highlight;
 			defaultCellStyle.SelectionForeColor = SystemColors.HighlightText;
 			defaultCellStyle.Font = this.Font;
@@ -512,6 +512,8 @@ namespace System.Windows.Forms {
 							border.All = DataGridViewAdvancedCellBorderStyle.Single;
 							break;
 						case DataGridViewCellBorderStyle.Raised:
+							border.All = DataGridViewAdvancedCellBorderStyle.Outset;
+							break;
 						case DataGridViewCellBorderStyle.RaisedVertical:
 							border.Bottom = DataGridViewAdvancedCellBorderStyle.None;
 							border.Top = DataGridViewAdvancedCellBorderStyle.None;
@@ -537,6 +539,9 @@ namespace System.Windows.Forms {
 							border.Right = DataGridViewAdvancedCellBorderStyle.Inset;
 							break;
 						case DataGridViewCellBorderStyle.SingleHorizontal:
+							border.All = DataGridViewAdvancedCellBorderStyle.None;
+							border.Bottom = DataGridViewAdvancedCellBorderStyle.Single;
+							break;
 						case DataGridViewCellBorderStyle.SunkenHorizontal:
 							border.Bottom = DataGridViewAdvancedCellBorderStyle.Inset;
 							border.Top = DataGridViewAdvancedCellBorderStyle.Inset;
@@ -2336,10 +2341,10 @@ namespace System.Windows.Forms {
 				}
 				
 				// Call some functions that allows the editing control to get setup
-				DataGridViewCellStyle style = cell.RowIndex == -1 ? DefaultCellStyle : cell.InheritedStyle;
+				var style = GetCellStyle (cell);
 				cell.InitializeEditingControl (cell.RowIndex, cell.FormattedValue, style);
 				OnEditingControlShowing (new DataGridViewEditingControlShowingEventArgs (EditingControlInternal, style));
-				cell.PositionEditingControl (true, true, this.GetCellDisplayRectangle (cell.ColumnIndex, cell.RowIndex, false), bounds, style, false, false, (columns [cell.ColumnIndex].DisplayIndex == 0), (cell.RowIndex == 0));
+				PositionCellEditingControl (cell, style);
 
 				// Show the editing control
 				if (EditingControlInternal != null)
@@ -3399,6 +3404,12 @@ namespace System.Windows.Forms {
 				foreach (DataGridViewRow row in Rows)
 					row.Dispose();
 				Rows.Clear();
+
+				if (tooltip_timer != null)
+					tooltip_timer.Dispose();
+
+				if (tooltip_window != null)
+					tooltip_window.Dispose();
 			}
 			editingControl = null;
 
@@ -4728,7 +4739,7 @@ namespace System.Windows.Forms {
 			else
 				verticalScrollBar.SafeValueSet (verticalScrollBar.Value - delta);
 
-			OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value));
+			OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value, ScrollOrientation.VerticalScroll));
 		}
 
 		protected virtual void OnMultiSelectChanged (EventArgs e)
@@ -4943,8 +4954,8 @@ namespace System.Windows.Forms {
 			base.OnResize(e);
 			AutoResizeColumnsInternal ();
 			
-			OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value));
-			OnHScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, horizontalScrollBar.Value));
+			OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value, ScrollOrientation.VerticalScroll));
+			OnHScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, horizontalScrollBar.Value, ScrollOrientation.HorizontalScroll));
 		}
 
 		protected override void OnRightToLeftChanged (EventArgs e) {
@@ -5137,27 +5148,28 @@ namespace System.Windows.Forms {
 			if (RowsLeft < 0)
 				RowsLeft = 0;
 
-			if (first_row_index > RowsLeft - 1)
-				first_row_index = RowsLeft - 1;
-
-			if (first_row_index < 0)
-				first_row_index = 0;
-
 			if (RowsLeft == 0) {
 				MoveCurrentCell (-1, -1, true, false, false, true);
 				hover_cell = null;
 			} else if (Columns.Count == 0) {
 				MoveCurrentCell (-1, -1, true, false, false, true);
 				hover_cell = null;
-			} else if (currentCell != null && currentCell.RowIndex == e.RowIndex) {
-				int nextRowIndex = e.RowIndex;
-				if (nextRowIndex >= RowsLeft)
-					nextRowIndex = RowsLeft - 1;
-				MoveCurrentCell (currentCell != null ? currentCell.ColumnIndex : 0, nextRowIndex, 
-						 true, false, false, true);
+			} else {
+				if (currentCell != null && currentCell.RowIndex >= e.RowIndex && currentCell.RowIndex < e.RowIndex + e.RowCount) {
+					int nextRowIndex = e.RowIndex + e.RowCount;
+					if (nextRowIndex >= Rows.Count)
+						nextRowIndex = e.RowIndex - 1;
+					MoveCurrentCell (currentCell.ColumnIndex, nextRowIndex, true, false, false, true);
+				}
 				if (hover_cell != null && hover_cell.RowIndex >= e.RowIndex)
 					hover_cell = null;
 			}
+
+			if (first_row_index > RowsLeft - 1)
+				first_row_index = RowsLeft - 1;
+
+			if (first_row_index < 0)
+				first_row_index = 0;
 		}
 
 		internal void OnRowsPostRemovedInternal (DataGridViewRowsRemovedEventArgs e)
@@ -5865,21 +5877,16 @@ namespace System.Windows.Forms {
 
 			for (int index = 0; index < Columns.Count; index++) {
 				DataGridViewColumn col = Columns[index];
-
 				if (col.Index >= lastRightVisibleColumntIndex) {
 					first_col_index = lastRightVisibleColumntIndex;
-					Invalidate ();
-					OnScroll (e);
+					OnAnyScrollBarScroll (e);
 				} else if (e.NewValue < left + col.Width) {
 					if (first_col_index != index) {
 						first_col_index = index;
-						Invalidate ();
-						OnScroll (e);
+						OnAnyScrollBarScroll (e);
 					}
-
 					return;
 				}
-
 				left += col.Width;
 			}
 		}
@@ -5900,24 +5907,40 @@ namespace System.Windows.Forms {
 
 				if (row.Index >= lastTopVisibleRowIndex) {
 					first_row_index = lastTopVisibleRowIndex;
-					Invalidate ();
-					OnScroll (e);
+					OnAnyScrollBarScroll (e);
 				} else if (e.NewValue < top + row.Height) {
 					if (first_row_index != index) {
 						first_row_index = index;
-						Invalidate ();
-						OnScroll (e);
+						OnAnyScrollBarScroll (e);
 					}
-					
 					return;
 				}
-				
 				top += row.Height;
 			}
-			
+		
 			first_row_index = lastTopVisibleRowIndex;
+			OnAnyScrollBarScroll (e);
+		}
+
+		private void OnAnyScrollBarScroll(ScrollEventArgs e)
+		{
 			Invalidate ();
 			OnScroll (e);
+			if (currentCell != null && currentCell.IsInEditMode) {
+				var style = GetCellStyle (currentCell);
+				PositionCellEditingControl (currentCell, style);
+			}
+		}
+
+		private DataGridViewCellStyle GetCellStyle (DataGridViewCell cell)
+		{
+			return cell.RowIndex == -1 ? DefaultCellStyle : cell.InheritedStyle;
+		}
+
+		private void PositionCellEditingControl (DataGridViewCell cell, DataGridViewCellStyle style)
+		{
+			cell.PositionEditingControl (
+				true, true, this.GetCellDisplayRectangle (cell.ColumnIndex, cell.RowIndex, false), bounds, style, false, false, (columns [cell.ColumnIndex].DisplayIndex == 0), (cell.RowIndex == 0));
 		}
 
 		internal void RaiseCellStyleChanged (DataGridViewCellEventArgs e) {
@@ -6345,7 +6368,7 @@ namespace System.Windows.Forms {
 					}
 				
 					horizontalScrollBar.SafeValueSet (horizontalScrollBar.Value - delta_x);
-					OnHScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, horizontalScrollBar.Value));
+					OnHScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, horizontalScrollBar.Value, ScrollOrientation.HorizontalScroll));
 				} else if (disp_x > first_col_index + displayedColumnsCount - 1 && disp_x != 0) {
 					RefreshScrollBars ();
 					scrollbarsRefreshed = true;
@@ -6357,7 +6380,7 @@ namespace System.Windows.Forms {
 							delta_x += Columns[ColumnDisplayIndexToIndex (i)].Width;
 
 					horizontalScrollBar.SafeValueSet (horizontalScrollBar.Value + delta_x);
-					OnHScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, horizontalScrollBar.Value));
+					OnHScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, horizontalScrollBar.Value, ScrollOrientation.HorizontalScroll));
 				}
 
 				int disp_y = y;
@@ -6379,7 +6402,7 @@ namespace System.Windows.Forms {
 					}
 
 					verticalScrollBar.SafeValueSet (verticalScrollBar.Value - delta_y);
-					OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value));
+					OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value, ScrollOrientation.VerticalScroll));
 				} else if (disp_y > first_row_index + displayedRowsCount - 1 && disp_y != 0) {
 					if (!scrollbarsRefreshed)
 						RefreshScrollBars ();
@@ -6391,7 +6414,7 @@ namespace System.Windows.Forms {
 							delta_y += GetRowInternal (i).Height;
 
 					verticalScrollBar.SafeValueSet (verticalScrollBar.Value + delta_y);
-					OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value));				
+					OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value, ScrollOrientation.VerticalScroll));				
 				}
 			}
 			

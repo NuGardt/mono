@@ -36,7 +36,7 @@
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System.Reflection.Emit;
 #endif
 using System.Threading;
@@ -45,7 +45,9 @@ using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Remoting;
 using System.Runtime.Remoting.Contexts;
+#if !DISABLE_REMOTING
 using System.Runtime.Remoting.Channels;
+#endif
 using System.Runtime.Remoting.Messaging;
 using System.Security;
 using System.Security.Permissions;
@@ -72,7 +74,9 @@ namespace System {
 #endif
         #pragma warning disable 169
         #region Sync with object-internals.h
+		#region Sync with LinkerDescriptor/mscorlib.xml
 		IntPtr _mono_app_domain;
+		#endregion
 		#endregion
         #pragma warning restore 169
 		static string _process_guid;
@@ -116,7 +120,7 @@ namespace System {
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private extern AppDomainSetup getSetup ();
 
-#if NET_2_1
+#if MOBILE
 		internal
 #endif
 		AppDomainSetup SetupInformationNoCopy {
@@ -130,7 +134,7 @@ namespace System {
 			}
 		}
 
-#if !NET_2_1
+#if !MOBILE
 		[MonoTODO]
 		public ApplicationTrust ApplicationTrust {
 			get { throw new NotImplementedException (); }
@@ -139,7 +143,7 @@ namespace System {
 		public string BaseDirectory {
 			get {
 				string path = SetupInformationNoCopy.ApplicationBase;
-#if !NET_2_1
+#if !MOBILE
 				if (SecurityManager.SecurityEnabled && (path != null) && (path.Length > 0)) {
 					// we cannot divulge local file informations
 					new FileIOPermission (FileIOPermissionAccess.PathDiscovery, path).Demand ();
@@ -152,7 +156,7 @@ namespace System {
 		public string RelativeSearchPath {
 			get {
 				string path = SetupInformationNoCopy.PrivateBinPath;
-#if !NET_2_1
+#if !MOBILE
 				if (SecurityManager.SecurityEnabled && (path != null) && (path.Length > 0)) {
 					// we cannot divulge local file informations
 					new FileIOPermission (FileIOPermissionAccess.PathDiscovery, path).Demand ();
@@ -169,7 +173,7 @@ namespace System {
 					return null;
 
 				string path = Path.Combine (setup.DynamicBase, setup.ApplicationName);
-#if !NET_2_1
+#if !MOBILE
 				if (SecurityManager.SecurityEnabled && (path != null) && (path.Length > 0)) {
 					// we cannot divulge local file informations
 					new FileIOPermission (FileIOPermissionAccess.PathDiscovery, path).Demand ();
@@ -194,6 +198,7 @@ namespace System {
 			}
 		}
 
+#if !DISABLE_SECURITY
 		public Evidence Evidence {
 			get {
 #if MONOTOUCH
@@ -239,6 +244,7 @@ namespace System {
 				return (IPrincipal)_principal; 
 			}
 		}
+#endif
 
 		// for AppDomain there is only an allowed (i.e. granted) set
 		// http://msdn.microsoft.com/library/en-us/cpguide/html/cpcondetermininggrantedpermissions.asp
@@ -269,7 +275,11 @@ namespace System {
 					if (rd == CurrentDomain)
 						default_domain = rd;
 					else
+#if DISABLE_REMOTING
+						throw new PlatformNotSupportedException ();
+#else
 						default_domain = (AppDomain) RemotingServices.GetDomainProxy (rd);
+#endif
 				}
 				return default_domain;
 			}
@@ -311,7 +321,7 @@ namespace System {
 			SetupInformationNoCopy.ShadowCopyDirectories = String.Empty;
 		}
 
-#if !NET_2_1
+#if !MOBILE
 		public ObjectHandle CreateComInstanceFrom (string assemblyName, string typeName)
 		{
 			return Activator.CreateComInstanceFrom (assemblyName, typeName);
@@ -505,7 +515,7 @@ namespace System {
 			return (oh != null) ? oh.Unwrap () : null;
 		}
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 		public AssemblyBuilder DefineDynamicAssembly (AssemblyName name, AssemblyBuilderAccess access)
 		{
 			return DefineDynamicAssembly (name, access, null, null, null, null, null, false);
@@ -707,25 +717,26 @@ namespace System {
 		}
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		internal extern Assembly LoadAssembly (string assemblyRef, Evidence securityEvidence, bool refOnly);
+		internal extern Assembly LoadAssembly (string assemblyRef, Evidence securityEvidence, bool refOnly, ref StackCrawlMark stackMark);
 
 		public Assembly Load (AssemblyName assemblyRef)
 		{
 			return Load (assemblyRef, null);
 		}
 
-		internal Assembly LoadSatellite (AssemblyName assemblyRef, bool throwOnError)
+		internal Assembly LoadSatellite (AssemblyName assemblyRef, bool throwOnError, ref StackCrawlMark stackMark)
 		{
 			if (assemblyRef == null)
 				throw new ArgumentNullException ("assemblyRef");
 
-			Assembly result = LoadAssembly (assemblyRef.FullName, null, false);
+			Assembly result = LoadAssembly (assemblyRef.FullName, null, false, ref stackMark);
 			if (result == null && throwOnError)
 				throw new FileNotFoundException (null, assemblyRef.Name);
 			return result;
 		}
 
 		[Obsolete ("Use an overload that does not take an Evidence parameter")]
+		[MethodImplAttribute(MethodImplOptions.NoInlining)] // Methods containing StackCrawlMark local var has to be marked non-inlineable
 		public Assembly Load (AssemblyName assemblyRef, Evidence assemblySecurity)
 		{
 			if (assemblyRef == null)
@@ -738,7 +749,8 @@ namespace System {
 					throw new ArgumentException (Locale.GetText ("assemblyRef.Name cannot be empty."), "assemblyRef");
 			}
 
-			Assembly assembly = LoadAssembly (assemblyRef.FullName, assemblySecurity, false);
+			StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
+			Assembly assembly = LoadAssembly (assemblyRef.FullName, assemblySecurity, false, ref stackMark);
 			if (assembly != null)
 				return assembly;
 
@@ -746,7 +758,7 @@ namespace System {
 				throw new FileNotFoundException (null, assemblyRef.Name);
 
 			string cb = assemblyRef.CodeBase;
-			if (cb.ToLower (CultureInfo.InvariantCulture).StartsWith ("file://"))
+			if (cb.StartsWith ("file://", StringComparison.OrdinalIgnoreCase))
 				cb = new Mono.Security.Uri (cb).LocalPath;
 
 			try {
@@ -777,18 +789,22 @@ namespace System {
 			return assembly;
 		}
 
+		[MethodImplAttribute(MethodImplOptions.NoInlining)] // Methods containing StackCrawlMark local var has to be marked non-inlineable
 		public Assembly Load (string assemblyString)
 		{
-			return Load (assemblyString, null, false);
+			StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
+			return Load (assemblyString, null, false, ref stackMark);
 		}
 
 		[Obsolete ("Use an overload that does not take an Evidence parameter")]
+		[MethodImplAttribute(MethodImplOptions.NoInlining)] // Methods containing StackCrawlMark local var has to be marked non-inlineable
 		public Assembly Load (string assemblyString, Evidence assemblySecurity)
 		{
-			return Load (assemblyString, assemblySecurity, false);
+			StackCrawlMark stackMark = StackCrawlMark.LookForMyCaller;
+			return Load (assemblyString, assemblySecurity, false, ref stackMark);
 		}
 		
-		internal Assembly Load (string assemblyString, Evidence assemblySecurity, bool refonly)
+		internal Assembly Load (string assemblyString, Evidence assemblySecurity, bool refonly, ref StackCrawlMark stackMark)
 		{
 			if (assemblyString == null)
 				throw new ArgumentNullException ("assemblyString");
@@ -796,7 +812,7 @@ namespace System {
 			if (assemblyString.Length == 0)
 				throw new ArgumentException ("assemblyString cannot have zero length");
 
-			Assembly assembly = LoadAssembly (assemblyString, assemblySecurity, refonly);
+			Assembly assembly = LoadAssembly (assemblyString, assemblySecurity, refonly, ref stackMark);
 			if (assembly == null)
 				throw new FileNotFoundException (null, assemblyString);
 			return assembly;
@@ -941,7 +957,7 @@ namespace System {
 				InternalPushDomainRef (domain);
 				pushed = true;
 				InternalSetDomain (domain);
-				object o = ((MonoMethod) method).InternalInvoke (obj, args, out exc);
+				object o = ((RuntimeMethodInfo) method).InternalInvoke (obj, args, out exc);
 				if (exc != null)
 					throw exc;
 				return o;
@@ -963,7 +979,7 @@ namespace System {
 				InternalPushDomainRefByID (domain_id);
 				pushed = true;
 				InternalSetDomainByID (domain_id);
-				object o = ((MonoMethod) method).InternalInvoke (obj, args, out exc);
+				object o = ((RuntimeMethodInfo) method).InternalInvoke (obj, args, out exc);
 				if (exc != null)
 					throw exc;
 				return o;
@@ -984,11 +1000,17 @@ namespace System {
 		}
 
 #if MONO_FEATURE_MULTIPLE_APPDOMAINS
+#if MONODROID
+		[Obsolete ("AppDomain.CreateDomain will no longer be supported in .NET 5 and later.  Consider AssemblyLoadContext when it becomes available https://docs.microsoft.com/en-us/dotnet/core/dependency-loading/understanding-assemblyloadcontext")]
+#endif
 		public static AppDomain CreateDomain (string friendlyName)
 		{
 			return CreateDomain (friendlyName, null, null);
 		}
-		
+
+#if MONODROID
+		[Obsolete ("AppDomain.CreateDomain will no longer be supported in .NET 5 and later.  Consider AssemblyLoadContext when it becomes available https://docs.microsoft.com/en-us/dotnet/core/dependency-loading/understanding-assemblyloadcontext")]
+#endif
 		public static AppDomain CreateDomain (string friendlyName, Evidence securityInfo)
 		{
 			return CreateDomain (friendlyName, securityInfo, null);
@@ -999,6 +1021,9 @@ namespace System {
 
 		[MonoLimitationAttribute ("Currently it does not allow the setup in the other domain")]
 		[SecurityPermission (SecurityAction.Demand, ControlAppDomain = true)]
+#if MONODROID
+		[Obsolete ("AppDomain.CreateDomain will no longer be supported in .NET 5 and later.  Consider AssemblyLoadContext when it becomes available https://docs.microsoft.com/en-us/dotnet/core/dependency-loading/understanding-assemblyloadcontext")]
+#endif
 		public static AppDomain CreateDomain (string friendlyName, Evidence securityInfo, AppDomainSetup info)
 		{
 			if (friendlyName == null)
@@ -1027,7 +1052,7 @@ namespace System {
 			} else if (info.ConfigurationFile == null)
 				info.ConfigurationFile = "[I don't have a config file]";
 
-#if !NET_2_1
+#if !MOBILE
 			if (info.AppDomainInitializer != null) {
 				if (!info.AppDomainInitializer.Method.IsStatic)
 					throw new ArgumentException ("Non-static methods cannot be invoked as an appdomain initializer");
@@ -1037,6 +1062,7 @@ namespace System {
 			info.SerializeNonPrimitives ();
 
 			AppDomain ad = (AppDomain) RemotingServices.GetDomainProxy (createDomain (friendlyName, info));
+#if !DISABLE_SECURITY
 			if (securityInfo == null) {
 				// get default domain's Evidence (unless we're are the default!)
 				if (def == null)
@@ -1046,8 +1072,9 @@ namespace System {
 			}
 			else
 				ad._evidence = new Evidence (securityInfo);	// copy
+#endif
 
-#if !NET_2_1
+#if !MOBILE
 			if (info.AppDomainInitializer != null) {
 				Loader loader = new Loader (
 					info.AppDomainInitializer.Method.DeclaringType.Assembly.Location);
@@ -1082,7 +1109,7 @@ namespace System {
 		}
 #endif // MONO_FEATURE_MULTIPLE_APPDOMAINS
 
-#if !NET_2_1
+#if !MOBILE
 		[Serializable]
 		class Loader {
 
@@ -1133,7 +1160,7 @@ namespace System {
 		}
 #endif // MONO_FEATURE_MULTIPLE_APPDOMAINS
 		
-#if !NET_2_1
+#if !MOBILE
 #if MONO_FEATURE_MULTIPLE_APPDOMAINS
 		public static AppDomain CreateDomain (string friendlyName, Evidence securityInfo, AppDomainSetup info,
 		                                      PermissionSet grantSet, params StrongName [] fullTrustAssemblies)
@@ -1217,14 +1244,16 @@ namespace System {
 			SetData (name, data);
 		}
 
-#if !NET_2_1
 		[Obsolete ("Use AppDomainSetup.DynamicBase")]
 		[SecurityPermission (SecurityAction.LinkDemand, ControlAppDomain = true)]
 		public void SetDynamicBase (string path)
 		{
+#if MOBILE
+			throw new PlatformNotSupportedException ();
+#else
 			SetupInformationNoCopy.DynamicBase = path;
+#endif // MOBILE
 		}
-#endif // !NET_2_1
 
 		[Obsolete ("AppDomain.GetCurrentThreadId has been deprecated"
 			+ " because it does not provide a stable Id when managed"
@@ -1286,14 +1315,11 @@ namespace System {
 		private Assembly DoAssemblyResolve (string name, Assembly requestingAssembly, bool refonly)
 		{
 			ResolveEventHandler del;
-#if !NET_2_1
 			if (refonly)
 				del = ReflectionOnlyAssemblyResolve;
 			else
 				del = AssemblyResolve;
-#else
-			del = AssemblyResolve;
-#endif
+
 			if (del == null)
 				return null;
 			
@@ -1333,19 +1359,20 @@ namespace System {
 			}
 		}
 
-		internal Assembly DoTypeResolve (Object name_or_tb)
+#if MONO_FEATURE_SRE
+		internal Assembly DoTypeBuilderResolve (TypeBuilder tb)
 		{
 			if (TypeResolve == null)
 				return null;
 
-			string name;
-
-#if !FULL_AOT_RUNTIME
-			if (name_or_tb is TypeBuilder)
-				name = ((TypeBuilder) name_or_tb).FullName;
-			else
+			return DoTypeResolve (tb.FullName);
+		}
 #endif
-				name = (string) name_or_tb;
+
+		internal Assembly DoTypeResolve (string name)
+		{
+			if (TypeResolve == null)
+				return null;
 
 			/* Prevent infinite recursion */
 			var ht = type_resolve_in_progress;
@@ -1403,6 +1430,7 @@ namespace System {
 				UnhandledException (this, args);
 		}
 
+#if !DISABLE_REMOTING
 		internal byte[] GetMarshalledDomainObjRef ()
 		{
 			ObjRef oref = RemotingServices.Marshal (AppDomain.CurrentDomain, null, typeof (AppDomain));
@@ -1428,6 +1456,7 @@ namespace System {
 			else
 				arrResponse = null;
 		}
+#endif
 
 #pragma warning restore 169
 
@@ -1490,9 +1519,7 @@ namespace System {
 		}
 #endif // MONO_FEATURE_MULTIPLE_APPDOMAINS
 
-#if !MOBILE
 		public event ResolveEventHandler ReflectionOnlyAssemblyResolve;
-#endif
 
         #pragma warning disable 649
 #if MOBILE

@@ -15,11 +15,12 @@ using System.Collections;
 using System.Threading;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Net;
 using System.Net.Sockets;
 using NUnit.Framework;
 using System.IO;
-
+using System.Runtime.InteropServices;
 using System.Collections.Generic;
 
 using MonoTests.Helpers;
@@ -27,13 +28,15 @@ using MonoTests.Helpers;
 namespace MonoTests.System.Net.Sockets
 {
 	[TestFixture]
+	[Category("NotWasm")]
 	public class SocketTest
 	{
-		// note: also used in SocketCas tests
 		public const string BogusAddress = "192.168.244.244";
-		public const int BogusPort = 23483;
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectIPAddressAny ()
 		{
 			IPEndPoint ep = new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ());
@@ -65,8 +68,7 @@ namespace MonoTests.System.Net.Sockets
 		[Ignore ("Bug #75158")] // Looks like MS fails after the .ctor, when you try to use the socket
 		public void IncompatibleAddress ()
 		{
-			IPEndPoint epIPv6 = new IPEndPoint (IPAddress.IPv6Any,
-								NetworkHelpers.FindFreePort ());
+			IPEndPoint epIPv6 = new IPEndPoint (IPAddress.IPv6Any, 0);
 
 			try {
 				using (Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.IP)) {
@@ -83,11 +85,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+		[Category ("NotWorking")]
 		[Category ("InetAccess")]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BogusEndConnect ()
 		{
 			IPAddress ipOne = IPAddress.Parse (BogusAddress);
-			IPEndPoint ipEP = new IPEndPoint (ipOne, BogusPort);
+			IPEndPoint ipEP = new IPEndPoint (ipOne, NetworkHelpers.FindFreePort ());
 			Socket sock = new Socket (ipEP.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 			IAsyncResult ar = sock.BeginConnect (ipEP, null, null);
 
@@ -113,7 +119,7 @@ namespace MonoTests.System.Net.Sockets
 			Socket.Select (list, list, list, 1000);
 		}
 		
-		private bool BlockingConnect (bool block, int port)
+		private bool BlockingConnect (bool block, ref int port)
 		{
 			IPEndPoint ep = new IPEndPoint(IPAddress.Loopback, port);
 			Socket server = new Socket(AddressFamily.InterNetwork,
@@ -121,6 +127,8 @@ namespace MonoTests.System.Net.Sockets
 						   ProtocolType.Tcp);
 			server.Bind(ep);
 			server.Blocking=block;
+			ep = (IPEndPoint) server.LocalEndPoint;
+			port = ep.Port;
 
 			server.Listen(0);
 
@@ -154,15 +162,19 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		[Ignore ("https://github.com/mono/mono/issues/6513")] // frequently fails on ARM
 		public void AcceptBlockingStatus()
 		{
 			bool block;
-			var port = NetworkHelpers.FindFreePort ();
+			int port = 0;
 	
-			block = BlockingConnect(true, port);
+			block = BlockingConnect(true, ref port);
 			Assert.AreEqual (block, true, "BlockingStatus01");
 
-			block = BlockingConnect(false, port);
+			block = BlockingConnect(false, ref port);
 			Assert.AreEqual (block, false, "BlockingStatus02");
 		}
 
@@ -198,8 +210,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectFailAsync ()
 		{
+			// XXX: Hangs on AIX
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Create("AIX")))
+				Assert.Ignore ("Skipping on AIX/i");
+
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
@@ -220,9 +239,12 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOptionBoolean ()
 		{
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback, NetworkHelpers.FindFreePort ());
+			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback, 0);
 			Socket sock = new Socket (ep.Address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 			try {
 				sock.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
@@ -231,23 +253,25 @@ namespace MonoTests.System.Net.Sockets
 			}
 		}
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void TestSelect1 ()
 		{
-			Socket srv = CreateServer (NetworkHelpers.FindFreePort ());
+			Socket srv = CreateServer (0);
 			ClientSocket clnt = new ClientSocket (srv.LocalEndPoint);
-			Thread th = new Thread (new ThreadStart (clnt.ConnectSleepClose));
 			Socket acc = null;
 			try {
-				th.Start ();
-				acc = srv.Accept ();
+				clnt.Connect ();
 				clnt.Write ();
+				acc = srv.Accept ();
 				ArrayList list = new ArrayList ();
 				ArrayList empty = new ArrayList ();
 				list.Add (acc);
-				Socket.Select (list, empty, empty, 100);
+				Socket.Select (list, empty, empty, 1000);
 				Assert.AreEqual (0, empty.Count, "#01");
 				Assert.AreEqual (1, list.Count, "#02");
-				Socket.Select (empty, list, empty, 100);
+				Socket.Select (empty, list, empty, 1000);
 				Assert.AreEqual (0, empty.Count, "#03");
 				Assert.AreEqual (1, list.Count, "#04");
 				Socket.Select (list, empty, empty, -1);
@@ -260,6 +284,7 @@ namespace MonoTests.System.Net.Sockets
 				if (acc != null)
 					acc.Close ();
 				srv.Close ();
+				clnt.Close ();
 			}
 		}
 
@@ -281,10 +306,13 @@ namespace MonoTests.System.Net.Sockets
 				sock = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 			}
 
-			public void ConnectSleepClose ()
+			public void Connect ()
 			{
 				sock.Connect (ep);
-				Thread.Sleep (2000);
+			}
+
+			public void Close ()
+			{
 				sock.Close ();
 			}
 
@@ -368,7 +396,11 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof (ObjectDisposedException))]
+#endif
 		public void Disposed19 ()
 		{
 			Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -379,7 +411,11 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof (ObjectDisposedException))]
+#endif
 		public void Disposed20 ()
 		{
 			Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -390,7 +426,11 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof (ObjectDisposedException))]
+#endif
 		public void Disposed21 ()
 		{
 			Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -401,7 +441,11 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof (ObjectDisposedException))]
+#endif
 		public void Disposed22 ()
 		{
 			Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -422,13 +466,14 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void GetHashCodeTest ()
 		{
 			Socket server = new Socket (AddressFamily.InterNetwork,
 				SocketType.Stream, ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
-			server.Bind (ep);
+			server.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			server.Listen (1);
 
 			Socket client = new Socket (AddressFamily.InterNetwork, 
@@ -457,13 +502,13 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+		[Category ("RequiresBSDSockets")] // This verifies particular error codes, which we don't care about when nothing's working anyway.
 		public void SocketErrorTest ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							BogusPort);
+			IPEndPoint ep = NetworkHelpers.LocalEphemeralEndPoint ();
 			
 			SocketError_event.Reset ();
 
@@ -471,7 +516,7 @@ namespace MonoTests.System.Net.Sockets
 			sock.BeginConnect (ep, new AsyncCallback(SocketError_callback),
 				sock);
 
-			if (SocketError_event.WaitOne (2000, false) == false) {
+			if (SocketError_event.WaitOne (5000, false) == false) {
 				Assert.Fail ("SocketError wait timed out");
 			}
 
@@ -573,8 +618,6 @@ namespace MonoTests.System.Net.Sockets
 				sock.DontFragment = true;
 				Assert.Fail ("DontFragment #1");
 			} catch (NotSupportedException) {
-			} catch {
-				Assert.Fail ("DontFragment #2");
 			} finally {
 				sock.Close ();
 			}
@@ -592,8 +635,6 @@ namespace MonoTests.System.Net.Sockets
 				Assert.Fail ("EnableBroadcastDefaultTcp #1");
 			} catch (SocketException ex) {
 				Assert.AreEqual (10042, ex.ErrorCode, "EnableBroadcastDefaultTcp #2");
-			} catch {
-				Assert.Fail ("EnableBroadcastDefaultTcp #2");
 			} finally {
 				sock.Close ();
 			}
@@ -623,8 +664,6 @@ namespace MonoTests.System.Net.Sockets
 				Assert.Fail ("EnableBroadcastChangeTcp #1");
 			} catch (SocketException ex) {
 				Assert.AreEqual (10042, ex.ErrorCode, "EnableBroadcastChangeTcp #2");
-			} catch {
-				Assert.Fail ("EnableBroadcastChangeTcp #2");
 			} finally {
 				sock.Close ();
 			}
@@ -704,17 +743,18 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void IsBoundTcp ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							BogusPort);
 			
 			Assert.AreEqual (false, sock.IsBound, "IsBoundTcp #1");
 			
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			Assert.AreEqual (true, sock.IsBound, "IsBoundTcp #2");
 
 			sock.Listen (1);
@@ -736,17 +776,19 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void IsBoundUdp ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Dgram,
 						  ProtocolType.Udp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							BogusPort);
 			
 			Assert.AreEqual (false, sock.IsBound, "IsBoundUdp #1");
 			
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep);
+
 			Assert.AreEqual (true, sock.IsBound, "IsBoundUdp #2");
 			
 			sock.Close ();
@@ -793,8 +835,6 @@ namespace MonoTests.System.Net.Sockets
 				Assert.Fail ("MulticastLoopbackDefaultTcp #1");
 			} catch (SocketException ex) {
 				Assert.AreEqual (10042, ex.ErrorCode, "MulticastLoopbackDefaultTcp #2");
-			} catch {
-				Assert.Fail ("MulticastLoopbackDefaultTcp #2");
 			} finally {
 				sock.Close ();
 			}
@@ -812,8 +852,6 @@ namespace MonoTests.System.Net.Sockets
 				Assert.Fail ("MulticastLoopbackChangeTcp #1");
 			} catch (SocketException ex) {
 				Assert.AreEqual (10042, ex.ErrorCode, "MulticastLoopbackChangeTcp #2");
-			} catch {
-				Assert.Fail ("MulticastLoopbackChangeTcp #2");
 			} finally {
 				sock.Close ();
 			}
@@ -997,7 +1035,6 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
-		[Category ("NotOnMac")] // Mac doesn't throw when overflowing the ttl
 		public void TtlChangeOverflow ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -1007,11 +1044,9 @@ namespace MonoTests.System.Net.Sockets
 			try {
 				sock.Ttl = 256;
 				Assert.Fail ("TtlChangeOverflow #1");
-			} catch (SocketException ex) {
-				Assert.AreEqual (10022, ex.ErrorCode,
+			} catch (ArgumentOutOfRangeException ex) {
+				Assert.AreEqual ("value", ex.ParamName,
 						 "TtlChangeOverflow #2");
-			} catch {
-				Assert.Fail ("TtlChangeoverflow #3");
 			} finally {
 				sock.Close ();
 			}
@@ -1024,8 +1059,6 @@ namespace MonoTests.System.Net.Sockets
 			} catch (SocketException ex) {
 				Assert.AreEqual (10022, ex.ErrorCode,
 						 "TtlChangeOverflow #5");
-			} catch {
-				Assert.Fail ("TtlChangeOverflow #6");
 			} finally {
 				sock.Close ();
 			}
@@ -1139,8 +1172,6 @@ namespace MonoTests.System.Net.Sockets
 				sock.SendTimeout = -2;
 				Assert.Fail ("SendTimeoutChange #8");
 			} catch (ArgumentOutOfRangeException) {
-			} catch {
-				Assert.Fail ("SendTimeoutChange #9");
 			} finally {
 				sock.Close ();
 			}
@@ -1198,8 +1229,6 @@ namespace MonoTests.System.Net.Sockets
 				sock.ReceiveTimeout = -2;
 				Assert.Fail ("ReceiveTimeoutChange #8");
 			} catch (ArgumentOutOfRangeException) {
-			} catch {
-				Assert.Fail ("ReceiveTimeoutChange #9");
 			} finally {
 				sock.Close ();
 			}
@@ -1224,9 +1253,9 @@ namespace MonoTests.System.Net.Sockets
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
-			
+
 			Assert.AreEqual (false, sock.NoDelay, "NoDelayDefaultTcp");
-			
+
 			sock.Close ();
 		}
 
@@ -1257,8 +1286,6 @@ namespace MonoTests.System.Net.Sockets
 			} catch (SocketException ex) {
 				Assert.AreEqual (10042, ex.ErrorCode,
 						 "NoDelayDefaultUdp #2");
-			} catch {
-				Assert.Fail ("NoDelayDefaultUdp #3");
 			} finally {
 				sock.Close ();
 			}
@@ -1277,8 +1304,6 @@ namespace MonoTests.System.Net.Sockets
 			} catch (SocketException ex) {
 				Assert.AreEqual (10042, ex.ErrorCode,
 						 "NoDelayChangeUdp #2");
-			} catch {
-				Assert.Fail ("NoDelayChangeUdp #3");
 			} finally {
 				sock.Close ();
 			}
@@ -1325,14 +1350,18 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof(InvalidOperationException))]
+#endif
 		public void BeginAcceptNotListening ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 
-			sock.Bind (new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ()));
+			sock.Bind (new IPEndPoint (IPAddress.Any, 0));
 			
 			sock.BeginAccept (BACallback, sock);
 			
@@ -1340,15 +1369,16 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginAccept ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
 			
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			BACalledBack.Reset ();
@@ -1407,15 +1437,16 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginAcceptData ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
 			
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			BADCalledBack.Reset ();
@@ -1471,6 +1502,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginAcceptSocketUdp ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -1480,10 +1514,7 @@ namespace MonoTests.System.Net.Sockets
 						 SocketType.Dgram,
 						 ProtocolType.Udp);
 			
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
-			
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out int _);
 			sock.Listen (1);
 			
 			try {
@@ -1491,8 +1522,6 @@ namespace MonoTests.System.Net.Sockets
 				Assert.Fail ("BeginAcceptSocketUdp #1");
 			} catch (SocketException ex) {
 				Assert.AreEqual (10022, ex.ErrorCode, "BeginAcceptSocketUdp #2");
-			} catch {
-				Assert.Fail ("BeginAcceptSocketUdp #3");
 			} finally {
 				acc.Close ();
 				sock.Close ();
@@ -1500,6 +1529,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginAcceptSocketBound ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -1509,23 +1541,15 @@ namespace MonoTests.System.Net.Sockets
 						 SocketType.Stream,
 						 ProtocolType.Tcp);
 			
-			IPEndPoint ep1 = new IPEndPoint (IPAddress.Loopback,
-							 NetworkHelpers.FindFreePort ());
-			
-			IPEndPoint ep2 = new IPEndPoint (IPAddress.Loopback,
-							 NetworkHelpers.FindFreePort ());
-			
-			sock.Bind (ep1);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep1);
 			sock.Listen (1);
 
-			acc.Bind (ep2);
+			acc.Bind (IPAddress.Loopback, out IPEndPoint ep2);
 			
 			try {
 				sock.BeginAccept (acc, 256, BADCallback, sock);
 				Assert.Fail ("BeginAcceptSocketBound #1");
 			} catch (InvalidOperationException) {
-			} catch {
-				Assert.Fail ("BeginAcceptSocketBound #2");
 			} finally {
 				acc.Close ();
 				sock.Close ();
@@ -1533,6 +1557,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginAcceptSocket ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -1542,10 +1569,7 @@ namespace MonoTests.System.Net.Sockets
 						 SocketType.Stream,
 						 ProtocolType.Tcp);
 			
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
-			
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			BADCalledBack.Reset ();
@@ -1608,14 +1632,15 @@ namespace MonoTests.System.Net.Sockets
 				sock.BeginAccept (acc, 256, BADCallback, null);
 				Assert.Fail ("BeginAcceptSocketClosed #1");
 			} catch (ObjectDisposedException) {
-			} catch {
-				Assert.Fail ("BeginAcceptSocketClosed #2");
 			} finally {
 				acc.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginAcceptSocketAccClosed ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -1624,10 +1649,8 @@ namespace MonoTests.System.Net.Sockets
 			Socket acc = new Socket (AddressFamily.InterNetwork,
 						 SocketType.Stream,
 						 ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
 
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out int _);
 			sock.Listen (1);
 			
 			acc.Close ();
@@ -1638,8 +1661,6 @@ namespace MonoTests.System.Net.Sockets
 				sock.BeginAccept (acc, 256, BADCallback, null);
 				Assert.Fail ("BeginAcceptSocketAccClosed #1");
 			} catch (ObjectDisposedException) {
-			} catch {
-				Assert.Fail ("BeginAcceptSocketAccClosed #2");
 			} finally {
 				sock.Close ();
 			}
@@ -1667,6 +1688,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginConnectAddressPort ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -1676,9 +1700,8 @@ namespace MonoTests.System.Net.Sockets
 						    SocketType.Stream,
 						    ProtocolType.Tcp);
 			IPAddress ip = IPAddress.Loopback;
-			IPEndPoint ep = new IPEndPoint (ip, NetworkHelpers.FindFreePort ());
 
-			listen.Bind (ep);
+			listen.Bind (ip, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			BCCalledBack.Reset ();
@@ -1698,52 +1721,121 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void BeginConnectHostNamePortWithoutCallback ()
+		{
+			Socket sock = new Socket (AddressFamily.InterNetwork,
+						  SocketType.Stream,
+						  ProtocolType.Tcp);
+			Socket listen = new Socket (AddressFamily.InterNetwork,
+						    SocketType.Stream,
+						    ProtocolType.Tcp);
+
+			listen.Bind (IPAddress.Loopback, out IPEndPoint ep);
+			listen.Listen (1);
+
+			IAsyncResult result = sock.BeginConnect (IPAddress.Loopback.ToString (), ep.Port, null, null);
+
+			if (result.AsyncWaitHandle.WaitOne (2000, false) == false) {
+				Assert.Fail ("BeginConnectHostNamePortWithoutCallback wait timed out");
+			}
+
+			Assert.AreEqual (true, result.IsCompleted, "BeginConnectHostNamePortWithoutCallback #1");
+
+			sock.EndConnect (result);
+
+			sock.Close ();
+			listen.Close ();
+		}
+
+		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void BeginConnectHostNamePortWithCallback ()
+		{
+			Socket sock = new Socket (AddressFamily.InterNetwork,
+						  SocketType.Stream,
+						  ProtocolType.Tcp);
+			Socket listen = new Socket (AddressFamily.InterNetwork,
+						    SocketType.Stream,
+						    ProtocolType.Tcp);
+
+			listen.Bind (IPAddress.Loopback, out IPEndPoint ep);
+			listen.Listen (1);
+
+			BCCalledBack.Reset ();
+
+			BCConnected = false;
+
+			IAsyncResult result = sock.BeginConnect (IPAddress.Loopback.ToString (), ep.Port, BCCallback, sock);
+
+			if (BCCalledBack.WaitOne (2000, false) == false) {
+				Assert.Fail ("BeginConnectHostNamePortWithCallback wait timed out");
+			}
+
+			Assert.AreEqual (true, BCConnected, "BeginConnectHostNamePortWithCallback #1");
+
+			sock.Close ();
+			listen.Close ();
+		}
+
+		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginConnectAddressPortNull ()
 		{
+			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress ip = null;
 
 			try {
-				sock.BeginConnect (ip, 1244, BCCallback,
+				sock.BeginConnect (ip, port, BCCallback,
 						   sock);
 				Assert.Fail ("BeginConnectAddressPortNull #1");
 			} catch (ArgumentNullException) {
-			} catch {
-				Assert.Fail ("BeginConnectAddressPortNull #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginConnectAddressPortListen ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress ip = IPAddress.Loopback;
-			IPEndPoint ep = new IPEndPoint (ip, NetworkHelpers.FindFreePort ());
 
-			sock.Bind (ep);
+			sock.Bind (ip, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			try {
 				sock.BeginConnect (ip, ep.Port, BCCallback, sock);
 				Assert.Fail ("BeginConnectAddressPortListen #1");
 			} catch (InvalidOperationException) {
-			} catch {
-				Assert.Fail ("BeginConnectAddressPortListen #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof(ObjectDisposedException))]
+#endif
 		public void BeginConnectAddressPortClosed ()
 		{
+			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
@@ -1751,7 +1843,7 @@ namespace MonoTests.System.Net.Sockets
 			
 			sock.Close ();
 			
-			sock.BeginConnect (ip, 1244, BCCallback, sock);
+			sock.BeginConnect (ip, port, BCCallback, sock);
 		}
 		
 		[Test]
@@ -1774,8 +1866,6 @@ namespace MonoTests.System.Net.Sockets
 			Socket listen = new Socket (AddressFamily.InterNetwork,
 						    SocketType.Stream,
 						    ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
 			IPAddress[] ips = new IPAddress[4];
 			
 			ips[0] = IPAddress.Parse ("127.0.0.4");
@@ -1783,7 +1873,7 @@ namespace MonoTests.System.Net.Sockets
 			ips[2] = IPAddress.Parse ("127.0.0.2");
 			ips[3] = IPAddress.Parse ("127.0.0.1");
 
-			listen.Bind (ep);
+			listen.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			BCCalledBack.Reset ();
@@ -1814,6 +1904,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginConnectMultiple2 ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -1824,7 +1917,7 @@ namespace MonoTests.System.Net.Sockets
 						    ProtocolType.Tcp);
 
 			// Need at least two addresses.
-			var ips = Dns.GetHostAddresses (string.Empty);
+			var ips = Dns.GetHostAddresses ("localhost");
 			if (ips.Length < 1)
 				Assert.Ignore ("This test needs at least two IP addresses.");
 
@@ -1838,9 +1931,7 @@ namespace MonoTests.System.Net.Sockets
 			 * succeed it it can connect to at least one of the requested
 			 * addresses.
 			 */
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback, NetworkHelpers.FindFreePort ());
-
-			listen.Bind (ep);
+			listen.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			BCCalledBack.Reset ();
@@ -1868,41 +1959,44 @@ namespace MonoTests.System.Net.Sockets
 
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginConnectMultipleNull ()
 		{
+			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress[] ips = null;
 			
 			try {
-				sock.BeginConnect (ips, 1246, BCCallback,
+				sock.BeginConnect (ips, port, BCCallback,
 						   sock);
 				Assert.Fail ("BeginConnectMultipleNull #1");
 			} catch (ArgumentNullException) {
-			} catch {
-				Assert.Fail ("BeginConnectMultipleNull #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginConnectMultipleListen ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress[] ips = new IPAddress[4];
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
 			
 			ips[0] = IPAddress.Parse ("127.0.0.4");
 			ips[1] = IPAddress.Parse ("127.0.0.3");
 			ips[2] = IPAddress.Parse ("127.0.0.2");
 			ips[3] = IPAddress.Parse ("127.0.0.1");
 			
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			try {
@@ -1910,17 +2004,20 @@ namespace MonoTests.System.Net.Sockets
 						   sock);
 				Assert.Fail ("BeginConnectMultipleListen #1");
 			} catch (InvalidOperationException) {
-			} catch {
-				Assert.Fail ("BeginConnectMultipleListen #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof(ObjectDisposedException))]
+#endif
 		public void BeginConnectMultipleClosed ()
 		{
+			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
@@ -1933,7 +2030,7 @@ namespace MonoTests.System.Net.Sockets
 			
 			sock.Close ();
 			
-			sock.BeginConnect (ips, 1247, BCCallback, sock);
+			sock.BeginConnect (ips, port, BCCallback, sock);
 		}
 		
 		[Test]
@@ -1948,23 +2045,23 @@ namespace MonoTests.System.Net.Sockets
 						   BCCallback, sock);
 				Assert.Fail ("BeginConnectHostPort #1");
 			} catch (ArgumentNullException) {
-			} catch {
-				Assert.Fail ("BeginConnectHostPort #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginConnectHostPortListen ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress ip = IPAddress.Loopback;
-			IPEndPoint ep = new IPEndPoint (ip, NetworkHelpers.FindFreePort ());
 			
-			sock.Bind (ep);
+			sock.Bind (ip, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			try {
@@ -1972,8 +2069,6 @@ namespace MonoTests.System.Net.Sockets
 						   BCCallback, sock);
 				Assert.Fail ("BeginConnectHostPortListen #1");
 			} catch (InvalidOperationException) {
-			} catch {
-				Assert.Fail ("BeginConnectHostPortListen #2");
 			} finally {
 				sock.Close ();
 			}
@@ -1992,8 +2087,6 @@ namespace MonoTests.System.Net.Sockets
 						   sock);
 				Assert.Fail ("BeginConnectHostPortNotIP #1");
 			} catch (NotSupportedException) {
-			} catch {
-				Assert.Fail ("BeginConnectHostPortNotIP #2");
 			} finally {
 				sock.Close ();
 			}
@@ -2027,6 +2120,9 @@ namespace MonoTests.System.Net.Sockets
 		
 		[Test]
 		[Category ("NotDotNet")] // "Needs XP or later"
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginDisconnect ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -2036,9 +2132,8 @@ namespace MonoTests.System.Net.Sockets
 						    SocketType.Stream,
 						    ProtocolType.Tcp);
 			IPAddress ip = IPAddress.Loopback;
-			IPEndPoint ep = new IPEndPoint (ip, NetworkHelpers.FindFreePort ());
 			
-			listen.Bind (ep);
+			listen.Bind (ip, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			sock.Connect (ip, ep.Port);
@@ -2102,8 +2197,6 @@ namespace MonoTests.System.Net.Sockets
 				Assert.Fail ("BeginSendNotConnected #1");
 			} catch (SocketException ex) {
 				Assert.AreEqual (10057, ex.ErrorCode, "BeginSendNotConnected #2");
-			} catch {
-				Assert.Fail ("BeginSendNotConnected #3");
 			} finally {
 				sock.Close ();
 			}
@@ -2125,31 +2218,31 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BindTwice ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
-			IPEndPoint ep1 = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
-			IPEndPoint ep2 = new IPEndPoint (IPAddress.Loopback,
-							 NetworkHelpers.FindFreePort ());
 			
-			sock.Bind (ep1);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep1);
 			
 			try {
-				sock.Bind (ep2);
+				sock.Bind (IPAddress.Loopback, out IPEndPoint ep2);
 				Assert.Fail ("BindTwice #1");
 			} catch (SocketException ex) {
 				Assert.AreEqual (10022, ex.ErrorCode, "BindTwice #2");
-			} catch {
-				Assert.Fail ("BindTwice #3");
 			} finally {
 				sock.Close ();
 			}
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Close ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -2158,10 +2251,8 @@ namespace MonoTests.System.Net.Sockets
 			Socket listen = new Socket (AddressFamily.InterNetwork,
 						    SocketType.Stream,
 						    ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
 			
-			listen.Bind (ep);
+			listen.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			sock.Connect (ep);
@@ -2178,6 +2269,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectAddressPort ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -2187,9 +2281,8 @@ namespace MonoTests.System.Net.Sockets
 						    SocketType.Stream,
 						    ProtocolType.Tcp);
 			IPAddress ip = IPAddress.Loopback;
-			IPEndPoint ep = new IPEndPoint (ip, NetworkHelpers.FindFreePort ());
 
-			listen.Bind (ep);
+			listen.Bind (ip, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			sock.Connect (ip, ep.Port);
@@ -2201,51 +2294,58 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectAddressPortNull ()
 		{
+			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress ip = null;
 
 			try {
-				sock.Connect (ip, 1249);
+				sock.Connect (ip, port);
 				Assert.Fail ("ConnectAddressPortNull #1");
 			} catch (ArgumentNullException) {
-			} catch {
-				Assert.Fail ("ConnectAddressPortNull #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectAddressPortListen ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress ip = IPAddress.Loopback;
-			IPEndPoint ep = new IPEndPoint (ip, NetworkHelpers.FindFreePort ());
 
-			sock.Bind (ep);
+			sock.Bind (ip, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			try {
 				sock.Connect (ip, ep.Port);
 				Assert.Fail ("ConnectAddressPortListen #1");
 			} catch (InvalidOperationException) {
-			} catch {
-				Assert.Fail ("ConnectAddressPortListen #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof(ObjectDisposedException))]
+#endif
 		public void ConnectAddressPortClosed ()
 		{
+			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
@@ -2253,7 +2353,7 @@ namespace MonoTests.System.Net.Sockets
 			
 			sock.Close ();
 			
-			sock.Connect (ip, 1250);
+			sock.Connect (ip, port);
 		}
 		
 		[Test]
@@ -2283,8 +2383,6 @@ namespace MonoTests.System.Net.Sockets
 			Socket listen = new Socket (AddressFamily.InterNetwork,
 						    SocketType.Stream,
 						    ProtocolType.Tcp);
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
 			IPAddress[] ips = new IPAddress[4];
 			
 			ips[0] = IPAddress.Parse ("127.0.0.4");
@@ -2292,7 +2390,7 @@ namespace MonoTests.System.Net.Sockets
 			ips[2] = IPAddress.Parse ("127.0.0.2");
 			ips[3] = IPAddress.Parse ("127.0.0.1");
 
-			listen.Bind (ep);
+			listen.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			sock.Connect (ips, ep.Port);
@@ -2308,6 +2406,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectMultiple2 ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -2318,7 +2419,7 @@ namespace MonoTests.System.Net.Sockets
 						    ProtocolType.Tcp);
 
 			// Need at least two addresses.
-			var ips = Dns.GetHostAddresses (string.Empty);
+			var ips = Dns.GetHostAddresses ("localhost");
 			if (ips.Length < 1)
 				Assert.Ignore ("This test needs at least two IP addresses.");
 
@@ -2330,9 +2431,8 @@ namespace MonoTests.System.Net.Sockets
 			 * Bind to IPAddress.Any; Connect() will fail unless it can
 			 * connect to all the addresses in allIps.
 			 */
-			IPEndPoint ep = new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ());
 
-			listen.Bind (ep);
+			listen.Bind (IPAddress.Any, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			sock.Connect (allIps, ep.Port);
@@ -2348,57 +2448,63 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectMultipleNull ()
 		{
+			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress[] ips = null;
 			
 			try {
-				sock.Connect (ips, 1251);
+				sock.Connect (ips, port);
 				Assert.Fail ("ConnectMultipleNull #1");
 			} catch (ArgumentNullException) {
-			} catch {
-				Assert.Fail ("ConnectMultipleNull #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectMultipleListen ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress[] ips = new IPAddress[4];
-			IPEndPoint ep = new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ());
 			
 			ips[0] = IPAddress.Parse ("127.0.0.4");
 			ips[1] = IPAddress.Parse ("127.0.0.3");
 			ips[2] = IPAddress.Parse ("127.0.0.2");
 			ips[3] = IPAddress.Parse ("127.0.0.1");
 			
-			sock.Bind (ep);
+			sock.Bind (IPAddress.Loopback, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			try {
 				sock.Connect (ips, ep.Port);
 				Assert.Fail ("ConnectMultipleListen #1");
 			} catch (InvalidOperationException) {
-			} catch {
-				Assert.Fail ("ConnectMultipleListen #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof(ObjectDisposedException))]
+#endif
 		public void ConnectMultipleClosed ()
 		{
+			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
@@ -2411,7 +2517,7 @@ namespace MonoTests.System.Net.Sockets
 			
 			sock.Close ();
 			
-			sock.Connect (ips, 1252);
+			sock.Connect (ips, port);
 		}
 		
 		[Test]
@@ -2425,31 +2531,29 @@ namespace MonoTests.System.Net.Sockets
 				sock.Connect ((string)null, 0);
 				Assert.Fail ("ConnectHostPort #1");
 			} catch (ArgumentNullException) {
-			} catch {
-				Assert.Fail ("ConnectHostPort #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectHostPortListen ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
 			IPAddress ip = IPAddress.Loopback;
-			IPEndPoint ep = new IPEndPoint (ip, NetworkHelpers.FindFreePort ());
 			
-			sock.Bind (ep);
+			sock.Bind (ip, out IPEndPoint ep);
 			sock.Listen (1);
 			
 			try {
 				sock.Connect ("localhost", ep.Port);
 				Assert.Fail ("ConnectHostPortListen #1");
 			} catch (InvalidOperationException) {
-			} catch {
-				Assert.Fail ("ConnectHostPortListen #2");
 			} finally {
 				sock.Close ();
 			}
@@ -2467,15 +2571,17 @@ namespace MonoTests.System.Net.Sockets
 				sock.Connect ("localhost", 0);
 				Assert.Fail ("ConnectHostPortNotIP #1");
 			} catch (NotSupportedException) {
-			} catch {
-				Assert.Fail ("ConnectHostPortNotIP #2");
 			} finally {
 				sock.Close ();
 			}
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#else
 		[ExpectedException (typeof(ObjectDisposedException))]
+#endif
 		public void ConnectHostPortClosed ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -2489,6 +2595,9 @@ namespace MonoTests.System.Net.Sockets
 		
 		[Test]
 		[Category ("NotDotNet")] // "Needs XP or later"
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Disconnect ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -2498,9 +2607,8 @@ namespace MonoTests.System.Net.Sockets
 						    SocketType.Stream,
 						    ProtocolType.Tcp);
 			IPAddress ip = IPAddress.Loopback;
-			IPEndPoint ep = new IPEndPoint (ip, NetworkHelpers.FindFreePort ());
 			
-			listen.Bind (ep);
+			listen.Bind (ip, out IPEndPoint ep);
 			listen.Listen (1);
 			
 			sock.Connect (ip, ep.Port);
@@ -2546,14 +2654,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveGeneric ()
 		{
 			int i;
 
-			IPEndPoint endpoint = new IPEndPoint(IPAddress.Loopback, NetworkHelpers.FindFreePort ());
-
 			Socket listensock = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-			listensock.Bind (endpoint);
+			listensock.Bind (IPAddress.Loopback, out IPEndPoint endpoint);
 			listensock.Listen(1);
 
 			Socket sendsock = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -2603,14 +2712,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SendGeneric ()
 		{
 			int i;
 
-			IPEndPoint endpoint = new IPEndPoint(IPAddress.Loopback, NetworkHelpers.FindFreePort ());
-
 			Socket listensock = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-			listensock.Bind (endpoint);
+			listensock.Bind (IPAddress.Loopback, out IPEndPoint endpoint);
 			listensock.Listen(1);
 
 			Socket sendsock = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -2661,6 +2771,76 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (AggregateException))] // Something catches the PlatformNotSupportedException and re-throws an AggregateException	
+#endif
+		public void ConcurrentExceedSocketLimit ()
+		{
+			var tasks = new Task[4];
+			for (int i = 0; i < 4; i++) {
+				tasks[i] = Task.Factory.StartNew (() => SendGenericExceedBuffer ());
+			}
+			Task.WaitAll (tasks);
+		}
+
+		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void SendGenericExceedBuffer ()
+		{
+			// Create a buffer larger than the default max.
+			const int BUFFER_SIZE = 65 * 1024;
+			int i;
+
+			Socket listensock = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+			listensock.Bind (IPAddress.Loopback, out IPEndPoint endpoint);
+			listensock.Listen (1);
+
+			Socket sendsock = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+			sendsock.Connect (endpoint);
+
+			Socket clientsock = listensock.Accept ();
+
+			byte[] sendbuf = new byte[BUFFER_SIZE];
+
+			for (i = 0; i < BUFFER_SIZE; i++) {
+				sendbuf[i] = (byte)i;
+			}
+
+			Task sendTask = Task.Factory.StartNew(() => {
+				int sent = sendsock.Send (sendbuf);
+
+				Assert.AreEqual (BUFFER_SIZE, sent, "#1");
+			});
+
+			byte[] recvbuf = new byte[BUFFER_SIZE];
+
+			Task recvTask = Task.Factory.StartNew(() => {
+				int totalReceived = 0;
+				byte[] buffer = new byte[256];
+				while (totalReceived < sendbuf.Length) {
+					int recvd = clientsock.Receive (buffer, 0, buffer.Length, SocketFlags.None);
+					Array.Copy (buffer, 0, recvbuf, totalReceived, recvd);
+					totalReceived += recvd;
+				}
+
+				Assert.AreEqual (BUFFER_SIZE, totalReceived, "#2");
+			});
+
+			Assert.IsTrue (Task.WaitAll (new []{sendTask, recvTask}, 20 * 1000), "#2a");
+
+			for (i = 0; i < BUFFER_SIZE; i++) {
+				Assert.AreEqual (recvbuf[i], sendbuf[i],
+						 "#3/" + i.ToString());
+			}
+
+			sendsock.Close ();
+			clientsock.Close ();
+			listensock.Close ();
+		}
+
+		[Test]
 		public void ListenNotBound ()
 		{
 			Socket sock = new Socket (AddressFamily.InterNetwork,
@@ -2672,8 +2852,6 @@ namespace MonoTests.System.Net.Sockets
 				Assert.Fail ("ListenNotBound #1");
 			} catch (SocketException ex) {
 				Assert.AreEqual (10022, ex.ErrorCode, "ListenNotBound #2");
-			} catch {
-				Assert.Fail ("ListenNotBound #3");
 			} finally {
 				sock.Close ();
 			}
@@ -2697,13 +2875,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void CloseWhileReceiving ()
 		{
 			CWRSocket = new Socket (AddressFamily.InterNetwork,
 						SocketType.Dgram,
 						ProtocolType.Udp);
-			CWRSocket.Bind (new IPEndPoint (IPAddress.Loopback,
-							NetworkHelpers.FindFreePort ()));
+			CWRSocket.Bind (IPAddress.Loopback, out int _);
 			
 			Thread recv_thread = new Thread (new ThreadStart (CWRReceiveThread));
 			CWRReady.Reset ();
@@ -3066,6 +3246,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], ref EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom1_Buffer_Null ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream,
@@ -3107,6 +3290,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], ref EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom1_Socket_Closed ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream,
@@ -3127,6 +3313,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], SocketFlags, ref EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom2_Buffer_Null ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream,
@@ -3168,6 +3357,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], SocketFlags, ref EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom2_Socket_Closed ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream,
@@ -3188,6 +3380,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], Int32, SocketFlags, ref EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom3_Buffer_Null ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream,
@@ -3230,6 +3425,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], Int32, SocketFlags, ref EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom3_Size_OutOfRange ()
 		{
 			Socket s;
@@ -3271,6 +3469,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], Int32, SocketFlags, ref EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom3_Socket_Closed ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream,
@@ -3292,6 +3493,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], Int32, Int32, SocketFlags, EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom4_Buffer_Null ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream,
@@ -3311,6 +3515,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], Int32, Int32, SocketFlags, EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom4_Offset_OutOfRange ()
 		{
 			Socket s;
@@ -3374,6 +3581,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], Int32, Int32, SocketFlags, EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom4_Size_OutOfRange ()
 		{
 			Socket s;
@@ -3432,6 +3642,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // ReceiveFrom (Byte [], Int32, Int32, SocketFlags, ref EndPoint)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveFrom4_Socket_Closed ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream,
@@ -3454,13 +3667,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ReceiveRemoteClosed ()
 		{
-			var port = NetworkHelpers.FindFreePort ();
 			Socket sock = new Socket (AddressFamily.InterNetwork,
 						  SocketType.Stream,
 						  ProtocolType.Tcp);
-			sock.Bind (new IPEndPoint (IPAddress.Loopback, port));
+			sock.Bind (IPAddress.Loopback, out int port);
 			sock.Listen (1);
 			
 			RRCReady.Reset ();
@@ -3481,94 +3696,156 @@ namespace MonoTests.System.Net.Sockets
 		//
 		// Test case for bug #471580
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void UdpDoubleBind ()
 		{
-			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-			s.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
-			
-			var ep = new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ());
-			s.Bind (ep);
-			
-			Socket ss = new Socket (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-			ss.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
-			
-			ss.Bind (new IPEndPoint (IPAddress.Any, ep.Port));
+			using (Socket s = new Socket (AddressFamily.InterNetwork,
+						SocketType.Dgram, ProtocolType.Udp))
+			using (Socket ss = new Socket (AddressFamily.InterNetwork,
+						SocketType.Dgram, ProtocolType.Udp)) {
+				var supportsReuseAddress = true;
+				try {
+					s.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+				} catch (SocketException e) {
+					// Exception is thrown when ReuseAddress is not supported
+					Assert.AreEqual ((int) SocketError.OperationNotSupported, e.NativeErrorCode,
+							"Expected SocketError.OperationNotSupported");
+					supportsReuseAddress = false;
+				}
 
-			// If we make it this far, we succeeded.
-			
-			ss.Close ();
-			s.Close ();
-		}
+				s.Bind (IPAddress.Any, out IPEndPoint ep);
 
-#if MONOTOUCH
-		// when the linker is enabled then reflection won't work and would throw an NRE
-		// this is also always true for iOS - so we do not need to poke internals
-		static bool SupportsPortReuse ()
-		{
-			return true;
-		}
-#else
-		static bool? supportsPortReuse;
-		static bool SupportsPortReuse ()
-		{
-			if (supportsPortReuse.HasValue)
-				return supportsPortReuse.Value;
+				if (supportsReuseAddress)
+					ss.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 
-			supportsPortReuse = (bool) typeof (Socket).GetMethod ("SupportsPortReuse",
-					BindingFlags.Static | BindingFlags.NonPublic)
-					.Invoke (null, new object [] {});
-			return supportsPortReuse.Value;
+				try {
+					ss.Bind (new IPEndPoint (IPAddress.Any, ep.Port));
+					if (!supportsReuseAddress)
+						Assert.Fail ("Reusing address is not supported, exception was expected on second bind.");
+				} catch (SocketException e) {
+				}
+			}
 		}
-#endif
 
 		// Test case for bug #31557
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void TcpDoubleBind ()
 		{
 			using (Socket s = new Socket (AddressFamily.InterNetwork,
 						SocketType.Stream, ProtocolType.Tcp))
 			using (Socket ss = new Socket (AddressFamily.InterNetwork,
 						SocketType.Stream, ProtocolType.Tcp)) {
-				s.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-				var ep = new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ());
-				s.Bind (ep);
+				var supportsReuseAddress = true;
+				try {
+					s.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+				} catch (SocketException e) {
+					// Exception is thrown when ReuseAddress is not supported
+					Assert.AreEqual ((int) SocketError.OperationNotSupported, e.NativeErrorCode,
+							"Expected SocketError.OperationNotSupported");
+					supportsReuseAddress = false;
+				}
+
+				s.Bind (IPAddress.Any, out IPEndPoint ep);
 				s.Listen(1);
 
-				ss.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+				if (supportsReuseAddress)
+					ss.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 
-				Exception ex = null;
 				try {
 					ss.Bind (new IPEndPoint (IPAddress.Any, ep.Port));
 					ss.Listen(1);
+					if (!supportsReuseAddress)
+						Assert.Fail ("Reusing address is not supported, exception was expected on second bind.");
 				} catch (SocketException e) {
-					ex = e;
 				}
-
-				Assert.AreEqual (SupportsPortReuse (), ex == null);
 			}
 		}
 
+		// Test case for https://bugzilla.novell.com/show_bug.cgi?id=443346
+		// See also https://bugzilla.xamarin.com/show_bug.cgi?id=52157
 		[Test]
-		[Category ("NotOnMac")]
-                public void ConnectedProperty ()
-                {
-			TcpListener listener = new TcpListener (IPAddress.Loopback, NetworkHelpers.FindFreePort ());
-			listener.Start();
+		[Category("NotOnWindows")] // doesn't work anymore in Win10
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		public void ConnectedProperty ()
+		{
+			var listener = NetworkHelpers.CreateAndStartTcpListener (out int port);
 
-			Socket client = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-			client.Connect (IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port);
-			Socket server = listener.AcceptSocket ();
+			var client = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+			client.Connect (IPAddress.Loopback, port);
+			var server = listener.AcceptSocket ();
 
-			try {
-				server.EndSend(server.BeginSend (new byte[10], 0, 10, SocketFlags.None, null, null));
+			const int blobSize = 2048;
+
+			// Small send/recv buffers so that our send operation will fill them
+			server.ReceiveBufferSize = server.SendBufferSize = 256;
+			client.ReceiveBufferSize = client.SendBufferSize = 256;
+
+			// Setting this linger state causes shutdown to be a hard close (RST if send data is pending)
+			server.LingerState = client.LingerState = new LingerOption (true, 0);
+
+			// KeepAlive being set introduces another opportunity for a RST according to some documentation
+			server.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+			client.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+
+			try 
+			{
+				// Fill the send buffer
+				client.Send (new byte[blobSize]);
+				// Now shut down the socket. Because of the linger state this will hard close and send RST.
+				client.Shutdown (SocketShutdown.Both);
 				client.Close ();
-				try {
-					server.EndReceive (server.BeginReceive (new byte[10], 0, 10, SocketFlags.None, null, null));
-				} catch {
+
+				Assert.IsFalse (client.Connected);
+				Assert.IsTrue (server.Connected);
+
+				var isDead = false;
+
+				try 
+				{
+					// On Windows this BeginSend succeeds... it really shouldn't and a sync send fails.
+					// On Linux this fails with a ConnectionReset.
+					var ar = server.BeginSend (new byte[blobSize], 0, blobSize, SocketFlags.None, null, null);
+					// On Mac we get an erroneous WSAESHUTDOWN (10058) here
+					server.EndSend (ar);
+				} 
+				catch (SocketException se) 
+				{
+					isDead = true;
+
+					if (
+						(se.SocketErrorCode != SocketError.ConnectionReset) &&
+						(se.SocketErrorCode != SocketError.Shutdown)
+					)
+						throw;
+				} 
+
+				if (!isDead) 
+				{
+					try 
+					{
+						// On Windows this second send operation will fail with a ConnectionReset.
+						var ar = server.BeginSend (new byte[blobSize], 0, blobSize, SocketFlags.None, null, null);
+						server.EndSend (ar);
+					} 
+					catch (SocketException se) 
+					{
+						if (se.SocketErrorCode != SocketError.ConnectionReset)
+							throw;
+					} 
 				}
-				Assert.IsTrue (!client.Connected);
-				Assert.IsTrue (!server.Connected);
-			} finally {
+
+				Assert.IsFalse (client.Connected);
+				Assert.IsFalse (server.Connected);
+			} 
+			finally 
+			{
 				listener.Stop ();
 				client.Close ();
 				server.Close ();
@@ -3753,12 +4030,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // SetSocketOption (SocketOptionLevel, SocketOptionName, Object)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOption3_AddMembershipIPv4_IPv6MulticastOption ()
 		{
 			IPAddress mcast_addr = IPAddress.Parse ("239.255.255.250");
 
 			using (Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)) {
-				s.Bind (new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ()));
+				s.Bind (new IPEndPoint (IPAddress.Any, 0));
 				try {
 					s.SetSocketOption (SocketOptionLevel.IP, SocketOptionName.AddMembership,
 						new IPv6MulticastOption (mcast_addr));
@@ -3775,12 +4055,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // SetSocketOption (SocketOptionLevel, SocketOptionName, Object)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOption3_AddMembershipIPv4_MulticastOption ()
 		{
 			IPAddress mcast_addr = IPAddress.Parse ("239.255.255.250");
 
 			using (Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)) {
-				s.Bind (new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ()));
+				s.Bind (new IPEndPoint (IPAddress.Any, 0));
 				s.SetSocketOption (SocketOptionLevel.IP, SocketOptionName.AddMembership,
 					new MulticastOption (mcast_addr));
 			}
@@ -3811,6 +4094,12 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // SetSocketOption (SocketOptionLevel, SocketOptionName, Object)
+#if FULL_AOT_DESKTOP || FULL_AOT_INTERP
+		[Category ("NotWorking")] // fails in FullAOT in Docker. See https://github.com/mono/mono/issues/20888
+#endif
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOption3_AddMembershipIPv6_IPv6MulticastOption ()
 		{
 			if (!Socket.OSSupportsIPv6)
@@ -3819,13 +4108,16 @@ namespace MonoTests.System.Net.Sockets
 			IPAddress mcast_addr = IPAddress.Parse ("ff02::1");
 
 			using (Socket s = new Socket (AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp)) {
-				s.Bind (new IPEndPoint (IPAddress.IPv6Any, NetworkHelpers.FindFreePort ()));
+				s.Bind (new IPEndPoint (IPAddress.IPv6Any, 0));
 				s.SetSocketOption (SocketOptionLevel.IPv6, SocketOptionName.AddMembership,
 					new IPv6MulticastOption (mcast_addr));
 			}
 		}
 
 		[Test] // SetSocketOption (SocketOptionLevel, SocketOptionName, Object)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOption3_AddMembershipIPv6_MulticastOption ()
 		{
 			if (!Socket.OSSupportsIPv6)
@@ -3834,7 +4126,7 @@ namespace MonoTests.System.Net.Sockets
 			IPAddress mcast_addr = IPAddress.Parse ("ff02::1");
 
 			using (Socket s = new Socket (AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp)) {
-				s.Bind (new IPEndPoint (IPAddress.IPv6Any, NetworkHelpers.FindFreePort ()));
+				s.Bind (new IPEndPoint (IPAddress.IPv6Any, 0));
 				try {
 					s.SetSocketOption (SocketOptionLevel.IPv6, SocketOptionName.AddMembership,
 						new MulticastOption (mcast_addr));
@@ -3980,12 +4272,15 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // SetSocketOption (SocketOptionLevel, SocketOptionName, Object)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOption3_DropMembershipIPv4_IPv6MulticastOption ()
 		{
 			IPAddress mcast_addr = IPAddress.Parse ("239.255.255.250");
 
 			using (Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)) {
-				s.Bind (new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ()));
+				s.Bind (new IPEndPoint (IPAddress.Any, 0));
 				s.SetSocketOption (SocketOptionLevel.IP, SocketOptionName.AddMembership,
 					new MulticastOption (mcast_addr));
 				try {
@@ -4004,6 +4299,9 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // SetSocketOption (SocketOptionLevel, SocketOptionName, Object)
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOption3_DropMembershipIPv4_MulticastOption ()
 		{
 			IPAddress mcast_addr = IPAddress.Parse ("239.255.255.250");
@@ -4011,7 +4309,7 @@ namespace MonoTests.System.Net.Sockets
 			using (Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)) {
 				MulticastOption option = new MulticastOption (mcast_addr);
 
-				s.Bind (new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ()));
+				s.Bind (new IPEndPoint (IPAddress.Any, 0));
 				s.SetSocketOption (SocketOptionLevel.IP, SocketOptionName.AddMembership,
 					option);
 				s.SetSocketOption (SocketOptionLevel.IP, SocketOptionName.DropMembership,
@@ -4044,6 +4342,12 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // SetSocketOption (SocketOptionLevel, SocketOptionName, Object)
+#if FULL_AOT_DESKTOP || FULL_AOT_INTERP
+		[Category ("NotWorking")] // fails in FullAOT in Docker. See https://github.com/mono/mono/issues/20888
+#endif
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOption3_DropMembershipIPv6_IPv6MulticastOption ()
 		{
 			if (!Socket.OSSupportsIPv6)
@@ -4053,7 +4357,7 @@ namespace MonoTests.System.Net.Sockets
 				IPv6MulticastOption option = new IPv6MulticastOption (
 					IPAddress.Parse ("ff02::1"));
 
-				s.Bind (new IPEndPoint (IPAddress.IPv6Any, 1902));
+				s.Bind (new IPEndPoint (IPAddress.IPv6Any, 0));
 				s.SetSocketOption (SocketOptionLevel.IPv6, SocketOptionName.AddMembership,
 					option);
 				s.SetSocketOption (SocketOptionLevel.IPv6, SocketOptionName.DropMembership,
@@ -4062,6 +4366,12 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test] // SetSocketOption (SocketOptionLevel, SocketOptionName, Object)
+#if FULL_AOT_DESKTOP || FULL_AOT_INTERP
+		[Category ("NotWorking")] // fails in FullAOT in Docker. See https://github.com/mono/mono/issues/20888
+#endif
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void SetSocketOption3_DropMembershipIPv6_MulticastOption ()
 		{
 			if (!Socket.OSSupportsIPv6)
@@ -4070,7 +4380,7 @@ namespace MonoTests.System.Net.Sockets
 			IPAddress mcast_addr = IPAddress.Parse ("ff02::1");
 
 			using (Socket s = new Socket (AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp)) {
-				s.Bind (new IPEndPoint (IPAddress.IPv6Any, NetworkHelpers.FindFreePort ()));
+				s.Bind (new IPEndPoint (IPAddress.IPv6Any, 0));
 				s.SetSocketOption (SocketOptionLevel.IPv6, SocketOptionName.AddMembership,
 					new IPv6MulticastOption (mcast_addr));
 				try {
@@ -4148,6 +4458,7 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+		[Category ("RequiresBSDSockets")] // on watchOS device this happens: System.Net.Sockets.SocketException : The requested address is not valid in this context. This situation is too complex to detect and throw a PlatformNotSupportedException, so just ignore it.
 		public void SetSocketOption_MulticastInterfaceIndex_Any ()
 		{
 			IPAddress ip = IPAddress.Parse ("239.255.255.250");
@@ -4160,6 +4471,7 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+		[Category ("RequiresBSDSockets")] // on watchOS device this happens: System.Net.Sockets.SocketException : The requested address is not valid in this context. This situation is too complex to detect and throw a PlatformNotSupportedException, so just ignore it.
 		public void SetSocketOption_MulticastInterfaceIndex_Loopback ()
 		{
 			IPAddress ip = IPAddress.Parse ("239.255.255.250");
@@ -4196,10 +4508,13 @@ namespace MonoTests.System.Net.Sockets
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Shutdown_NoConnect ()
 		{
 			Socket s = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-			s.Bind (new IPEndPoint (IPAddress.Loopback, NetworkHelpers.FindFreePort ()));
+			s.Bind (new IPEndPoint (IPAddress.Loopback, 0));
 			s.Listen (1);
 			try {
 				s.Shutdown (SocketShutdown.Both);
@@ -4292,9 +4607,28 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
+		[Ignore ("https://bugzilla.xamarin.com/show_bug.cgi?id=43172")]
 		public void SendAsyncFile ()
 		{
-			Socket serverSocket = StartSocketServer ();
+			Socket serverSocket = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+
+			serverSocket.Bind (new IPEndPoint (IPAddress.Loopback, 0));
+			serverSocket.Listen (1);
+
+			var mReceived = new ManualResetEvent (false);
+
+			serverSocket.BeginAccept (AsyncCall => {
+				byte[] bytes = new byte [1024];
+
+				Socket listener = (Socket)AsyncCall.AsyncState;
+				Socket client = listener.EndAccept (AsyncCall);
+				client.Receive (bytes, bytes.Length, 0);
+				client.Close ();
+				mReceived.Set ();
+			}, serverSocket);
 			
 			Socket clientSocket = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 			clientSocket.Connect (serverSocket.LocalEndPoint);
@@ -4312,18 +4646,17 @@ namespace MonoTests.System.Net.Sockets
 					sw.Write (buffer);
 				}
 
-				var m = new ManualResetEvent (false);
+				var mSent = new ManualResetEvent (false);
 
 				// Async Send File to server
 				clientSocket.BeginSendFile(temp, (ar) => {
 					Socket client = (Socket) ar.AsyncState;
 					client.EndSendFile (ar);
-					m.Set ();
+					mSent.Set ();
 				}, clientSocket);
 
-				if (!m.WaitOne (1500))
-					throw new TimeoutException ();
-				m.Reset ();
+				Assert.IsTrue (mSent.WaitOne (5000), "#1");
+				Assert.IsTrue (mReceived.WaitOne (5000), "#2");
 			} finally {
 				if (File.Exists (temp))
 					File.Delete (temp);
@@ -4334,89 +4667,146 @@ namespace MonoTests.System.Net.Sockets
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void ConnectToIPV4EndPointUsingDualModelSocket () {
-			using (var server = new Socket (SocketType.Stream, ProtocolType.Tcp))
-			using (var client = new Socket (SocketType.Stream, ProtocolType.Tcp)) {
-				var host = new IPEndPoint (IPAddress.Loopback, NetworkHelpers.FindFreePort ());
-					
-				server.Bind (host);
-				server.Listen (0);
+			/*
+			 * IPv6 DualMode sockets are defaults in Mono. Explicitly specify that
+			 * anyways in this test to make it more interoparable with .NET where
+			 * IPv6 and DualMode needs to be specified.
+			 */
+			using (var server = new Socket (AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp)) {
+
+				server.DualMode = true;
+				server.Bind (IPAddress.Loopback, out int _);
+				/*
+				 * Nothing to Accept the connect - we need a backlog to make sure we don't get 
+				 Connection refused.
+				 */
+				server.Listen (3);
 				
 				var ep = server.LocalEndPoint as IPEndPoint;
-				
+				var client = new Socket (AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
+				client.DualMode = true;
 				client.Connect (ep);
-				client.Disconnect (true);
-				
+				client.Disconnect (false);
+				client.Close ();
+
+				client = new Socket (AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
+				client.DualMode = true;
 				client.Connect (IPAddress.Loopback, ep.Port);
-				client.Disconnect (true);
-				
-				client.Connect (new [] {IPAddress.Loopback}, ep.Port);
-				client.Disconnect (true);
+				client.Disconnect (false);
+				client.Close ();
+
+				client = new Socket (AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
+				client.DualMode = true;
+				client.Connect (new [] { IPAddress.Loopback }, ep.Port);
+				client.Disconnect (false);
+				client.Close ();
 			}
 		}
 		
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void BeginConnectToIPV4EndPointUsingDualModelSocket () {
-			using (var server = new Socket (SocketType.Stream, ProtocolType.Tcp))
-			using (var client = new Socket (SocketType.Stream, ProtocolType.Tcp)) {
-				var host = new IPEndPoint (IPAddress.Loopback, NetworkHelpers.FindFreePort ());
-					
-				server.Bind (host);
-				server.Listen (0);
+			/*
+			 * IPv6 DualMode sockets are defaults in Mono. Explicitly specify that
+			 * anyways in this test to make it more interoparable with .NET where
+			 * IPv6 and DualMode needs to be specified.
+			 */
+			using (var server = new Socket (AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp))
+			{
+				server.DualMode = true;
+				server.Bind (IPAddress.Loopback, out int _);
+				server.Listen (10);
 				
 				var ep = server.LocalEndPoint as IPEndPoint;
-				
+
 				BCCalledBack.Reset ();
+				var client = new Socket (AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
+				client.DualMode = true;
 				var ar1 = client.BeginConnect (ep, BCCallback, client);
 				Assert.IsTrue (BCCalledBack.WaitOne (10000), "#1");
-				client.Disconnect (true);
-				
+				Assert.AreEqual(server.AddressFamily, client.RemoteEndPoint.AddressFamily, "#2");
+				Assert.AreEqual(server.AddressFamily, client.LocalEndPoint.AddressFamily, "#3");
+				client.Disconnect (false);
+				client.Close ();
+
 				BCCalledBack.Reset ();
+				client = new Socket (AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
+				client.DualMode = true;
 				var ar2 = client.BeginConnect (IPAddress.Loopback, ep.Port, BCCallback, client);
-				Assert.IsTrue (BCCalledBack.WaitOne (10000), "#2");
-				client.Disconnect (true);
-				
+				Assert.IsTrue (BCCalledBack.WaitOne (10000), "#4");
+				Assert.AreEqual(server.AddressFamily, client.RemoteEndPoint.AddressFamily, "#5");
+				Assert.AreEqual(server.AddressFamily, client.LocalEndPoint.AddressFamily, "#6");
+				client.Disconnect (false);
+				client.Close ();
+
 				BCCalledBack.Reset ();
+				client = new Socket (AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
+				client.DualMode = true;
 				var ar3 = client.BeginConnect (new [] {IPAddress.Loopback}, ep.Port, BCCallback, client);
-				Assert.IsTrue (BCCalledBack.WaitOne (10000), "#2");
-				client.Disconnect (true);
+				Assert.IsTrue (BCCalledBack.WaitOne (10000), "#7");
+				Assert.AreEqual(server.AddressFamily, client.RemoteEndPoint.AddressFamily, "#8");
+				Assert.AreEqual(server.AddressFamily, client.LocalEndPoint.AddressFamily, "#9");
+				client.Disconnect (false);
+				client.Close();
 			}
 		}
 
-		Socket StartSocketServer ()
-		{
-
-			Socket listenSocket = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-			
-			listenSocket.Bind (new IPEndPoint (IPAddress.Loopback, NetworkHelpers.FindFreePort ()));
-			listenSocket.Listen (1);
-
-			listenSocket.BeginAccept (new AsyncCallback (ReceiveCallback), listenSocket);
-			
-			return listenSocket;
-		}
-
-		public static void ReceiveCallback (IAsyncResult AsyncCall)
-		{
-			byte[] bytes = new byte [1024];
-
-			Socket listener = (Socket)AsyncCall.AsyncState;
-			Socket client = listener.EndAccept (AsyncCall);
- 
-			client.Receive (bytes, bytes.Length, 0);
-			client.Close ();
-		}
-
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void UdpMulticasTimeToLive ()
 		{
 			/* see https://bugzilla.xamarin.com/show_bug.cgi?id=36941 */
 
 			using (Socket socket = new Socket (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)) {
-				IPEndPoint end_point = new IPEndPoint (IPAddress.Any, NetworkHelpers.FindFreePort ());
 				socket.SetSocketOption (SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, 1);
-				socket.Bind (end_point);
+				socket.Bind (IPAddress.Any, out int _);
 				socket.SetSocketOption (SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 19);
+			}
+		}
+
+		[Test] // Covers 41616
+		public void ConnectAsyncUnhandledEx ()
+		{
+			var mre = new ManualResetEvent (false);
+
+			var endPoint = new IPEndPoint(0,0);
+			var socket = new Socket(endPoint.AddressFamily, SocketType.Stream, ProtocolType.Unspecified);
+
+			var socketArgs = new SocketAsyncEventArgs();
+			socketArgs.RemoteEndPoint = endPoint;
+			socketArgs.Completed += (sender, e) => mre.Set ();
+
+			if (socket.ConnectAsync (socketArgs))
+				Assert.IsTrue (mre.WaitOne (1000), "ConnectedAsync timeout");
+
+			Assert.AreNotEqual (SocketError.Success, socketArgs.SocketError);
+		}
+
+		[Test] // Covers https://bugzilla.xamarin.com/show_bug.cgi?id=52549
+		public void SocketMismatchProtocol ()
+		{
+			try {
+				using (Socket socket = new Socket (AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Tcp));
+				Assert.Fail ("#1");
+			} catch (SocketException e) {
+				// Only work on OSX
+				// Assert.AreEqual(SocketError.ProtocolType, e.SocketErrorCode, "#2");
+			}
+
+			try {
+				using (Socket socket = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Udp));
+				Assert.Fail ("#3");
+			} catch (SocketException e) {
+				// Only work on OSX
+				// Assert.AreEqual(SocketError.ProtocolType, e.SocketErrorCode, "#4");
 			}
 		}
  	}

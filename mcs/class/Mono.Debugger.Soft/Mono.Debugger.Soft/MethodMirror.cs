@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Reflection;
+
+#if ENABLE_CECIL
 using C = Mono.Cecil;
-using Mono.Cecil.Metadata;
+#endif
 
 namespace Mono.Debugger.Soft
 {
@@ -14,15 +16,19 @@ namespace Mono.Debugger.Soft
 		MethodInfo info;
 		TypeMirror declaring_type;
 		DebugInfo debug_info;
-		C.MethodDefinition meta;
 		CustomAttributeDataMirror[] cattrs;
 		ParameterInfoMirror[] param_info;
 		ParameterInfoMirror ret_param;
 		LocalVariable[] locals;
+		LocalScope[] scopes;
 		IList<Location> locations;
 		MethodBodyMirror body;
 		MethodMirror gmd;
 		TypeMirror[] type_args;
+
+#if ENABLE_CECIL
+		C.MethodDefinition meta;
+#endif
 
 		internal MethodMirror (VirtualMachine vm, long id) : base (vm, id) {
 		}
@@ -58,15 +64,16 @@ namespace Mono.Debugger.Soft
 				sb.Append (ReturnType.Name);
 				sb.Append (' ');
 				if (type_namespace != String.Empty)
-					sb.Append (type_namespace + ".");
+					sb.Append (type_namespace).Append (".");
 				sb.Append(type_name);
 				sb.Append(":");
 				sb.Append(Name);
 				sb.Append(" ");
 				sb.Append("(");
-				for (var i = 0; i < param_info.Length; i++) {
-					sb.Append(param_info[i].ParameterType.Name);
-					if (i != param_info.Length - 1)
+				var parameters = GetParameters ();
+				for (var i = 0; i < parameters.Length; i++) {
+					sb.Append(parameters[i].ParameterType.Name);
+					if (i != parameters.Length - 1)
 						sb.Append(", ");
 				}
 				sb.Append(")");
@@ -92,8 +99,10 @@ namespace Mono.Debugger.Soft
 		}
 
 		CustomAttributeDataMirror[] GetCAttrs (TypeMirror type, bool inherit) {
+#if ENABLE_CECIL
 			if (cattrs == null && meta != null && !Metadata.HasCustomAttributes)
 				cattrs = new CustomAttributeDataMirror [0];
+#endif
 
 			// FIXME: Handle inherit
 			if (cattrs == null) {
@@ -239,6 +248,12 @@ namespace Mono.Debugger.Soft
 			}
 		}
 
+		public LocalScope [] GetScopes () {
+			vm.CheckProtocolVersion (2, 43);
+			GetLocals ();
+			return scopes;
+		}
+
 		public LocalVariable[] GetLocals () {
 			if (locals == null) {
 				LocalsInfo li = new LocalsInfo ();
@@ -258,6 +273,12 @@ namespace Mono.Debugger.Soft
 
 				for (int i = 0; i < li.names.Length; ++i)
 					locals [i + pi.Length] = new LocalVariable (vm, this, i, li.types [i], li.names [i], li.live_range_start [i], li.live_range_end [i], false);
+
+				if (vm.Version.AtLeast (2, 43)) {
+					scopes = new LocalScope [li.scopes_start.Length];
+					for (int i = 0; i < scopes.Length; ++i)
+						scopes [i] = new LocalScope (vm, this, li.scopes_start [i], li.scopes_end [i]);
+				}
 			}
 			return locals;
 		}
@@ -404,6 +425,7 @@ namespace Mono.Debugger.Soft
 			return null;
 		}
 
+#if ENABLE_CECIL
 		public C.MethodDefinition Metadata {
 			get {
 				if (meta == null)
@@ -411,6 +433,7 @@ namespace Mono.Debugger.Soft
 				return meta;
 			}
 		}
+#endif
 
 		//
 		// Evaluate the method on the client using an IL interpreter.

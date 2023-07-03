@@ -29,6 +29,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions
 {
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_Bind
 	{
 		[Test]
@@ -145,7 +146,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void BindValueTypes ()
 		{
 			var i = Expression.Parameter (typeof (int), "i");

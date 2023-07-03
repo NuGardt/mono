@@ -1,36 +1,29 @@
+MAKEFLAGS := $(MAKEFLAGS) --no-builtin-rules
+
 if SUPPORT_SGEN
 sgen_dirs = sgen
 endif
 
+if BTLS
+btls_dirs = btls
+endif
+
+if MONO_NATIVE
+native_dirs = native
+endif
+
+managed_unit_test_dirs = tests
+native_unit_test_dirs = unit-tests
+culture_dirs = culture
+
 if CROSS_COMPILING
-SUBDIRS = arch utils io-layer cil metadata $(sgen_dirs) mini dis profiler
+SUBDIRS = $(btls_dirs) $(culture_dirs) eglib arch utils cil zlib $(sgen_dirs) metadata mini dis profiler $(native_dirs)
 else
 if INSTALL_MONOTOUCH
-SUBDIRS = arch utils io-layer metadata $(sgen_dirs) mini profiler
-
-monotouch-do-build:
-	@list='$(SUBDIRS)'; for subdir in $$list; do \
-	  case "x$$subdir" in \
-		xmetadata ) target="monotouch-do-build" ;; \
-		xmini ) target="monotouch-do-build" ;; \
-		* ) target="all" ;; \
-	  esac; \
-	  echo "Making $$target in $$subdir"; \
-	  (cd $$subdir && $(MAKE) $(AM_MAKEFLAGS) $$target); \
-    done;
-
-monotouch-do-clean:
-	@list='$(SUBDIRS)'; for subdir in $$list; do \
-	  case "x$$subdir" in \
-		xmetadata ) target="monotouch-do-clean" ;; \
-		xmini ) target="monotouch-do-clean" ;; \
-		* ) target="clean" ;; \
-	  esac; \
-	  echo "Making $$target in $$subdir"; \
-	  (cd $$subdir && $(MAKE) $(AM_MAKEFLAGS) $$target); \
-    done;
+SUBDIRS = $(btls_dirs) $(culture_dirs) eglib arch utils zlib $(sgen_dirs) metadata mini profiler $(native_dirs)
 else
-SUBDIRS = arch utils io-layer cil metadata $(sgen_dirs) mini dis tests unit-tests benchmark profiler
+SUBDIRS = $(btls_dirs) $(culture_dirs) eglib arch utils cil zlib $(sgen_dirs) metadata mini dis $(managed_unit_test_dirs) $(native_unit_test_dirs) benchmark profiler $(native_dirs)
 endif
 endif
-DIST_SUBDIRS = arch utils io-layer cil metadata $(sgen_dirs) mini dis tests unit-tests benchmark profiler
+
+DIST_SUBDIRS = btls $(culture_dirs) native eglib arch utils cil zlib $(sgen_dirs) metadata mini dis $(managed_unit_test_dirs) $(native_unit_test_dirs) benchmark profiler

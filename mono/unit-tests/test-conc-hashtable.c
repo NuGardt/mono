@@ -11,6 +11,7 @@
 #include "utils/mono-threads.h"
 #include "utils/mono-conc-hashtable.h"
 #include "utils/checked-build.h"
+#include "metadata/w32handle.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -68,7 +69,7 @@ static void*
 pw_sr_thread (void *arg)
 {
 	int i, idx = 1000 * GPOINTER_TO_INT (arg);
-	mono_thread_info_attach ((gpointer)&arg);
+	mono_thread_info_attach ();
 
 	for (i = 0; i < 1000; ++i) {
 		mono_os_mutex_lock (&global_mutex);
@@ -117,7 +118,7 @@ static void*
 pr_sw_thread (void *arg)
 {
 	int i = 0, idx = 100 * GPOINTER_TO_INT (arg);
-	mono_thread_info_attach ((gpointer)&arg);
+	mono_thread_info_attach ();
 
 	while (i < 100) {
 		gpointer res = mono_conc_hashtable_lookup (hash, GINT_TO_POINTER (i + idx + 1));
@@ -177,7 +178,7 @@ static void*
 pw_pr_r_thread (void *arg)
 {
 	int key, val, i;
-	mono_thread_info_attach ((gpointer)&arg);
+	mono_thread_info_attach ();
 
 	/* i will not be incremented as long as running is set to 1, this guarantee that
 	   we loop over all the keys at least once after the writer threads have finished */
@@ -199,7 +200,7 @@ pw_pr_w_add_thread (void *arg)
 {
 	int i, idx = 1000 * GPOINTER_TO_INT (arg);
 
-	mono_thread_info_attach ((gpointer)&arg);
+	mono_thread_info_attach ();
 
 	for (i = idx; i < idx + 1000; i++) {
 		mono_os_mutex_lock (&global_mutex);
@@ -214,7 +215,7 @@ pw_pr_w_del_thread (void *arg)
 {
 	int i, idx = 1000 * GPOINTER_TO_INT (arg);
 
-	mono_thread_info_attach ((gpointer)&arg);
+	mono_thread_info_attach ();
 
 	for (i = idx; i < idx + 1000; i++) {
 		mono_os_mutex_lock (&global_mutex);
@@ -318,25 +319,38 @@ benchmark_glib (void)
 }
 
 static void
-thread_state_init (MonoThreadUnwindState *ctx)
+monotest_thread_state_init (MonoThreadUnwindState *ctx)
 {
 }
 
+#ifdef __cplusplus
+extern "C"
+#endif
+int
+test_conc_hashtable_main (void);
+
+
+#define monotest_setup_async_callback          NULL
+#define monotest_thread_state_init_from_sigctx NULL
+#define monotest_thread_state_init_from_handle NULL
 
 int
-main (void)
+test_conc_hashtable_main (void)
 {
-	MonoThreadInfoCallbacks cb = { NULL };
-	MonoThreadInfoRuntimeCallbacks ticallbacks;
+	static const MonoThreadInfoRuntimeCallbacks ticallbacks = {
+		MONO_THREAD_INFO_RUNTIME_CALLBACKS (MONO_INIT_CALLBACK, monotest)
+	};
+
 	int res = 0;
 
 	CHECKED_MONO_INIT ();
-	mono_threads_init (&cb, sizeof (MonoThreadInfo));
-	memset (&ticallbacks, 0, sizeof (ticallbacks));
-	ticallbacks.thread_state_init = thread_state_init;
-	mono_threads_runtime_init (&ticallbacks);
+	mono_thread_info_init (sizeof (MonoThreadInfo));
+	mono_thread_info_runtime_init (&ticallbacks);
+#ifndef HOST_WIN32
+	mono_w32handle_init ();
+#endif
 
-	mono_thread_info_attach ((gpointer)&cb);
+	mono_thread_info_attach ();
 
 	// benchmark_conc ();
 	// benchmark_glib ();

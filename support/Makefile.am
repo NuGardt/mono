@@ -1,15 +1,22 @@
+if !ENABLE_MSVC_ONLY
 if HOST_WIN32
 SUPPORT=
 else
 SUPPORT=libMonoSupportW.la
 endif
+
+if BUILD_SUPPORT
 lib_LTLIBRARIES = 				\
 	libMonoPosixHelper.la			\
 	$(SUPPORT)
+endif
 
 AM_CPPFLAGS =					\
+	@ZLIB_CFLAGS@				\
 	$(GLIB_CFLAGS)				\
 	-I$(top_srcdir)
+
+glib_libs = $(top_builddir)/mono/eglib/libeglib.la
 
 # Source code which helps implement the ANSI C standards, and thus *should* be
 # portable to any platform having a C compiler.
@@ -17,6 +24,7 @@ MPH_C_SOURCE =					\
 	errno.c					\
 	map.c					\
 	map.h					\
+	map-impl.h				\
 	mph.h					\
 	signal.c				\
 	stdio.c					\
@@ -56,10 +64,10 @@ MPH_UNIX_SOURCE =				\
 
 if HOST_WIN32
 MPH_SOURCE = $(MPH_C_SOURCE)
-MPH_LIBS   = $(GLIB_LIBS) $(LIBICONV)
+MPH_LIBS   = $(glib_libs)
 else
 MPH_SOURCE = $(MPH_C_SOURCE) $(MPH_UNIX_SOURCE)
-MPH_LIBS   = $(GLIB_LIBS) $(LIBICONV)
+MPH_LIBS   = $(glib_libs)
 endif
 
 MINIZIP_SOURCE = \
@@ -71,35 +79,17 @@ MINIZIP_SOURCE = \
 	minizip/zip.c	\
 	minizip/zip.h
 
-ZLIB_SOURCES = \
-	adler32.c	\
-	compress.c	\
-	crc32.c		\
-	uncompr.c	\
-	deflate.c	\
-	trees.c		\
-	zutil.c		\
-	inflate.c	\
-	infback.c	\
-	inftrees.c	\
-	inffast.c	\
-	crc32.h		\
-	deflate.h  	\
-	inffast.h  	\
-	inffixed.h  	\
-	inflate.h  	\
-	inftrees.h  	\
-	trees.h  	\
-	zconf.h  	\
-	zlib.h  	\
-	zutil.h
+BUNDLE_ZLIB_PATH=$(top_builddir)/mono/zlib/libz.la
+Z_SOURCE=zlib-helper.c
 
-if HAVE_ZLIB
-Z_SOURCE = zlib-helper.c
-Z_LIBS= -lz
+if HAVE_STATIC_ZLIB
+Z_LIBS=$(STATIC_ZLIB_PATH)
 else
-Z_SOURCE = zlib-helper.c $(ZLIB_SOURCES)
-Z_LIBS=
+if HAVE_SYS_ZLIB
+Z_LIBS=-lz
+else
+Z_LIBS=$(BUNDLE_ZLIB_PATH)
+endif
 endif
 
 libMonoPosixHelper_la_SOURCES =			\
@@ -122,7 +112,11 @@ libMonoSupportW_la_SOURCES =			\
 		supportw.h
 
 libMonoSupportW_la_LIBADD =			\
-		$(GLIB_LIBS) $(LIBICONV)
+		$(glib_libs)
+
+test-bundle-local:
+	mkdir -p $(TEST_BUNDLE_PATH)
+	cp -L .libs/libMonoPosixHelper$(libsuffix) $(TEST_BUNDLE_PATH)/
 
 # 
 # Use this target to refresh the values in map.[ch]
@@ -157,6 +151,7 @@ refresh:
 	--autoconf-header="<utime.h>"                         \
 	--impl-header="<time.h>"                              \
 	--impl-header="\"mph.h\""                             \
+	--impl-header="\"map-impl.h\""                        \
 	--rename-member=st_atime=st_atime_                    \
 	--rename-member=st_ctime=st_ctime_                    \
 	--rename-member=st_mtime=st_mtime_                    \
@@ -174,3 +169,17 @@ patch-libtool:
 	sed -e 's,LTCOMPILE =,LTCOMPILE2 =,g' 2 > 3
 	cat 1 3 > Makefile
 	touch *.c
+
+endif # !ENABLE_MSVC_ONLY
+
+if ENABLE_MSVC_ONLY
+
+all-local:
+
+	make -C $(top_srcdir)/msvc libmonoposixhelper
+
+clean-local:
+
+	make -C $(top_srcdir)/msvc clean-libmonoposixhelper
+
+endif # ENABLE_MSVC_ONLY

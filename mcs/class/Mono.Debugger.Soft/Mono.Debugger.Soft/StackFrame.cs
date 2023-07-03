@@ -39,6 +39,8 @@ namespace Mono.Debugger.Soft
 					if (vm.Version.AtLeast (2, 38)) {
 						try {
 							domain = vm.GetDomain (vm.conn.StackFrame_GetDomain (thread.Id, Id));
+						} catch (InvalidStackFrameException) {
+							domain = Thread.Domain;
 						} catch (AbsentInformationException) {
 							domain = Thread.Domain;
 						}
@@ -99,6 +101,18 @@ namespace Mono.Debugger.Soft
 		public int ColumnNumber {
 			get {
 				return Location.ColumnNumber;
+			}
+		}
+
+		public int EndLineNumber {
+			get {
+				return Location.EndLineNumber;
+			}
+		}
+
+		public int EndColumnNumber {
+			get {
+				return Location.EndColumnNumber;
 			}
 		}
 
@@ -164,6 +178,15 @@ namespace Mono.Debugger.Soft
 
 		public Value GetThis () {
 			return vm.DecodeValue (vm.conn.StackFrame_GetThis (thread.Id, Id));
+		}
+
+		// Since protocol version 2.44
+		public void SetThis (Value value) {
+			if (value == null)
+				throw new ArgumentNullException ("value");
+			if (Method.IsStatic || !Method.DeclaringType.IsValueType)
+				throw new InvalidOperationException ("The frame's method needs to be a valuetype instance method.");
+			vm.conn.StackFrame_SetThis (thread.Id, Id, vm.EncodeValue (value));
 		}
 
 		public void SetValue (LocalVariable var, Value value) {

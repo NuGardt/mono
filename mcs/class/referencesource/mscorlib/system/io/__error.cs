@@ -7,7 +7,7 @@
 **
 ** Class:  __Error
 ** 
-** <OWNER>[....]</OWNER>
+** <OWNER>Microsoft</OWNER>
 **
 **
 ** Purpose: Centralized error methods for the IO package.  
@@ -79,31 +79,21 @@ namespace System.IO {
         [System.Security.SecurityCritical]  // auto-generated
         internal static String GetDisplayablePath(String path, bool isInvalidPath)
         {
-            
             if (String.IsNullOrEmpty(path))
                 return String.Empty;
 
-            // Is it a fully qualified path?
-            bool isFullyQualified = false;
             if (path.Length < 2)
                 return path;
-            if (Path.IsDirectorySeparator(path[0]) && Path.IsDirectorySeparator(path[1]))
-                isFullyQualified = true;
-            else if (path[1] == Path.VolumeSeparatorChar) {
-                isFullyQualified = true;
-            }
 
-            if (!isFullyQualified && !isInvalidPath)
+            // Return the path as is if we're relative (not fully qualified) and not a bad path
+            if (PathInternal.IsPartiallyQualified(path) && !isInvalidPath)
                 return path;
 
-#if DISABLE_CAS_USE
-            bool safeToReturn = !isInvalidPath;
-#else
             bool safeToReturn = false;
             try {
                 if (!isInvalidPath) {
-#if !FEATURE_CORECLR
-                    new FileIOPermission(FileIOPermissionAccess.PathDiscovery, new String[] { path }, false, false).Demand();
+#if !FEATURE_CORECLR && MONO_FEATURE_CAS
+                    FileIOPermission.QuickDemand(FileIOPermissionAccess.PathDiscovery, path, false, false);
 #endif
                     safeToReturn = true;
                 }
@@ -119,7 +109,7 @@ namespace System.IO {
                 // from Security.Util.StringExpressionSet.CanonicalizePath when ':' is found in the path
                 // beyond string index position 1.  
             }
-#endif // DISABLE_CAS_USE
+            
             if (!safeToReturn) {
                 if (Path.IsDirectorySeparator(path[path.Length - 1]))
                     path = Environment.GetResourceString("IO.IO_NoPermissionToDirectoryName");
@@ -169,7 +159,7 @@ namespace System.IO {
             case Win32Native.ERROR_ALREADY_EXISTS:
                 if (str.Length == 0)
                     goto default;
-                throw new IOException(Environment.GetResourceString("IO.IO_AlreadyExists_Name", str), Win32Native.MakeHRFromErrorCode(errorCode), maybeFullPath);
+                throw new IOException(Environment.GetResourceString("IO.IO_AlreadyExists_Name", str), Win32Native.MakeHRFromErrorCode(errorCode));
 
             case Win32Native.ERROR_FILENAME_EXCED_RANGE:
                 throw new PathTooLongException(Environment.GetResourceString("IO.PathTooLong"));
@@ -178,24 +168,24 @@ namespace System.IO {
                 throw new DriveNotFoundException(Environment.GetResourceString("IO.DriveNotFound_Drive", str));
 
             case Win32Native.ERROR_INVALID_PARAMETER:
-                throw new IOException(Win32Native.GetMessage(errorCode), Win32Native.MakeHRFromErrorCode(errorCode), maybeFullPath);
+                throw new IOException(Win32Native.GetMessage(errorCode), Win32Native.MakeHRFromErrorCode(errorCode));
 
             case Win32Native.ERROR_SHARING_VIOLATION:
                 if (str.Length == 0)
-                    throw new IOException(Environment.GetResourceString("IO.IO_SharingViolation_NoFileName"), Win32Native.MakeHRFromErrorCode(errorCode), maybeFullPath);
+                    throw new IOException(Environment.GetResourceString("IO.IO_SharingViolation_NoFileName"), Win32Native.MakeHRFromErrorCode(errorCode));
                 else
-                    throw new IOException(Environment.GetResourceString("IO.IO_SharingViolation_File", str), Win32Native.MakeHRFromErrorCode(errorCode), maybeFullPath);
+                    throw new IOException(Environment.GetResourceString("IO.IO_SharingViolation_File", str), Win32Native.MakeHRFromErrorCode(errorCode));
 
             case Win32Native.ERROR_FILE_EXISTS:
                 if (str.Length == 0)
                     goto default;
-                throw new IOException(Environment.GetResourceString("IO.IO_FileExists_Name", str), Win32Native.MakeHRFromErrorCode(errorCode), maybeFullPath);
+                throw new IOException(Environment.GetResourceString("IO.IO_FileExists_Name", str), Win32Native.MakeHRFromErrorCode(errorCode));
 
             case Win32Native.ERROR_OPERATION_ABORTED:
                 throw new OperationCanceledException();
 
             default:
-                throw new IOException(Win32Native.GetMessage(errorCode), Win32Native.MakeHRFromErrorCode(errorCode), maybeFullPath);
+                throw new IOException(Win32Native.GetMessage(errorCode), Win32Native.MakeHRFromErrorCode(errorCode));
             }
         }
 #if !MONO

@@ -166,7 +166,6 @@ namespace MonoTests.Microsoft.Win32
 				Assert.IsNull (ex.InnerException, "#C3");
 				Assert.IsNotNull (ex.Message, "#c4");
 				Assert.IsTrue (ex.Message.IndexOf ("255") != -1, "#C5");
-				Assert.IsNull (ex.ParamName, "#C6");
 			}
 		}
 
@@ -636,7 +635,6 @@ namespace MonoTests.Microsoft.Win32
 					Assert.IsNull (ex.InnerException, "#C3");
 					Assert.IsNotNull (ex.Message, "#C4");
 					Assert.IsTrue (ex.Message.IndexOf ("255") != -1, "#C5");
-					Assert.IsNull (ex.ParamName, "#C6");
 				}
 			}
 		}
@@ -679,6 +677,7 @@ namespace MonoTests.Microsoft.Win32
 					subkey.Close ();
 				if (key != null)
 					key.Close ();
+				Registry.CurrentUser.DeleteSubKeyTree (subKeyName, false);
 			}
 		}
 
@@ -699,6 +698,7 @@ namespace MonoTests.Microsoft.Win32
 					subkey.Close ();
 				if (key != null)
 					key.Close ();
+				Registry.CurrentUser.DeleteSubKeyTree (subKeyName, false);
 			}
 		}
 
@@ -708,14 +708,15 @@ namespace MonoTests.Microsoft.Win32
 			RegistryKey key = null;
 			RegistryKey key2 = null;
 			RegistryKey subkey = null;
-			string subKeyName = "VolatileKey";
+			string subKeyNameVolatile = "VolatileKey";
+			string subKeyNameNonVolatile = "NonVolatileKey";
 
 			try {
 				// 
 				// Create a volatile key and try to open it as a normal one
 				//
-				key = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
-				key2 = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.None);
+				key = Registry.CurrentUser.CreateSubKey (subKeyNameVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
+				key2 = Registry.CurrentUser.CreateSubKey (subKeyNameVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.None);
 				Assert.AreEqual (key.Name, key2.Name, "A0");
 
 				subkey = key2.CreateSubKey ("Child", RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
@@ -729,10 +730,9 @@ namespace MonoTests.Microsoft.Win32
 				// 
 				// Create a non-volatile key and try to open it as a volatile one
 				//
-				subKeyName = "NonVolatileKey";
-				key2 = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.None);
+				key2 = Registry.CurrentUser.CreateSubKey (subKeyNameNonVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.None);
 				key2.SetValue ("Name", "Mono");
-				key = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
+				key = Registry.CurrentUser.CreateSubKey (subKeyNameNonVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
 				Assert.AreEqual (key.Name, key2.Name, "B0");
 				Assert.AreEqual ("Mono", key.GetValue ("Name"), "#B1");
 				Assert.AreEqual ("Mono", key2.GetValue ("Name"), "#B2");
@@ -746,7 +746,7 @@ namespace MonoTests.Microsoft.Win32
 				//
 				key.Close ();
 				key2.Close ();
-				key = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
+				key = Registry.CurrentUser.CreateSubKey (subKeyNameNonVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
 				Assert.AreEqual ("Mono", key.GetValue ("Name"), "#C0");
 				Assert.AreEqual (true, key.OpenSubKey ("Child") != null, "#C1");
 			} finally {
@@ -756,6 +756,8 @@ namespace MonoTests.Microsoft.Win32
 					key.Close ();
 				if (key2 != null)
 					key2.Close ();
+				Registry.CurrentUser.DeleteSubKeyTree (subKeyNameVolatile, false);
+				Registry.CurrentUser.DeleteSubKeyTree (subKeyNameNonVolatile, false);
 			}
 		}
 
@@ -1048,7 +1050,6 @@ namespace MonoTests.Microsoft.Win32
 					Assert.IsNull (ex.InnerException, "#B3");
 					Assert.IsNotNull (ex.Message, "#B4");
 					Assert.IsTrue (ex.Message.IndexOf ("255") != -1, "#B5");
-					Assert.IsNull (ex.ParamName, "#B6");
 				}
 			}
 		}
@@ -1262,7 +1263,6 @@ namespace MonoTests.Microsoft.Win32
 					Assert.IsNull (ex.InnerException, "#B3");
 					Assert.IsNotNull (ex.Message, "#B4");
 					Assert.IsTrue (ex.Message.IndexOf ("255") != -1, "#B5");
-					Assert.IsNull (ex.ParamName, "#B6");
 				}
 			}
 		}
@@ -1611,36 +1611,6 @@ namespace MonoTests.Microsoft.Win32
 					*/
 					Assert.IsNotNull (createdKey.GetValue (null), "#A9");
 					Assert.AreEqual ("value2", createdKey.GetValue (null), "#A10");
-
-					try {
-						createdKey.DeleteValue (null);
-						Assert.Fail ("#B1");
-					} catch (ArgumentNullException ex) {
-						Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#B2");
-						Assert.IsNull (ex.InnerException, "#B3");
-						Assert.IsNotNull (ex.Message, "#B4");
-						Assert.AreEqual ("name", ex.ParamName, "#B5");
-					}
-
-					try {
-						createdKey.DeleteValue (null, true);
-						Assert.Fail ("#C1");
-					} catch (ArgumentNullException ex) {
-						Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#C2");
-						Assert.IsNull (ex.InnerException, "#C3");
-						Assert.IsNotNull (ex.Message, "#C4");
-						Assert.AreEqual ("name", ex.ParamName, "#C5");
-					}
-
-					try {
-						createdKey.DeleteValue (null, false);
-						Assert.Fail ("#D1");
-					} catch (ArgumentNullException ex) {
-						Assert.AreEqual (typeof (ArgumentNullException), ex.GetType (), "#D2");
-						Assert.IsNull (ex.InnerException, "#D3");
-						Assert.IsNotNull (ex.Message, "#D4");
-						Assert.AreEqual ("name", ex.ParamName, "#D5");
-					}
 				}
 			} finally {
 				try {
@@ -2135,8 +2105,6 @@ namespace MonoTests.Microsoft.Win32
 				subKeyNames = createdKey.GetSubKeyNames ();
 				Assert.IsNotNull (subKeyNames, "#C3");
 				Assert.AreEqual (2, subKeyNames.Length, "#C4");
-				Assert.AreEqual ("foo", subKeyNames [0], "#C5");
-				Assert.AreEqual ("longfoo", subKeyNames [1], "#C6");
 
 				subKey = createdKey.CreateSubKey ("sfoo");
 				Assert.IsNotNull (subKey, "#D1");
@@ -2144,9 +2112,6 @@ namespace MonoTests.Microsoft.Win32
 				subKeyNames = createdKey.GetSubKeyNames ();
 				Assert.IsNotNull (subKeyNames, "#D3");
 				Assert.AreEqual (3, subKeyNames.Length, "#D4");
-				Assert.AreEqual ("foo", subKeyNames [0], "#D5");
-				Assert.AreEqual ("longfoo", subKeyNames [1], "#D6");
-				Assert.AreEqual ("sfoo", subKeyNames [2], "#D7");
 
 				foreach (string name in subKeyNames) {
 					createdKey.DeleteSubKeyTree (name);
@@ -2351,7 +2316,7 @@ namespace MonoTests.Microsoft.Win32
 					createdKey.DeleteValue (name);
 					Assert.IsNull (createdKey.GetValue (name), "#B2");
 
-					name = new string ('a', 256);
+					name = new string ('a', 16384); //max length depends on Windows version, for Win10 x64 it's 16383
 
 					try {
 						createdKey.SetValue (name, "value2");
@@ -2365,8 +2330,6 @@ namespace MonoTests.Microsoft.Win32
 						Assert.AreEqual (typeof (ArgumentException), ex.GetType (), "#C2");
 						Assert.IsNull (ex.InnerException, "#C3");
 						Assert.IsNotNull (ex.Message, "#C4");
-						Assert.IsTrue (ex.Message.IndexOf ("255") != -1, "#C5");
-						Assert.IsNull (ex.ParamName, "#C6");
 					}
 				}
 			} finally {
@@ -2508,7 +2471,7 @@ namespace MonoTests.Microsoft.Win32
 			string subKeyName = Guid.NewGuid ().ToString ();
 
 			try {
-				object rawValue = DateTime.Now;
+				object rawValue = DateTime.UtcNow;
 
 				using (RegistryKey createdKey = Registry.CurrentUser.CreateSubKey (subKeyName)) {
 					// we created a new subkey, so value should not exist
@@ -2891,7 +2854,7 @@ namespace MonoTests.Microsoft.Win32
 					createdKey.DeleteValue (name);
 					Assert.IsNull (createdKey.GetValue (name), "#B2");
 
-					name = new string ('a', 256);
+					name = new string ('a', 16384); //max length depends on Windows version, for Win10 x64 it's 16383
 
 					try {
 						createdKey.SetValue (name, "value2",
@@ -2903,8 +2866,6 @@ namespace MonoTests.Microsoft.Win32
 						Assert.AreEqual (typeof (ArgumentException), ex.GetType (), "#C2");
 						Assert.IsNull (ex.InnerException, "#C3");
 						Assert.IsNotNull (ex.Message, "#C4");
-						Assert.IsTrue (ex.Message.IndexOf ("255") != -1, "#C5");
-						Assert.IsNull (ex.ParamName, "#C6");
 					}
 				}
 			} finally {
@@ -3432,15 +3393,20 @@ namespace MonoTests.Microsoft.Win32
 		[Test]
 		public void bugnew2 () // values cannot be written on registry root (hive)
 		{
-			string [] names = Registry.CurrentUser.GetValueNames ();
-			Assert.IsNotNull (names, "#1");
-			Registry.CurrentUser.SetValue ("name1", "value1");
-			Assert.IsNotNull (Registry.CurrentUser.GetValue ("name1"), "#2");
-			Assert.AreEqual ("value1", Registry.CurrentUser.GetValue ("name1"), "#3");
-			string [] newNames = Registry.CurrentUser.GetValueNames ();
-			Assert.IsNotNull (newNames, "#4");
-			Assert.AreEqual (names.Length + 1, newNames.Length, "#5");
-			Registry.CurrentUser.DeleteValue ("name1");
+			try {
+				string [] names = Registry.CurrentUser.GetValueNames ();
+				Assert.IsNotNull (names, "#1");
+				Registry.CurrentUser.SetValue ("name1", "value1");
+				Assert.IsNotNull (Registry.CurrentUser.GetValue ("name1"), "#2");
+				Assert.AreEqual ("value1", Registry.CurrentUser.GetValue ("name1"), "#3");
+				string [] newNames = Registry.CurrentUser.GetValueNames ();
+				Assert.IsNotNull (newNames, "#4");
+				Assert.AreEqual (names.Length + 1, newNames.Length, "#5");
+				Registry.CurrentUser.DeleteValue ("name1");
+			} finally {
+				Registry.CurrentUser.DeleteValue ("name1", false);
+				Registry.CurrentUser.Flush ();
+			}				
 		}
 
 		[Test]

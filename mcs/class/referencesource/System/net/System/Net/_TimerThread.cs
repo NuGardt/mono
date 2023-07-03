@@ -13,7 +13,7 @@ namespace System.Net {
     using System.Runtime.InteropServices;
 
     /// <summary>
-    /// <para>Acts as countdown timer, used to measure elapsed time over a [....] operation.</para>
+    /// <para>Acts as countdown timer, used to measure elapsed time over a sync operation.</para>
     /// </summary>
     internal static class TimerThread {
         /// <summary>
@@ -182,7 +182,9 @@ namespace System.Net {
 
         static TimerThread() {
             s_ThreadEvents = new WaitHandle[] { s_ThreadShutdownEvent, s_ThreadReadyEvent };
+#if MONO_FEATURE_MULTIPLE_APPDOMAINS
             AppDomain.CurrentDomain.DomainUnload += new EventHandler(OnDomainUnload);
+#endif
         }
 
         /// <summary>

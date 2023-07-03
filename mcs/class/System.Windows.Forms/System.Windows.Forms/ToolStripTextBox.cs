@@ -311,7 +311,7 @@ namespace System.Windows.Forms
 		
 		public override Size GetPreferredSize (Size constrainingSize)
 		{
-			return base.GetPreferredSize (constrainingSize);
+			return new Size(TextBox.Bounds.Width, TextBox.PreferredHeight);
 		}
 
 		public void Paste ()
@@ -582,6 +582,20 @@ namespace System.Windows.Forms
 					ToolTipWindow.Present (this, tooltip);
 
 				ToolTipTimer.Stop ();
+			}
+
+			protected override void Dispose(bool disposing)
+			{
+				if (disposing)
+				{
+					if (tooltip_timer != null)
+						tooltip_timer.Dispose();
+
+					if (tooltip_window != null)
+						tooltip_window.Dispose();
+				}
+
+				base.Dispose(disposing);
 			}
 			#endregion
 		}

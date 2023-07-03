@@ -66,7 +66,7 @@ namespace System.Resources {
     }
 
     [FriendAccessAllowed]
-    // [[....] 3/9/2012] This class should be named PRIErrorInfo.
+    // [Microsoft 3/9/2012] This class should be named PRIErrorInfo.
     //
     // During Dev11 CLR RC Ask mode, the Windows Modern Resource Manager
     // made a breaking change such that ResourceMap.GetSubtree returns null when a subtree is
@@ -202,10 +202,12 @@ namespace System.Resources {
 
         private bool UseManifest;  // Use Assembly manifest, or grovel disk.
 
+#pragma warning disable 414
         // unused! But need to keep for serialization
         [OptionalField(VersionAdded = 1)]
         private bool UseSatelliteAssem;  // Are all the .resources files in the 
                   // main assembly, or in satellite assemblies for each culture?
+#pragma warning restore
 #if RESOURCE_SATELLITE_CONFIG
         private static volatile Hashtable _installedSatelliteInfo;  // Give the user the option  
                // to prevent certain satellite assembly probes via a config file.
@@ -269,13 +271,17 @@ namespace System.Resources {
         // My private debugging aid.  Set to 5 or 6 for verbose output.  Set to 3
         // for summary level information.
         internal static readonly int DEBUG = 0; //Making this const causes C# to consider all of the code that it guards unreachable.
-        
+#if FEATURE_APPX        
         private static volatile bool s_IsAppXModel;
+#endif
         
         [MethodImplAttribute(MethodImplOptions.NoInlining)] // Methods containing StackCrawlMark local var has to be marked non-inlineable
         private void Init()
         {
-            m_callingAssembly = (RuntimeAssembly)Assembly.GetCallingAssembly();
+            try {
+                m_callingAssembly = (RuntimeAssembly)Assembly.GetCallingAssembly();
+            } catch {
+            }
         }
 
         protected ResourceManager() 
@@ -293,7 +299,7 @@ namespace System.Resources {
             ResourceManagerMediator mediator = new ResourceManagerMediator(this);
             resourceGroveler = new ManifestBasedResourceGroveler(mediator);
         }
-	
+    
         // Constructs a Resource Manager for files beginning with 
         // baseName in the directory specified by resourceDir
         // or in the current directory.  This Assembly-ignorant constructor is 
@@ -369,14 +375,16 @@ namespace System.Resources {
 
             CommonAssemblyInit();
 
-            m_callingAssembly = (RuntimeAssembly)Assembly.GetCallingAssembly();
-            // Special case for mscorlib - protect mscorlib's private resources.
-            // This isn't for security reasons, but to ensure we can make
-            // breaking changes to mscorlib's internal resources without 
-            // assuming users may have taken a dependency on them.
-            if (assembly == typeof(Object).Assembly && m_callingAssembly != assembly)
-            {
-                m_callingAssembly = null;
+            // GetCallingAssembly might not work on some platforms
+            try {
+                m_callingAssembly = (RuntimeAssembly)Assembly.GetCallingAssembly();
+                // Special case for mscorlib - protect mscorlib's private resources.
+                // This isn't for security reasons, but to ensure we can make
+                // breaking changes to mscorlib's internal resources without 
+                // assuming users may have taken a dependency on them.
+                if (assembly == typeof(Object).Assembly && m_callingAssembly != assembly)
+                    m_callingAssembly = null;
+            } catch {
             }
         }
 
@@ -407,13 +415,16 @@ namespace System.Resources {
             _userResourceSet = usingResourceSet;
 
             CommonAssemblyInit();
-            m_callingAssembly = (RuntimeAssembly)Assembly.GetCallingAssembly();
-            // Special case for mscorlib - protect mscorlib's private resources.
-            // This isn't for security reasons, but to ensure we can make
-            // breaking changes to mscorlib's internal resources without 
-            // assuming users may have taken a dependency on them.
-            if (assembly == typeof(Object).Assembly && m_callingAssembly != assembly)
-                m_callingAssembly = null;
+            try {
+                m_callingAssembly = (RuntimeAssembly)Assembly.GetCallingAssembly();
+                // Special case for mscorlib - protect mscorlib's private resources.
+                // This isn't for security reasons, but to ensure we can make
+                // breaking changes to mscorlib's internal resources without 
+                // assuming users may have taken a dependency on them.
+                if (assembly == typeof(Object).Assembly && m_callingAssembly != assembly)
+                    m_callingAssembly = null;
+            } catch {
+            }
         }
         
         [MethodImplAttribute(MethodImplOptions.NoInlining)] // Methods containing StackCrawlMark local var has to be marked non-inlineable
@@ -434,11 +445,12 @@ namespace System.Resources {
 
             CommonAssemblyInit();
 
-            m_callingAssembly = (RuntimeAssembly)Assembly.GetCallingAssembly();
-            // Special case for mscorlib - protect mscorlib's private resources.
-            if (MainAssembly == typeof(Object).Assembly && m_callingAssembly != MainAssembly)
-            {
-                m_callingAssembly = null;
+            try {
+                m_callingAssembly = (RuntimeAssembly)Assembly.GetCallingAssembly();
+                // Special case for mscorlib - protect mscorlib's private resources.
+                if (MainAssembly == typeof(Object).Assembly && m_callingAssembly != MainAssembly)
+                    m_callingAssembly = null;
+            } catch {
             }
         }
 
@@ -498,7 +510,9 @@ namespace System.Resources {
         [System.Security.SecuritySafeCritical]
         private void CommonAssemblyInit()
         {
+#if FEATURE_APPX            
             if (_bUsingModernResourceManagement == false)
+#endif
             {
                 UseManifest = true;
         
@@ -513,10 +527,9 @@ namespace System.Resources {
 
             _neutralResourcesCulture = ManifestBasedResourceGroveler.GetNeutralResourcesLanguage(MainAssembly, ref _fallbackLoc);
 
-#if !FEATURE_CORECLR   // PAL doesn't support eventing, and we don't compile event providers for coreclr
+#if !FEATURE_CORECLR && FEATURE_APPX  // PAL doesn't support eventing, and we don't compile event providers for coreclr
             if (_bUsingModernResourceManagement == false)
             {
-#if !MONO
                 if (FrameworkEventSource.IsInitialized && FrameworkEventSource.Log.IsEnabled()) {
                     CultureInfo culture = CultureInfo.InvariantCulture;
                     String defaultResName = GetResourceFileName(culture);
@@ -531,11 +544,13 @@ namespace System.Resources {
                         FrameworkEventSource.Log.ResourceManagerNeutralResourcesNotFound(BaseNameField, MainAssembly, outputResName);
                     }
                 }
-#endif
 #pragma warning disable 618
                 ResourceSets = new Hashtable(); // for backward compatibility
 #pragma warning restore 618
             }
+#endif
+#if MONO
+            ResourceSets = new Hashtable(); // for backward compatibility
 #endif
         }
 
@@ -645,7 +660,7 @@ namespace System.Resources {
             return sb.ToString();
         }
 
-        // WARNING: This function must be kept in [....] with ResourceFallbackManager.GetEnumerator()
+        // WARNING: This function must be kept in sync with ResourceFallbackManager.GetEnumerator()
         // Return the first ResourceSet, based on the first culture ResourceFallbackManager would return
         internal ResourceSet GetFirstResourceSet(CultureInfo culture)
         {
@@ -1017,12 +1032,10 @@ namespace System.Resources {
             Type WinRTResourceManagerType = Type.GetType("System.Resources.WindowsRuntimeResourceManager, " + AssemblyRef.SystemRuntimeWindowsRuntime, true);
             return (WindowsRuntimeResourceManagerBase)Activator.CreateInstance(WinRTResourceManagerType, true);
         }
-#endif
 
         [NonSerialized]
         private bool _bUsingModernResourceManagement; // Written only by SetAppXConfiguration
 
-#if FEATURE_APPX
         [NonSerialized]
         [SecurityCritical]
         private WindowsRuntimeResourceManagerBase _WinRTResourceManager; // Written only by SetAppXConfiguration
@@ -1091,8 +1104,8 @@ namespace System.Resources {
 
         private void SetAppXConfiguration()
         {
+#if FEATURE_APPX            
             Contract.Assert(_bUsingModernResourceManagement == false); // Only this function writes to this member
-#if FEATURE_APPX
             Contract.Assert(_WinRTResourceManager == null); // Only this function writes to this member
             Contract.Assert(_PRIonAppXInitialized == false); // Only this function writes to this member
             Contract.Assert(_PRIExceptionInfo == null); // Only this function writes to this member

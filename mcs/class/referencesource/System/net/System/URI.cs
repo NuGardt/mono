@@ -3,7 +3,9 @@
 //     Copyright (c) Microsoft Corporation.  All rights reserved.
 // </copyright>
 //------------------------------------------------------------------------------
-
+#if MONO
+#undef PLATFORM_UNIX
+#endif
 namespace System {
     using System.Runtime.InteropServices;
     using System.Text;
@@ -123,6 +125,10 @@ namespace System {
             QueryIriCanonical =         0x20000000000,
             FragmentIriCanonical =      0x40000000000,
             IriCanonical =              0x78000000000,
+
+#if MONO
+            CompressedSlashes = 0x100000000000
+#endif
         }
 
         private Flags       m_Flags;
@@ -234,16 +240,18 @@ namespace System {
                    ((s_IdnScope == UriIdnScope.All) || ((s_IdnScope == UriIdnScope.AllExceptIntranet)
                                                                             && StaticNotAny(flags, Flags.IntranetUri))));
         }
-
+#if !MONO
         //
         // check if the scheme + host are in intranet or not
         // Used to determine of we apply idn or not
         //
         private static volatile IInternetSecurityManager s_ManagerRef = null;
         private static object s_IntranetLock = new object();
+#endif
 
         private bool IsIntranet(string schemeHost)
         {
+#if !MONO
             bool error = false;
             int zone = -1;
             int E_FAIL = unchecked((int)0x80004005);
@@ -309,6 +317,7 @@ namespace System {
                 }
                 return true;
             }
+#endif
             return false;
         }
 
@@ -461,8 +470,14 @@ namespace System {
 
         private void CreateUri(Uri baseUri, string relativeUri, bool dontEscape)
         {
+            const UriKind kind =
+#if MONO
+                DotNetRelativeOrAbsolute;
+#else
+                RelativeOrAbsolute;
+#endif
             // Parse relativeUri and populate Uri internal data.
-            CreateThis(relativeUri, dontEscape, UriKind.RelativeOrAbsolute);
+            CreateThis(relativeUri, dontEscape, kind);
 
             UriFormatException e;
             if (baseUri.Syntax.IsSimple)
@@ -953,12 +968,30 @@ namespace System {
 
         // Value from config Uri section
         // The use of this IDN mechanic is discouraged on Win8+ due to native platform improvements.
-        private static volatile UriIdnScope s_IdnScope = IdnElement.EnabledDefaultValue;
+        private static volatile UriIdnScope s_IdnScope = 
+#if !CONFIGURATION_DEP
+            UriIdnScope.None;
+#else
+            IdnElement.EnabledDefaultValue;
+#endif
 
         // Value from config Uri section
         // On by default in .NET 4.5+ and cannot be disabled by config.
         private static volatile bool s_IriParsing = 
+#if MONO
+            !(Environment.GetEnvironmentVariable ("MONO_URI_IRIPARSING") == "false");
+#else
             (UriParser.ShouldUseLegacyV2Quirks ? IriParsingElement.EnabledDefaultValue : true);
+#endif
+
+#if MONO
+        // HACK for paths such as "/foo" to be absolute regardless of platform
+        static bool useDotNetRelativeOrAbsolute = Environment.GetEnvironmentVariable ("MONO_URI_DOTNETRELATIVEORABSOLUTE") == "true";
+
+        const UriKind DotNetRelativeOrAbsolute = (UriKind) 300;
+
+        internal static readonly bool IsWindowsFileSystem = System.IO.Path.DirectorySeparatorChar == '\\';
+#endif
 
         private static object s_initLock;
 
@@ -983,7 +1016,7 @@ namespace System {
             if (!s_ConfigInitialized) {
                 lock(InitializeLock) {
                     if (!s_ConfigInitialized && !s_ConfigInitializing) {
-
+#if !MONO
                         // setting s_ConfigInitializing to true makes sure, that in web scenarios,
                         // where Uri instances may be created while parsing the web.config files, will not
                         // call into this code block again. We'll enter the following code only once per
@@ -1003,14 +1036,14 @@ namespace System {
                             SetEscapedDotSlashSettings(section, Uri.UriSchemeWs);
                             SetEscapedDotSlashSettings(section, Uri.UriSchemeWss);
                         }
-
+#endif
                         s_ConfigInitialized = true;
                         s_ConfigInitializing = false;
                     }
                 }
             }
         }
-
+#if !MONO
         // Legacy - This no longer has any affect in .NET 4.5 (non-quirks). See UriParser.HttpSyntaxFlags.
         private static void SetEscapedDotSlashSettings(UriSectionInternal uriSection, string scheme)
         {
@@ -1032,18 +1065,70 @@ namespace System {
                 }
             }
         }
-
+#endif
         private string GetLocalPath(){
             EnsureParseRemaining();
 
+#if MONO
+            // https://bugzilla.xamarin.com/show_bug.cgi?id=58400
+            bool isFileUrlWithHost =
+                (m_Info.Offset.Host != m_Info.Offset.Path) && 
+                // only file URLs
+                IsFile && 
+                // Paths that got reinterpreted as files would be treated
+                //  as if they have a host, like "/a/b" which maps to "file:///a/b/",
+                //  or "C:\a\b\" which maps to "file:///c:/a/b"
+                OriginalString.StartsWith("file://", StringComparison.Ordinal) &&
+                // file://localhost/x/y needs to produce /x/y
+                !IsLoopback;
+
+            // Manually check for "hosts" that are just forward slashes.
+            if (isFileUrlWithHost) {
+                isFileUrlWithHost = false;
+
+                for (int i = m_Info.Offset.Host; i < m_Info.Offset.Path; i++) {
+                    if (OriginalString[i] != '/') {
+                        isFileUrlWithHost = true;
+                        break;
+                    }
+                }
+            }
+
+            // We need to force generation of a UNC-style path instead of a unix one,
+            // despite the path not being UNC originally
+            bool treatAsUncPath = IsUncPath || isFileUrlWithHost;
+
+            //
+            // I think this is wrong but it keeps LocalPath fully backward compatible
+            //
+            if (
+                (IsUncOrDosPath && 
+                    (
+                        IsWindowsFileSystem || 
+                        !IsUncPath
+                    )
+                ) ||
+                // If a path has a host name force it into this branch so the UNC code runs
+                isFileUrlWithHost
+            )
+#else
+            bool treatAsUncPath = IsUncPath;
+
             //Other cases will get a Unix-style path
             if (IsUncOrDosPath)
+#endif
             {
                 EnsureHostString(false);
                 int start;
 
                 // Do we have a valid local path right in m_string?
-                if (NotAny(Flags.HostNotCanonical|Flags.PathNotCanonical|Flags.ShouldBeCompressed)) {
+                if (
+                    NotAny(Flags.HostNotCanonical|Flags.PathNotCanonical|Flags.ShouldBeCompressed)
+#if MONO
+                    // This branch drops the host name so we can't use it
+                    && !isFileUrlWithHost
+#endif
+                ) {
 
                     start = IsUncPath? m_Info.Offset.Host-2 :m_Info.Offset.Path;
 
@@ -1081,7 +1166,7 @@ namespace System {
                 string host = m_Info.Host;
                 result = new char [host.Length + 3 + m_Info.Offset.Fragment - m_Info.Offset.Path ];
 
-                if (IsUncPath)
+                if (treatAsUncPath)
                 {
                     result[0] = '\\';
                     result[1] = '\\';
@@ -2057,7 +2142,7 @@ namespace System {
                     ++length;
                 }
 
-                // [....] codereview:
+                // Microsoft codereview:
                 // Old Uri parser tries to figure out on a DosPath in all cases.
                 // Hence http://c:/ is treated as as DosPath without the host while it should be a host "c", port 80
                 //
@@ -2116,8 +2201,19 @@ namespace System {
                         {
                             // see VsWhidbey#226745 V1.0 did not support file:///, fixing it with minimal behavior change impact
                             // Only FILE scheme may have UNC Path flag set
+#if MONO
+                            if (!IsWindowsFileSystem) {
+                                if (i - idx > 3) {
+                                    m_Flags |= Flags.CompressedSlashes;
+                                    idx = i;
+                                }
+                            } else {
+#endif
                             m_Flags |= Flags.UncPath;
                             idx = i;
+#if MONO
+                            }
+#endif
                         }
                     }
                 }
@@ -2128,8 +2224,8 @@ namespace System {
 #if !PLATFORM_UNIX
                 if ((m_Flags & (Flags.UncPath|Flags.DosPath)) != 0) {
                 }
-#else
-                if ((m_Flags & Flags.ImplicitFile) != 0) {
+// #else
+                else if (!IsWindowsFileSystem && (m_Flags & (Flags.ImplicitFile|Flags.CompressedSlashes)) != 0) {
                     // Already parsed up to the path
                 }
 #endif // !PLATFORM_UNIX
@@ -2140,9 +2236,9 @@ namespace System {
                     if (m_Syntax.InFact(UriSyntaxFlags.MustHaveAuthority)) {
                         // (V1.0 compatiblity) This will allow http:\\ http:\/ http:/\
 #if !PLATFORM_UNIX
-                        if ((first == '/' || first == '\\') && (second == '/' || second == '\\'))
-#else
-                        if (first == '/' && second == '/')
+                        if ((IsWindowsFileSystem && (first == '/' || first == '\\') && (second == '/' || second == '\\')) ||
+// #else
+                        (!IsWindowsFileSystem && (first == '/' && second == '/')))
 #endif // !PLATFORM_UNIX
                         {
                             m_Flags |= Flags.AuthorityFound;
@@ -2269,7 +2365,7 @@ namespace System {
             // plus it will set idx value for next steps
             if ((cF & Flags.ImplicitFile) != 0) {
                 idx = (ushort)0;
-                while (IsLWS(m_String[idx])) {
+                while (idx < info.Offset.End && IsLWS(m_String[idx])) {
                     ++idx;
                     ++info.Offset.Scheme;
                 }
@@ -2300,7 +2396,7 @@ namespace System {
 
                     idx+=2;
 #if !PLATFORM_UNIX
-                    if ((cF & (Flags.UncPath|Flags.DosPath)) != 0) {
+                    if ((cF & (Flags.UncPath|Flags.DosPath|Flags.CompressedSlashes)) != 0) {
                         // Skip slashes if it was allowed during ctor time
                         // NB: Today this is only allowed if a Unc or DosPath was found after the scheme
                         while( idx < (ushort)(cF & Flags.IndexMask) && (m_String[idx] == '/' || m_String[idx] == '\\')) {
@@ -2376,7 +2472,7 @@ namespace System {
             // Note we already checked on general port syntax in ParseMinimal()
 
             // If iri parsing is on with unicode chars then the end of parsed host
-            // points to m_[....] string and not m_String
+            // points to m_orig string and not m_String
 
             bool UseOrigUnicodeStrOffset = ((cF& Flags.UseOrigUncdStrOffset) != 0);
             // This should happen only once. Reset it
@@ -2555,7 +2651,7 @@ namespace System {
                     break;
 
                 case Flags.IPv6HostType:
-                    //[....] codereview
+                    //Microsoft codereview
                     // The helper will return [...] string that is not suited for Dns.Resolve()
                     host = IPv6AddressHelper.ParseCanonicalName(str, idx, ref loopback, ref scopeId);
                     break;
@@ -2698,7 +2794,7 @@ namespace System {
         //
         private string GetEscapedParts(UriComponents uriParts) {
             // Which Uri parts are not escaped canonically ?
-            // Notice that public UriPart and private Flags must me in [....] so below code can work
+            // Notice that public UriPart and private Flags must me in Sync so below code can work
             //
             ushort  nonCanonical = (ushort)(((ushort)m_Flags & ((ushort)Flags.CannotDisplayCanonical<<7)) >> 6);
             if (InFact(Flags.SchemeNotCanonical)) {
@@ -2728,7 +2824,7 @@ namespace System {
 
         private string GetUnescapedParts(UriComponents uriParts, UriFormat formatAs) {
             // Which Uri parts are not escaped canonically ?
-            // Notice that public UriComponents and private Uri.Flags must me in [....] so below code can work
+            // Notice that public UriComponents and private Uri.Flags must me in Sync so below code can work
             //
             ushort  nonCanonical = (ushort)((ushort)m_Flags & (ushort)Flags.CannotDisplayCanonical);
 
@@ -3309,7 +3405,7 @@ namespace System {
             // Parsing the Path if any
             //
 
-            // For iri parsing if we found unicode the idx has offset into m_[....] string..
+            // For iri parsing if we found unicode the idx has offset into m_orig string..
             // so restart parsing from there and make m_Info.Offset.Path as m_string.length
 
             idx = m_Info.Offset.Path;
@@ -3632,7 +3728,7 @@ namespace System {
                 return 0;
             }
 #if !PLATFORM_UNIX
-            else if ((c=uriString[idx]) == '/' || c == '\\') {
+            else if (((c=uriString[idx]) == '/' && IsWindowsFileSystem) || c == '\\') {
                 //UNC share ?
                 if ((c=uriString[idx+1]) == '\\' || c == '/') {
                     flags |= (Flags.UncPath|Flags.ImplicitFile|Flags.AuthorityFound);
@@ -3647,7 +3743,6 @@ namespace System {
                 err = ParsingError.BadFormat;
                 return 0;
             }
-#else
             else if (uriString[idx] == '/') {
                 // On UNIX an implicit file has the form /<path> or scheme:///<path>
                 if (idx == 0 || uriString[idx-1] != ':' ) {
@@ -3901,8 +3996,14 @@ namespace System {
             {
                 if (syntax.InFact(UriSyntaxFlags.AllowEmptyHost))
                 {
+#if !PLATFORM_UNIX
                     flags &= ~Flags.UncPath;    //UNC cannot have an empty hostname
-                    if (StaticInFact(flags, Flags.ImplicitFile))
+#endif
+                    if (StaticInFact(flags, Flags.ImplicitFile)
+#if MONO
+                     && (pString[idx] != '/' || IsWindowsFileSystem)
+#endif
+                     )
                         err = ParsingError.BadHostName;
                     else
                         flags |= Flags.BasicHostType;
@@ -3912,6 +4013,7 @@ namespace System {
 
                 if (hasUnicode && iriParsing && hostNotUnicodeNormalized){
                     flags |= Flags.HostUnicodeNormalized;// no host
+
                 }
 
                  return idx;
@@ -5117,6 +5219,7 @@ namespace System {
            else {
                if (basePart.IsImplicitFile) {
 #if !PLATFORM_UNIX
+                if (IsWindowsFileSystem)
                    if (basePart.IsDosPath) {
                        // The FILE DOS path comes as /c:/path, we have to exclude first 3 chars from compression
                        path = Compress(path, 3, ref length, basePart.Syntax);
@@ -5125,7 +5228,8 @@ namespace System {
                    else {
                        left =  @"\\" + basePart.GetParts(UriComponents.Host, UriFormat.Unescaped);
                    }
-#else
+//#else
+                else
                    left =  basePart.GetParts(UriComponents.Host, UriFormat.Unescaped);
 #endif // !PLATFORM_UNIX
 
@@ -5287,7 +5391,7 @@ namespace System {
         [Obsolete("The method has been deprecated. It is not used by the system. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected virtual void Parse()
         {
-            // [....] cr: In V1-Everett this method if suppressed by the derived class
+            // Microsoft cr: In V1-Everett this method if suppressed by the derived class
             // would lead to an unconstructed Uri instance.
             // It does not make any sense and violates Fxcop on calling a virtual method in the ctor.
             // Should be deprecated and removed asap.
@@ -5296,7 +5400,7 @@ namespace System {
         [Obsolete("The method has been deprecated. It is not used by the system. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected virtual void Canonicalize()
         {
-            // [....] cr: In V1-Everett this method if suppressed by the derived class
+            // Microsoft cr: In V1-Everett this method if suppressed by the derived class
             // would lead to supressing of a path compression
             // It does not make much sense and violates Fxcop on calling a virtual method in the ctor.
             // Should be deprecated and removed asap.
@@ -5305,7 +5409,7 @@ namespace System {
         [Obsolete("The method has been deprecated. It is not used by the system. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected virtual void Escape()
         {
-            // [....] cr: In V1-Everett this method if suppressed by the derived class
+            // Microsoft cr: In V1-Everett this method if suppressed by the derived class
             // would lead to the same effect as dontEscape=true.
             // It does not make much sense and violates Fxcop on calling a virtual method in the ctor.
             // Should be deprecated and removed asap.
@@ -5321,7 +5425,7 @@ namespace System {
         [Obsolete("The method has been deprecated. Please use GetComponents() or static UnescapeDataString() to unescape a Uri component or a string. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected virtual string Unescape(string path) {
 
-            // [....] cr: This method is dangerous since it gives path unescaping control
+            // Microsoft cr: This method is dangerous since it gives path unescaping control
             // to the derived class without any permission demand.
             // Should be deprecated and removed asap.
 
@@ -5335,7 +5439,7 @@ namespace System {
         [Obsolete("The method has been deprecated. Please use GetComponents() or static EscapeUriString() to escape a Uri component or a string. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected static string EscapeString(string str) {
 
-            // [....] cr: This method just does not make sense sa protected
+            // Microsoft cr: This method just does not make sense sa protected
             // It should go public static asap
 
             if ((object)str == null) {
@@ -5358,7 +5462,7 @@ namespace System {
         [Obsolete("The method has been deprecated. It is not used by the system. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected virtual void CheckSecurity()  {
 
-            // [....] cr: This method just does not make sense
+            // Microsoft cr: This method just does not make sense
             // Should be deprecated and removed asap.
 
             if (Scheme == "telnet") {
@@ -5382,7 +5486,7 @@ namespace System {
         [Obsolete("The method has been deprecated. It is not used by the system. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected virtual bool IsReservedCharacter(char character) {
 
-            // [....] cr: This method just does not make sense as virtual protected
+            // Microsoft cr: This method just does not make sense as virtual protected
             // It should go public static asap
 
             return (character == ';')
@@ -5410,7 +5514,7 @@ namespace System {
         [Obsolete("The method has been deprecated. It is not used by the system. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected static bool IsExcludedCharacter(char character) {
 
-            // [....] cr: This method just does not make sense sa protected
+            // Microsoft cr: This method just does not make sense sa protected
             // It should go public static asap
 
             //
@@ -5453,7 +5557,7 @@ namespace System {
         [Obsolete("The method has been deprecated. It is not used by the system. http://go.microsoft.com/fwlink/?linkid=14202")]
         protected virtual bool IsBadFileSystemCharacter(char character) {
 
-            // [....] cr: This method just does not make sense sa protected virtual
+            // Microsoft cr: This method just does not make sense sa protected virtual
             // It should go public static asap
 
             return (character < 0x20)

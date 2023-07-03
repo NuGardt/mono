@@ -500,17 +500,37 @@ namespace System.Web {
             }
         }
 
-        // DevDiv Bugs 151914: Release session state before executing child request
-        internal void EnsureReleaseState() {
+        private ISessionStateModule FindISessionStateModule() {
+            if (!HttpRuntime.UseIntegratedPipeline)
+                return null;
+
             if (_moduleCollection != null) {
                 for (int i = 0; i < _moduleCollection.Count; i++) {
-                    IHttpModule module = _moduleCollection.Get(i);
-                    if (module is SessionStateModule) {
-                        ((SessionStateModule) module).EnsureReleaseState(this);
-                        break;
+                    ISessionStateModule module = _moduleCollection.Get(i) as ISessionStateModule;
+                    if (module != null) {
+                        return module;
                     }
                 }
             }
+
+            return null;
+        }
+
+        // DevDiv Bugs 151914: Release session state before executing child request
+        internal void EnsureReleaseState() {
+            ISessionStateModule module = FindISessionStateModule();
+            if (module != null) {
+                module.ReleaseSessionState(Context);
+            }
+        }
+
+        internal Task EnsureReleaseStateAsync() {
+            ISessionStateModule module = FindISessionStateModule();
+            if (module != null) {
+                return module.ReleaseSessionStateAsync(Context);
+            }
+
+            return TaskAsyncHelper.CompletedTask;
         }
 
         /// <devdoc>
@@ -769,7 +789,7 @@ namespace System.Web {
         }
 
         //
-        // [....] event hookup
+        // Sync event hookup
         //
 
 
@@ -1707,7 +1727,7 @@ namespace System.Web {
                 asyncHandler.CreateExecutionSteps(this, steps);
             }
 
-            // [....]
+            // sync
             EventHandler handler = (EventHandler)Events[eventIndex];
 
             if (handler != null) {
@@ -2126,6 +2146,48 @@ namespace System.Web {
             return OnThreadEnterPrivate(setImpersonationContext);
         }
 
+        private StepInvoker _stepInvoker;
+
+        public void OnExecuteRequestStep(Action<HttpContextBase, Action> callback) {
+            if (callback == null) {
+                throw new ArgumentNullException("callback");
+            }
+
+            if (!HttpRuntime.UseIntegratedPipeline) {
+                throw new PlatformNotSupportedException(SR.GetString(SR.Requires_Iis_Integrated_Mode));
+            }
+
+            if (_initSpecialCompleted && _initInternalCompleted) {
+                //throw if both InitSpecial and InitInternal have completed.
+                throw new InvalidOperationException(SR.GetString(SR.OnExecuteRequestStep_Cannot_Be_Called));
+            }
+
+            if (_stepInvoker == null) {
+                _stepInvoker = new StepInvoker();
+            }
+
+            var nextStep = _stepInvoker;
+            _stepInvoker = new StepInvoker((nextStepAction) => callback(new HttpContextWrapper(_context), nextStepAction), nextStep);
+        }
+
+        private void ExecuteStepImpl(IExecutionStep step) {
+            if(_stepInvoker != null) {
+                bool stepCalled = false;
+
+                _stepInvoker.Invoke(() => {
+                    if (!stepCalled) {
+                        stepCalled = true;
+                        step.Execute();
+                    }
+                });
+
+                if (!stepCalled) {
+                    step.Execute();
+                }
+            } else {
+                step.Execute();
+            }
+        }
         /*
          * Execute single step catching exceptions in a fancy way (see below)
          */
@@ -2138,7 +2200,7 @@ namespace System.Web {
                         _context.BeginCancellablePeriod();  // request can be cancelled from this point
 
                         try {
-                            step.Execute();
+                            ExecuteStepImpl(step);
                         }
                         finally {
                             _context.EndCancellablePeriod();  // request can be cancelled until this point
@@ -2147,7 +2209,7 @@ namespace System.Web {
                         _context.WaitForExceptionIfCancelled();  // wait outside of finally
                     }
                     else {
-                        step.Execute();
+                        ExecuteStepImpl(step);
                     }
 
                     if (!step.CompletedSynchronously) {
@@ -2398,7 +2460,7 @@ namespace System.Web {
                 Debug.Trace("PipelineRuntime", "RegisterEventSubscriptionsWithIIS: name=" + CurrentModuleCollectionKey
                             + ", type=" + httpModule.GetType().FullName + "\n");
 
-                // make sure collections are in [....]
+                // make sure collections are in sync
                 Debug.Assert(moduleInfo.Name == _currentModuleCollectionKey, "moduleInfo.Name == _currentModuleCollectionKey");
 #endif
 
@@ -2546,7 +2608,7 @@ namespace System.Web {
                 hasEvents = true;
             }
 
-            // [....]
+            // sync
             EventHandler handler = (EventHandler)Events[eventIndex];
 
             if (handler != null) {
@@ -3076,9 +3138,8 @@ namespace System.Web {
                 context.SyncContext.ProhibitVoidAsyncOperations();
 
                 try {
-                    _endHandler(ar);
-                }
-                catch (Exception e) {
+                    InvokeEndHandler(ar);
+                } catch (Exception e) {
                     error = e;
                 }
 
@@ -3098,6 +3159,25 @@ namespace System.Web {
                 }
                 else {
                     ResumeSteps(error);
+                }
+            }
+
+            private void InvokeEndHandler(IAsyncResult ar) {
+                if (_application._stepInvoker != null) {
+                    bool stepCalled = false;
+
+                    _application._stepInvoker.Invoke(() => {
+                        if (!stepCalled) {
+                            stepCalled = true;
+                            _endHandler(ar);
+                        }
+                    });
+
+                    if (!stepCalled) {
+                        _endHandler(ar);
+                    }
+                } else {
+                    _endHandler(ar);
                 }
             }
 
@@ -3359,9 +3439,8 @@ namespace System.Web {
 
                 try {
                     try {
-                        _handler.EndProcessRequest(ar);
-                    }
-                    finally {
+                        InvokeEndHandler(ar);
+                    } finally {
                         SuppressPostEndRequestIfNecessary(context);
 
                         // In Integrated mode, generate the necessary response headers
@@ -3398,6 +3477,25 @@ namespace System.Web {
                 }
                 else {
                     ResumeSteps(error);
+                }
+            }
+
+            private void InvokeEndHandler(IAsyncResult ar) {
+                if (_application._stepInvoker != null) {
+                    bool stepCalled = false;
+
+                    _application._stepInvoker.Invoke(() => {
+                        if (!stepCalled) {
+                            stepCalled = true;
+                            _handler.EndProcessRequest(ar);
+                        }
+                    });
+
+                    if (!stepCalled) {
+                        _handler.EndProcessRequest(ar);
+                    }
+                } else {
+                    _handler.EndProcessRequest(ar);
                 }
             }
 
@@ -4087,7 +4185,7 @@ namespace System.Web {
                                         break;
                                     }
 
-                                    // [....] case (we might be able to stay in managed code and execute another notification)
+                                    // sync case (we might be able to stay in managed code and execute another notification)
                                     if (needToFinishRequest || UnsafeIISMethods.MgdGetNextNotification(wr.RequestContext, RequestNotificationStatus.Continue) != 1) {
                                         isSynchronousCompletion = true;
                                         needToComplete = true;
@@ -4151,14 +4249,14 @@ namespace System.Web {
                             if (threadContext != null) {
                                 if (context.InIndicateCompletion) {
                                     if (isSynchronousCompletion) {
-                                        // this is a [....] completion on an IIS thread
+                                        // this is a sync completion on an IIS thread
                                         threadContext.Synchronize();
                                         // Note for DevDiv 482614 fix:
                                         // If this threadContext is from IndicateCompletionContext (e.g. this thread called IndicateCompletion)
                                         // then we continue reusing this thread and only undo impersonation before unwinding back to IIS.
                                         //
                                         // If this threadContext was created while another thread was and still is in IndicateCompletion call
-                                        // (e.g. [....] or async flush on a background thread from native code, not managed since isReEnty==false)
+                                        // (e.g. sync or async flush on a background thread from native code, not managed since isReEnty==false)
                                         // then we can not reuse this thread and this threadContext will be cleaned before we leave ResumeSteps
                                         // (because needToDisassociateThreadContext was set to true when we created this threadContext)
 
@@ -4190,7 +4288,7 @@ namespace System.Web {
                                 }
                                 else if (isSynchronousCompletion) {
                                     Debug.Assert(needToDisassociateThreadContext == true, "needToDisassociateThreadContext MUST BE true");
-                                    // this is a [....] completion on an IIS thread
+                                    // this is a sync completion on an IIS thread
                                     threadContext.Synchronize();
                                     // get ready to call IndicateCompletion
                                     context.IndicateCompletionContext = threadContext;
@@ -4344,6 +4442,32 @@ namespace System.Web {
                 _asyncState = ASYNC_STATE_NONE;
             }
 #pragma warning restore 420 // volatile passed by reference
+        }
+
+        private class StepInvoker {
+            private Action<Action> _action;
+            private StepInvoker _nextStep;
+
+            public StepInvoker() { }
+
+            public StepInvoker(Action<Action> action, StepInvoker step) {
+                _action = action;
+                _nextStep = step;
+            }
+
+            public void Invoke(Action executionStep) {
+                Debug.Assert(executionStep != null);
+
+                // Call the chained nextStep.
+                // The ExecutionStep is garuanteed to execute in HttpApplication,
+                // since ExecutionStep could cause reEntry to the pipeline and
+                // there is only one StepInvoker instance per HttpApplication instance.
+                if (_action != null) {
+                    _action(() => _nextStep.Invoke(executionStep));
+                } else {
+                    executionStep();
+                }
+            }
         }
     }
 }

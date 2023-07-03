@@ -61,16 +61,18 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Properties_Defaults ()
 		{
-			var h = new HttpClientHandler ();
+			var h = HttpClientTestHelpers.CreateHttpClientHandler ();
 			Assert.IsTrue (h.AllowAutoRedirect, "#1");
 			Assert.AreEqual (DecompressionMethods.None, h.AutomaticDecompression, "#2");
 			Assert.AreEqual (0, h.CookieContainer.Count, "#3");
 			Assert.AreEqual (4096, h.CookieContainer.MaxCookieSize, "#3b");
 			Assert.AreEqual (null, h.Credentials, "#4");
 			Assert.AreEqual (50, h.MaxAutomaticRedirections, "#5");
-			Assert.AreEqual (int.MaxValue, h.MaxRequestContentBufferSize, "#6");
 			Assert.IsFalse (h.PreAuthenticate, "#7");
 			Assert.IsNull (h.Proxy, "#8");
 			Assert.IsTrue (h.SupportsAutomaticDecompression, "#9");
@@ -83,9 +85,12 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Properties_Invalid ()
 		{
-			var h = new HttpClientHandler ();
+			var h = HttpClientTestHelpers.CreateHttpClientHandler ();
 			try {
 				h.MaxAutomaticRedirections = 0;
 				Assert.Fail ("#1");
@@ -98,6 +103,9 @@ namespace MonoTests.System.Net.Http
 			} catch (ArgumentOutOfRangeException) {
 			}
 
+			if (HttpClientTestHelpers.UsingSocketsHandler)
+				Assert.Ignore ();
+
 			h.UseProxy = false;
 			try {
 				h.Proxy = new Proxy ();
@@ -107,9 +115,12 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Properties_AfterClientCreation ()
 		{
-			var h = new HttpClientHandler ();
+			var h = HttpClientTestHelpers.CreateHttpClientHandler ();
 			h.AllowAutoRedirect = true;
 
 			// We may modify properties after creating the HttpClient.
@@ -119,16 +130,22 @@ namespace MonoTests.System.Net.Http
 		}
 
 		[Test]
+#if FEATURE_NO_BSD_SOCKETS
+		[ExpectedException (typeof (PlatformNotSupportedException))]
+#endif
 		public void Disposed ()
 		{
-			var h = new HttpClientHandler ();
+			var h = HttpClientTestHelpers.CreateHttpClientHandler ();
 			h.Dispose ();
 			var c = new HttpClient (h);
 			try {
-				c.GetAsync ("http://google.com").Wait ();
+				c.GetAsync ("http://www.example.com").Wait ();
 				Assert.Fail ("#1");
 			} catch (AggregateException e) {
 				Assert.IsTrue (e.InnerException is ObjectDisposedException, "#2");
+				Assert.IsFalse (HttpClientTestHelpers.IsSocketsHandler (h), "#3");
+			} catch (ObjectDisposedException) {
+				Assert.IsTrue (HttpClientTestHelpers.IsSocketsHandler (h), "#4");
 			}
 		}
 	}

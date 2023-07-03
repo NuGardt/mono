@@ -111,8 +111,8 @@ namespace MonoTests.System
 		[Test]
 		public void Constructor_StringStringInt ()
 		{
-			UriBuilder ub = new UriBuilder ("http", "www.mono-project.com", 80);
-			Assert.AreEqual ("http://www.mono-project.com/", ub.Uri.AbsoluteUri, "Uri.AbsoluteUri");
+			UriBuilder ub = new UriBuilder ("http", "www.example.com", 80);
+			Assert.AreEqual ("http://www.example.com/", ub.Uri.AbsoluteUri, "Uri.AbsoluteUri");
 		}
 
 		[Test]
@@ -138,7 +138,7 @@ namespace MonoTests.System
 			b.UserName = "myname";
 			Assert.AreEqual ("myname", b.Uri.UserInfo, "2.UserName");
 			b.Password = "mypwd";
-			Assert.AreEqual ("myname", b.Uri.UserInfo, "2.Password");
+			Assert.AreEqual ("myname:mypwd", b.Uri.UserInfo, "2.Password");
 			Assert.AreEqual ("/", b.Uri.LocalPath, "2.Uri.LocalPath");
 
 			b = new UriBuilder ("mailto", "contoso.com");
@@ -177,7 +177,7 @@ namespace MonoTests.System
 			Assert.AreEqual ("?\xA9 2002", b.Query, "#1");
 			Assert.AreEqual (string.Empty, b.Fragment, "#2");
 			b.Query = "?test";
-			Assert.AreEqual ("??test", b.Query, "#3");
+			Assert.AreEqual ("?test", b.Query, "#3");
 			b.Query = null;
 			Assert.AreEqual (string.Empty, b.Query, "#4");
 			b.Fragment = "test";
@@ -199,7 +199,7 @@ namespace MonoTests.System
 			Assert.AreEqual ("#\xA9 2002", b.Fragment, "#1");
 			Assert.AreEqual (string.Empty, b.Query, "#2");
 			b.Fragment = "#test";
-			Assert.AreEqual ("##test", b.Fragment, "#3");
+			Assert.AreEqual ("#test", b.Fragment, "#3");
 			b.Fragment = null;
 			Assert.AreEqual (String.Empty, b.Fragment, "#4");
 			b.Query = "name";
@@ -264,7 +264,7 @@ namespace MonoTests.System
 			b = new UriBuilder ("http", "www.ximian.com", 80, "/lalala/lelele.aspx", "?");
 			Assert.AreEqual (noquery, b.Uri.ToString (), "#2");
 			b = new UriBuilder ("http", "www.ximian.com", 80, "/lalala/lelele.aspx", "??");
-			Assert.AreEqual (noquery + "??", b.Uri.ToString (), "#3");
+			Assert.AreEqual (noquery + "?", b.Uri.ToString (), "#3");
 			b = new UriBuilder ("http", "www.ximian.com", 80, "/lalala/lelele.aspx", "?something");
 			Assert.AreEqual (noquery + "?something", b.Uri.ToString (), "#4");
 		}
@@ -281,10 +281,10 @@ namespace MonoTests.System
 		[Test]
 		public void TestAppendFragment ()
 		{
-			UriBuilder uri = new UriBuilder ("http://www.mono-project.com/Main_Page");
+			UriBuilder uri = new UriBuilder ("http://www.example.com/Main_Page");
 			uri.Fragment = "Features";
 			Assert.AreEqual ("#Features", uri.Fragment, "#1");
-			Assert.AreEqual ("http://www.mono-project.com/Main_Page#Features", uri.Uri.ToString (), "#2");
+			Assert.AreEqual ("http://www.example.com/Main_Page#Features", uri.Uri.ToString (), "#2");
 		}
 
 		[Test]
@@ -336,10 +336,10 @@ namespace MonoTests.System
 		{
 			// some URI can't be parsed by System.Uri but are accepted by UriBuilder
 			Uri u = null;
-			string uri = "www.mono-project.com";
+			string uri = "www.example.com";
 			Assert.IsFalse (Uri.TryCreate (uri, UriKind.Absolute, out u), "1.Uri.TryCreate");
 			UriBuilder ub = new UriBuilder (uri);
-			Assert.AreEqual ("www.mono-project.com", ub.Host, "1.Host");
+			Assert.AreEqual ("www.example.com", ub.Host, "1.Host");
 			Assert.AreEqual ("http", ub.Scheme, "1.Scheme");
 			Assert.AreEqual (80, ub.Port, "1.Port");
 			Assert.AreEqual ("/", ub.Path, "1.Path");

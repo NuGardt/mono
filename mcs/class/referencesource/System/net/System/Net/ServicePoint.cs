@@ -93,7 +93,9 @@ namespace System.Net {
                 return m_BindIPEndPointDelegate;
             }
             set {
+#if MONO_FEATURE_CAS
                 ExceptionHelper.InfrastructurePermission.Demand();
+#endif
                 m_BindIPEndPointDelegate = value;
             }
         }
@@ -251,7 +253,7 @@ namespace System.Net {
             abortSocket6 = socket6;
 
             //
-            // Setup socket timeouts for [....] requests
+            // Setup socket timeouts for sync requests
             //
             // 
 
@@ -458,11 +460,13 @@ namespace System.Net {
                     throw new NotSupportedException(SR.GetString(SR.net_servicePointAddressNotSupportedInHostMode));
                 }
 
+#if MONO_FEATURE_CAS
                 // Don't let low-trust apps discover the proxy information.
                 if (m_ProxyServicePoint)
                 {
                     ExceptionHelper.WebPermissionUnrestricted.Demand();
                 }
+#endif
 
                 return m_Address;
             }

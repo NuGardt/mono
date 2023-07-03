@@ -1,12 +1,17 @@
+/**
+ * \file
+ */
 
 #ifndef __MONO_METADATA_H__
 #define __MONO_METADATA_H__
 
 #include <mono/utils/mono-publib.h>
 
+#include <mono/utils/mono-forward.h>
 #include <mono/metadata/blob.h>
 #include <mono/metadata/row-indexes.h>
 #include <mono/metadata/image.h>
+#include <mono/metadata/object-forward.h>
 
 MONO_BEGIN_DECLS
 
@@ -15,13 +20,9 @@ MONO_BEGIN_DECLS
 #define MONO_TYPE_IS_POINTER(t) mono_type_is_pointer (t)
 #define MONO_TYPE_IS_REFERENCE(t) mono_type_is_reference (t)
 
-#define MONO_CLASS_IS_INTERFACE(c) ((c->flags & TYPE_ATTRIBUTE_INTERFACE) || (c->byval_arg.type == MONO_TYPE_VAR) || (c->byval_arg.type == MONO_TYPE_MVAR))
+#define MONO_CLASS_IS_INTERFACE(c) ((mono_class_get_flags (c) & TYPE_ATTRIBUTE_INTERFACE) || mono_type_is_generic_parameter (mono_class_get_type (c)))
 
-#define MONO_CLASS_IS_IMPORT(c) ((c->flags & TYPE_ATTRIBUTE_IMPORT))
-
-typedef struct _MonoClass MonoClass;
-typedef struct _MonoDomain MonoDomain;
-typedef struct _MonoMethod MonoMethod;
+#define MONO_CLASS_IS_IMPORT(c) ((mono_class_get_flags (c) & TYPE_ATTRIBUTE_IMPORT))
 
 typedef enum {
 	MONO_EXCEPTION_CLAUSE_NONE,
@@ -36,7 +37,11 @@ typedef enum {
 	MONO_CALL_STDCALL,
 	MONO_CALL_THISCALL,
 	MONO_CALL_FASTCALL,
-	MONO_CALL_VARARG
+	MONO_CALL_VARARG = 0x05,
+	/* unused, */
+	/* unused, */
+	/* unused, */
+	MONO_CALL_UNMANAGED_MD = 0x09, /* default unmanaged calling convention, with additional attributed encoded in modopts */
 } MonoCallConvention;
 
 /* ECMA lamespec: the old spec had more info... */
@@ -76,6 +81,9 @@ typedef enum {
 	MONO_NATIVE_LPSTRUCT = 0x2b,
 	MONO_NATIVE_CUSTOM = 0x2c,
 	MONO_NATIVE_ERROR = 0x2d,
+	// TODO: MONO_NATIVE_IINSPECTABLE = 0x2e
+	// TODO: MONO_NATIVE_HSTRING = 0x2f
+	MONO_NATIVE_UTF8STR = 0x30,
 	MONO_NATIVE_MAX = 0x50 /* no info */
 } MonoMarshalNative;
 
@@ -162,7 +170,14 @@ typedef enum {
 	MONO_MARSHAL_FREE_ARRAY,
 	MONO_MARSHAL_CONV_BSTR_STR,
 	MONO_MARSHAL_CONV_SAFEHANDLE,
-	MONO_MARSHAL_CONV_HANDLEREF
+	MONO_MARSHAL_CONV_HANDLEREF,
+	MONO_MARSHAL_CONV_STR_UTF8STR,
+	MONO_MARSHAL_CONV_SB_UTF8STR,
+	MONO_MARSHAL_CONV_UTF8STR_STR,
+	MONO_MARSHAL_CONV_UTF8STR_SB,
+	MONO_MARSHAL_CONV_FIXED_BUFFER,
+	MONO_MARSHAL_CONV_ANSIBSTR_STR,
+	MONO_MARSHAL_CONV_TBSTR_STR
 } MonoMarshalConv;
 
 #define MONO_MARSHAL_CONV_INVALID ((MonoMarshalConv)-1)
@@ -190,13 +205,15 @@ typedef struct {
 
 MONO_API void         mono_metadata_init (void);
 
+void mono_metadata_decode_row_raw (const MonoTableInfo *t, int idx, uint32_t *res, int res_size);
+
 MONO_API void         mono_metadata_decode_row (const MonoTableInfo   *t,
 				       int                    idx,
 				       uint32_t               *res,
 				       int                    res_size);
 
-MONO_API uint32_t      mono_metadata_decode_row_col (const MonoTableInfo *t, 
-					   int            idx, 
+MONO_API uint32_t      mono_metadata_decode_row_col (const MonoTableInfo *t,
+					   int            idx,
 					   unsigned int          col);
 
 /*
@@ -215,7 +232,7 @@ MONO_API int mono_metadata_compute_size (MonoImage   *meta,
  */
 MONO_API const char    *mono_metadata_locate        (MonoImage *meta, int table, int idx);
 MONO_API const char    *mono_metadata_locate_token  (MonoImage *meta, uint32_t token);
-					   
+
 MONO_API const char    *mono_metadata_string_heap   (MonoImage *meta, uint32_t table_index);
 MONO_API const char    *mono_metadata_blob_heap     (MonoImage *meta, uint32_t table_index);
 MONO_API const char    *mono_metadata_user_string   (MonoImage *meta, uint32_t table_index);
@@ -226,7 +243,8 @@ MONO_API uint32_t mono_metadata_typedef_from_method (MonoImage *meta, uint32_t t
 MONO_API uint32_t mono_metadata_nested_in_typedef   (MonoImage *meta, uint32_t table_index);
 MONO_API uint32_t mono_metadata_nesting_typedef     (MonoImage *meta, uint32_t table_index, uint32_t start_index);
 
-MONO_API MonoClass** mono_metadata_interfaces_from_typedef (MonoImage *meta, uint32_t table_index, unsigned int *count);
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoClass** mono_metadata_interfaces_from_typedef (MonoImage *meta, uint32_t table_index, unsigned int *count);
 
 MONO_API uint32_t     mono_metadata_events_from_typedef     (MonoImage *meta, uint32_t table_index, unsigned int *end_idx);
 MONO_API uint32_t     mono_metadata_methods_from_event      (MonoImage *meta, uint32_t table_index, unsigned int *end);
@@ -242,7 +260,7 @@ MONO_API void mono_metadata_free_marshal_spec (MonoMarshalSpec *spec);
 
 MONO_API uint32_t     mono_metadata_implmap_from_method     (MonoImage *meta, uint32_t method_idx);
 
-MONO_API void        mono_metadata_field_info (MonoImage *meta, 
+MONO_API void        mono_metadata_field_info (MonoImage *meta,
 				      uint32_t       table_index,
 				      uint32_t      *offset,
 				      uint32_t      *rva,
@@ -284,7 +302,6 @@ typedef struct {
 typedef struct _MonoType MonoType;
 typedef struct _MonoGenericInst MonoGenericInst;
 typedef struct _MonoGenericClass MonoGenericClass;
-typedef struct _MonoDynamicGenericClass MonoDynamicGenericClass;
 typedef struct _MonoGenericContext MonoGenericContext;
 typedef struct _MonoGenericContainer MonoGenericContainer;
 typedef struct _MonoGenericParam MonoGenericParam;
@@ -299,9 +316,18 @@ typedef struct {
 	unsigned int token    : 31;
 } MonoCustomMod;
 
+typedef struct _MonoCustomModContainer {
+	uint8_t count; /* max 64 modifiers follow at the end */
+	MonoImage *image; /* Image containing types in modifiers array */
+	MonoCustomMod modifiers [1]; /* Actual length is count */
+} MonoCustomModContainer;
+
 struct _MonoArrayType {
 	MonoClass *eklass;
+	// Number of dimensions of the array
 	uint8_t rank;
+
+	// Arrays recording known upper and lower index bounds for each dimension
 	uint8_t numsizes;
 	uint8_t numlobounds;
 	int *sizes;
@@ -319,18 +345,18 @@ typedef enum {
 	MONO_PARSE_FIELD
 } MonoParseTypeMode;
 
-MONO_API mono_bool
+MONO_API MONO_RT_EXTERNAL_ONLY mono_bool
 mono_type_is_byref       (MonoType *type);
 
-MONO_API int
+MONO_API MONO_RT_EXTERNAL_ONLY int
 mono_type_get_type       (MonoType *type);
 
 /* For MONO_TYPE_FNPTR */
-MONO_API MonoMethodSignature*
+MONO_API MONO_RT_EXTERNAL_ONLY MonoMethodSignature*
 mono_type_get_signature  (MonoType *type);
 
 /* For MONO_TYPE_CLASS, VALUETYPE */
-MONO_API MonoClass*
+MONO_API MONO_RT_EXTERNAL_ONLY MonoClass*
 mono_type_get_class      (MonoType *type);
 
 MONO_API MonoArrayType*
@@ -347,11 +373,12 @@ MONO_API mono_bool mono_type_is_struct    (MonoType *type);
 MONO_API mono_bool mono_type_is_void      (MonoType *type);
 MONO_API mono_bool mono_type_is_pointer   (MonoType *type);
 MONO_API mono_bool mono_type_is_reference (MonoType *type);
+MONO_API mono_bool mono_type_is_generic_parameter (MonoType *type);
 
-MONO_API MonoType*
+MONO_API MONO_RT_EXTERNAL_ONLY MonoType*
 mono_signature_get_return_type (MonoMethodSignature *sig);
 
-MONO_API MonoType*
+MONO_API MONO_RT_EXTERNAL_ONLY MonoType*
 mono_signature_get_params      (MonoMethodSignature *sig, void **iter);
 
 MONO_API uint32_t
@@ -379,41 +406,36 @@ MONO_API int            mono_metadata_parse_custom_mod  (MonoImage      *m,
 						MonoCustomMod   *dest,
 						const char      *ptr,
 						const char     **rptr);
-MONO_RT_EXTERNAL_ONLY
-MONO_API MonoArrayType *mono_metadata_parse_array       (MonoImage      *m,
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoArrayType *mono_metadata_parse_array       (MonoImage      *m,
 						const char      *ptr,
 						const char     **rptr);
 MONO_API void           mono_metadata_free_array        (MonoArrayType     *array);
-MONO_RT_EXTERNAL_ONLY
-MONO_API MonoType      *mono_metadata_parse_type        (MonoImage      *m,
+MONO_API MONO_RT_EXTERNAL_ONLY MonoType      *mono_metadata_parse_type        (MonoImage      *m,
 						MonoParseTypeMode  mode,
 						short              opt_attrs,
 						const char        *ptr,
 						const char       **rptr);
-MONO_RT_EXTERNAL_ONLY
-MONO_API MonoType      *mono_metadata_parse_param       (MonoImage      *m,
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoType      *mono_metadata_parse_param       (MonoImage      *m,
 						const char      *ptr,
 						const char      **rptr);
-MONO_API MonoType      *mono_metadata_parse_ret_type    (MonoImage      *m,
-						const char      *ptr,
-						const char      **rptr);
-MONO_RT_EXTERNAL_ONLY
-MONO_API MonoType      *mono_metadata_parse_field_type  (MonoImage      *m,
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoType      *mono_metadata_parse_field_type  (MonoImage      *m,
 		                                short            field_flags,
 						const char      *ptr,
 						const char      **rptr);
-MONO_API MonoType      *mono_type_create_from_typespec  (MonoImage        *image, 
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoType      *mono_type_create_from_typespec  (MonoImage        *image,
 					        uint32_t           type_spec);
 MONO_API void           mono_metadata_free_type         (MonoType        *type);
-MONO_API int            mono_type_size                  (MonoType        *type, 
+MONO_API int            mono_type_size                  (MonoType        *type,
 						int             *alignment);
-MONO_API int            mono_type_stack_size            (MonoType        *type, 
+MONO_API int            mono_type_stack_size            (MonoType        *type,
 						int             *alignment);
 
 MONO_API mono_bool       mono_type_generic_inst_is_valuetype      (MonoType *type);
 MONO_API mono_bool       mono_metadata_generic_class_is_valuetype (MonoGenericClass *gclass);
-MONO_API unsigned int          mono_metadata_generic_class_hash  (MonoGenericClass *gclass);
-MONO_API mono_bool       mono_metadata_generic_class_equal (MonoGenericClass *g1, MonoGenericClass *g2);
 
 MONO_API unsigned int          mono_metadata_type_hash         (MonoType *t1);
 MONO_API mono_bool       mono_metadata_type_equal        (MonoType *t1, MonoType *t2);
@@ -422,25 +444,27 @@ MONO_API MonoMethodSignature  *mono_metadata_signature_alloc (MonoImage *image, 
 
 MONO_API MonoMethodSignature  *mono_metadata_signature_dup (MonoMethodSignature *sig);
 
-MONO_API MonoMethodSignature  *mono_metadata_parse_signature (MonoImage *image, 
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoMethodSignature  *mono_metadata_parse_signature (MonoImage *image,
 						     uint32_t    token);
 
-MONO_API MonoMethodSignature  *mono_metadata_parse_method_signature (MonoImage            *m,
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoMethodSignature  *mono_metadata_parse_method_signature (MonoImage            *m,
                                                             int                    def,
                                                             const char            *ptr,
                                                             const char           **rptr);
 MONO_API void                  mono_metadata_free_method_signature  (MonoMethodSignature   *method);
 
-MONO_API mono_bool          mono_metadata_signature_equal (MonoMethodSignature *sig1, 
+MONO_API mono_bool          mono_metadata_signature_equal (MonoMethodSignature *sig1,
 						 MonoMethodSignature *sig2);
 
 MONO_API unsigned int             mono_signature_hash (MonoMethodSignature *sig);
 
-MONO_RT_EXTERNAL_ONLY
-MONO_API MonoMethodHeader *mono_metadata_parse_mh (MonoImage *m, const char *ptr);
+MONO_API MONO_RT_EXTERNAL_ONLY
+MonoMethodHeader *mono_metadata_parse_mh (MonoImage *m, const char *ptr);
 MONO_API void              mono_metadata_free_mh  (MonoMethodHeader *mh);
 
-/* MonoMethodHeader acccessors */
+/* MonoMethodHeader accessors */
 MONO_API const unsigned char*
 mono_method_header_get_code (MonoMethodHeader *header, uint32_t* code_size, uint32_t* max_stack);
 
@@ -453,8 +477,8 @@ mono_method_header_get_num_clauses (MonoMethodHeader *header);
 MONO_API int
 mono_method_header_get_clauses (MonoMethodHeader *header, MonoMethod *method, void **iter, MonoExceptionClause *clause);
 
-MONO_API uint32_t 
-mono_type_to_unmanaged (MonoType *type, MonoMarshalSpec *mspec, 
+MONO_API uint32_t
+mono_type_to_unmanaged (MonoType *type, MonoMarshalSpec *mspec,
 			mono_bool as_field, mono_bool unicode, MonoMarshalConv *conv);
 
 /*
@@ -470,14 +494,16 @@ mono_type_to_unmanaged (MonoType *type, MonoMarshalSpec *mspec,
  /*
  * Returns the index that a token refers to
  */
-#define mono_metadata_token_index(token) ((token & 0xffffff))
+#define mono_metadata_token_index(token) ((token) & 0xffffff)
 
 
-#define mono_metadata_token_code(token) ((token & 0xff000000))
+#define mono_metadata_token_code(token) ((token) & 0xff000000)
 
 MONO_API uint32_t mono_metadata_token_from_dor (uint32_t dor_index);
 
 MONO_API char *mono_guid_to_string (const uint8_t *guid);
+
+MONO_API char *mono_guid_to_string_minimal (const uint8_t *guid);
 
 MONO_API uint32_t mono_metadata_declsec_from_index (MonoImage *meta, uint32_t idx);
 
@@ -489,7 +515,7 @@ MONO_API void    mono_metadata_decode_table_row (MonoImage *image, int table,
 				       int                    res_size);
 
 MONO_API uint32_t      mono_metadata_decode_table_row_col (MonoImage *image, int table,
-					   int            idx, 
+					   int            idx,
 					   unsigned int          col);
 
 MONO_END_DECLS

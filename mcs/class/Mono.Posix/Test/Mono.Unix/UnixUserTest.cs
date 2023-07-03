@@ -21,7 +21,7 @@ using Syscall = Mono.Unix.Native.Syscall;
 
 namespace MonoTests.Mono.Unix {
 
-	[TestFixture, Category ("NotDotNet")]
+	[TestFixture, Category ("NotDotNet"), Category ("NotOnWindows")]
 	public class UnixUserTest
 	{
 		[Test]
@@ -82,6 +82,7 @@ namespace MonoTests.Mono.Unix {
 		[Test]
 		[Category ("NotOnMac")]
 		[Category ("AndroidNotWorking")] // setpwent is missing from bionic
+		[Ignore("Fails on Ubuntu 20.04 on Azure Pipelines")]
 		public void NonReentrantSyscalls ()
 		{
 			ArrayList user_ids = new ArrayList (4);

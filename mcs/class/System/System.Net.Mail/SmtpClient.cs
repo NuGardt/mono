@@ -71,6 +71,7 @@ namespace System.Net.Mail {
 		ICredentialsByHost credentials;
 		string pickupDirectoryLocation;
 		SmtpDeliveryMethod deliveryMethod;
+		SmtpDeliveryFormat deliveryFormat;
 		bool enableSsl;
 #if SECURITY_DEP		
 		X509CertificateCollection clientCertificates;
@@ -223,7 +224,15 @@ namespace System.Net.Mail {
 				port = value;
 			}
 		}
-
+		
+		public SmtpDeliveryFormat DeliveryFormat {
+			get { return deliveryFormat; }
+			set {
+				CheckState ();
+				deliveryFormat = value;
+			}
+		}
+		
 		[MonoTODO]
 		public ServicePoint ServicePoint {
 			get { throw new NotImplementedException (); }
@@ -733,9 +742,9 @@ namespace System.Net.Mail {
 			}
 		}
 
-		public void Send (string from, string to, string subject, string body)
+		public void Send (string from, string recipients, string subject, string body)
 		{
-			Send (new MailMessage (from, to, subject, body));
+			Send (new MailMessage (from, recipients, subject, body));
 		}
 
 		public Task SendMailAsync (MailMessage message)
@@ -827,9 +836,9 @@ namespace System.Net.Mail {
 			worker.RunWorkerAsync (userToken);
 		}
 
-		public void SendAsync (string from, string to, string subject, string body, object userToken)
+		public void SendAsync (string from, string recipients, string subject, string body, object userToken)
 		{
-			SendAsync (new MailMessage (from, to, subject, body), userToken);
+			SendAsync (new MailMessage (from, recipients, subject, body), userToken);
 		}
 
 		public void SendAsyncCancel ()
@@ -1158,10 +1167,10 @@ try {
 			var tlsProvider = MonoTlsProviderFactory.GetProviderInternal ();
 			var settings = MSI.MonoTlsSettings.CopyDefaultSettings ();
 			settings.UseServicePointManagerCallback = true;
-			var sslStream = tlsProvider.CreateSslStream (stream, false, settings);
+			var sslStream = new SslStream (stream, false, tlsProvider, settings);
 			CheckCancellation ();
 			sslStream.AuthenticateAsClient (Host, this.ClientCertificates, SslProtocols.Default, false);
-			stream = sslStream.AuthenticatedStream;
+			stream = sslStream;
 
 #else
 			throw new SystemException ("You are using an incomplete System.dll build");

@@ -13,6 +13,8 @@ namespace Mono.Debugger.Soft
 		ManualResetEvent fetchingEvent = new ManualResetEvent (false);
 		ThreadInfo info;
 		StackFrame[] frames;
+		bool threadStateInvalid = true;
+		ThreadState threadState;
 
 		internal ThreadMirror (VirtualMachine vm, long id) : base (vm, id) {
 		}
@@ -28,8 +30,19 @@ namespace Mono.Debugger.Soft
 			return frames;
 		}
 
+		public long ElapsedTime () {
+			vm.CheckProtocolVersion (2, 50);
+			long elapsedTime = GetElapsedTime ();
+			return elapsedTime;
+		}
+
 		internal void InvalidateFrames () {
 			cacheInvalid = true;
+			threadStateInvalid = true;
+		}
+
+		internal long GetElapsedTime () {
+			return vm.conn.Thread_GetElapsedTime (id);
 		}
 
 		internal void FetchFrames (bool mustFetch = false) {
@@ -91,7 +104,11 @@ namespace Mono.Debugger.Soft
 
 		public ThreadState ThreadState {
 			get {
-				return (ThreadState)vm.conn.Thread_GetState (id);
+				if (threadStateInvalid) {
+					threadState = (ThreadState) vm.conn.Thread_GetState (id);
+					threadStateInvalid = false;
+				}
+				return threadState;
 			}
 		}
 
@@ -151,6 +168,10 @@ namespace Mono.Debugger.Soft
 				throw new ArgumentNullException ("loc");
 			try {
 				vm.conn.Thread_SetIP (id, loc.Method.Id, loc.ILOffset);
+				if (vm.conn.Version.AtLeast(2, 52)) {
+					InvalidateFrames();
+					FetchFrames(true);
+				}
 			} catch (CommandException ex) {
 				if (ex.ErrorCode == ErrorCode.INVALID_ARGUMENT)
 					throw new ArgumentException ("loc doesn't refer to a location in the current method of this thread.", "loc");

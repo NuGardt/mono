@@ -1,11 +1,17 @@
+/**
+ * \file
+ */
+
 #include <config.h>
 
-#if defined(PLATFORM_ANDROID)
+#if defined(HOST_ANDROID)
 
 #include <pthread.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include "glib.h"
+#include <mono/utils/mono-threads.h>
+#include <sys/syscall.h>
 
 static void
 slow_get_thread_bounds (guint8 *current, guint8 **staddr, size_t *stsize)
@@ -37,7 +43,7 @@ slow_get_thread_bounds (guint8 *current, guint8 **staddr, size_t *stsize)
 }
 
 void
-mono_threads_core_get_stack_bounds (guint8 **staddr, size_t *stsize)
+mono_threads_platform_get_stack_bounds (guint8 **staddr, size_t *stsize)
 {
 	pthread_attr_t attr;
 	guint8 *current = (guint8*)&attr;
@@ -52,5 +58,17 @@ mono_threads_core_get_stack_bounds (guint8 **staddr, size_t *stsize)
 	if (*staddr && ((current <= *staddr) || (current > *staddr + *stsize)))
 		slow_get_thread_bounds (current, staddr, stsize);
 }
+
+guint64
+mono_native_thread_os_id_get (void)
+{
+	return (guint64)syscall (SYS_gettid);
+}
+
+#else
+
+#include <mono/utils/mono-compiler.h>
+
+MONO_EMPTY_SOURCE_FILE (mono_threads_android);
 
 #endif

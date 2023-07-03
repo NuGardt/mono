@@ -34,14 +34,15 @@ using System.Globalization;
 using System.Runtime.Serialization;
 using System.Security;
 using System.Security.Cryptography;
-using System.Security.Permissions;
 using System.Text;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.IO;
 
-using Mono.Security;
+using Mono;
+#if !MOBILE
 using Mono.Security.Cryptography;
+#endif
 
 namespace System.Reflection {
 
@@ -51,11 +52,11 @@ namespace System.Reflection {
 
 	[ComVisible (true)]
 	[ComDefaultInterfaceAttribute (typeof (_AssemblyName))]
-	[Serializable]
 	[ClassInterfaceAttribute (ClassInterfaceType.None)]
+	[Serializable]	
 	[StructLayout (LayoutKind.Sequential)]
 #if MOBILE
-	public sealed class AssemblyName  : ICloneable, ISerializable, IDeserializationCallback {
+	public sealed partial class AssemblyName  : ICloneable, ISerializable, IDeserializationCallback {
 #else
 	public sealed class AssemblyName  : ICloneable, ISerializable, IDeserializationCallback, _AssemblyName {
 #endif
@@ -84,20 +85,31 @@ namespace System.Reflection {
 		}
 
 		[MethodImpl (MethodImplOptions.InternalCall)]
-		static extern bool ParseName (AssemblyName aname, string assemblyName);
-		
+		static extern bool ParseAssemblyName (IntPtr name, out MonoAssemblyName aname, out bool is_version_definited, out bool is_token_defined);
+
 		public AssemblyName (string assemblyName)
 		{
 			if (assemblyName == null)
 				throw new ArgumentNullException ("assemblyName");
 			if (assemblyName.Length < 1)
 				throw new ArgumentException ("assemblyName cannot have zero length.");
-				
-			if (!ParseName (this, assemblyName))
-				throw new FileLoadException ("The assembly name is invalid.");
+
+			using (var name = RuntimeMarshal.MarshalString (assemblyName)) {
+				MonoAssemblyName nativeName;
+				bool isVersionDefined, isTokenDefined;
+				//ParseName free the name if it fails.
+				if (!ParseAssemblyName (name.Value, out nativeName, out isVersionDefined, out isTokenDefined))
+					throw new FileLoadException ("The assembly name is invalid.");
+				try {
+					unsafe {
+						this.FillName (&nativeName, null, isVersionDefined, false, isTokenDefined, false);
+					}
+				} finally {
+					RuntimeMarshal.FreeAssemblyName (ref nativeName, false);
+				}
+			}
 		}
 		
-		[MonoLimitation ("Not used, as the values are too limited;  Mono supports more")]
 		public ProcessorArchitecture ProcessorArchitecture {
 			get {
 				return processor_architecture;
@@ -136,7 +148,8 @@ namespace System.Reflection {
 			get {
 				if (codebase == null)
 					return null;
-				return Uri.EscapeString (codebase, false, true, true);
+
+				return Mono.Security.Uri.EscapeString (codebase, false, true, true);
 			}
 		}
 
@@ -267,12 +280,7 @@ namespace System.Reflection {
 #if MOBILE
 						return true;
 #else
-						try {
-							CryptoConvert.FromCapiPublicKeyBlob (
-								publicKey, 12);
-							return true;
-						} catch (CryptographicException) {
-						}
+						return CryptoConvert.TryImportCapiPublicKeyBlob (publicKey, 12);
 #endif
 					}
 					break;
@@ -280,12 +288,7 @@ namespace System.Reflection {
 #if MOBILE
 					return true;
 #else
-					try {
-						CryptoConvert.FromCapiPublicKeyBlob (publicKey);
-						return true;
-					} catch (CryptographicException) {
-					}
-					break;					
+					return CryptoConvert.TryImportCapiPublicKeyBlob (publicKey, 0);
 #endif
 				case 0x07: // private key
 					break;
@@ -350,7 +353,6 @@ namespace System.Reflection {
 			keyToken = publicKeyToken;
 		}
 
-		[SecurityPermission (SecurityAction.Demand, SerializationFormatter = true)]
 		public void GetObjectData (SerializationInfo info, StreamingContext context)
 		{
 			if (info == null)
@@ -402,7 +404,16 @@ namespace System.Reflection {
 				throw new ArgumentNullException ("assemblyFile");
 
 			AssemblyName aname = new AssemblyName ();
-			Assembly.InternalGetAssemblyName (Path.GetFullPath (assemblyFile), aname);
+			unsafe {
+				Mono.MonoAssemblyName nativeName;
+				string codebase;
+				Assembly.InternalGetAssemblyName (Path.GetFullPath (assemblyFile), out nativeName, out codebase);
+				try {
+					aname.FillName (&nativeName, codebase, true, false, true, false);
+				} finally {
+					RuntimeMarshal.FreeAssemblyName (ref nativeName, false);
+				}
+			}
 			return aname;
 		}
 
@@ -433,6 +444,12 @@ namespace System.Reflection {
 			get {
 				return (cultureinfo == null)? null : cultureinfo.Name;
 			}
+			set {
+				if (value == null)
+					cultureinfo = null;
+				else
+					cultureinfo = new CultureInfo (value);
+			}
 		}
 
 		[ComVisibleAttribute(false)]
@@ -443,6 +460,64 @@ namespace System.Reflection {
 			set {
 				contentType = value;
 			}
+		}
+
+		[MethodImplAttribute (MethodImplOptions.InternalCall)]
+		static extern unsafe MonoAssemblyName* GetNativeName (IntPtr assembly_ptr);
+
+		internal unsafe void FillName (MonoAssemblyName *native, string codeBase, bool addVersion, bool addPublickey, bool defaultToken, bool assemblyRef)
+		{
+			this.name = RuntimeMarshal.PtrToUtf8String (native->name);
+
+			this.major = native->major;
+			this.minor = native->minor;
+			this.build = native->build;
+			this.revision = native->revision;
+
+			this.flags = (AssemblyNameFlags)native->flags;
+
+			this.hashalg = (AssemblyHashAlgorithm)native->hash_alg;
+
+			this.versioncompat = AssemblyVersionCompatibility.SameMachine;
+			this.processor_architecture = (ProcessorArchitecture)native->arch;
+
+			if (addVersion)
+				this.version = new Version (this.major, this.minor, this.build, this.revision);
+
+			this.codebase = codeBase;
+
+			if (native->culture != IntPtr.Zero)
+				this.cultureinfo = CultureInfo.CreateCulture ( RuntimeMarshal.PtrToUtf8String (native->culture), assemblyRef);
+
+			if (native->public_key != IntPtr.Zero) {
+				this.publicKey = RuntimeMarshal.DecodeBlobArray (native->public_key);
+				this.flags |= AssemblyNameFlags.PublicKey;
+			} else if (addPublickey) {
+				this.publicKey = EmptyArray<byte>.Value;
+				this.flags |= AssemblyNameFlags.PublicKey;
+			}
+
+			// MonoAssemblyName keeps the public key token as an hexadecimal string
+			if (native->public_key_token [0] != 0) {
+				byte[] keyToken = new byte [8];
+				for (int i = 0, j = 0; i < 8; ++i) {
+					keyToken [i] = (byte)(RuntimeMarshal.AsciHexDigitValue (native->public_key_token [j++]) << 4);
+					keyToken [i] |= (byte)RuntimeMarshal.AsciHexDigitValue (native->public_key_token [j++]);
+				}
+				this.keyToken = keyToken;
+			} else if (defaultToken) {
+				this.keyToken = EmptyArray<byte>.Value;
+			}
+		}
+
+		internal static AssemblyName Create (Assembly assembly, bool fillCodebase)
+		{
+			AssemblyName aname = new AssemblyName ();
+			unsafe {
+				MonoAssemblyName *native = GetNativeName (assembly.MonoAssembly);
+				aname.FillName (native, fillCodebase ? assembly.CodeBase : null, true, true, true, false);
+			}
+			return aname;
 		}
 	}
 }

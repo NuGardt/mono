@@ -28,6 +28,7 @@
 
 using System;
 using System.Net;
+using System.Security;
 
 using NUnit.Framework;
 
@@ -49,7 +50,7 @@ namespace MonoTests.System.Net {
 			Assert.AreEqual ("dom", nc.Domain, "Domain");
 			Assert.AreEqual ("********", nc.Password, "Password");
 			Assert.AreEqual ("user", nc.UserName, "UserName");
-			Assert.AreSame (nc, nc.GetCredential (new Uri ("http://www.mono-project.com"), "basic"), "GetCredential");
+			Assert.AreSame (nc, nc.GetCredential (new Uri ("http://www.example.com"), "basic"), "GetCredential");
 		}
 
 		[Test]
@@ -98,6 +99,21 @@ namespace MonoTests.System.Net {
 
 			nc = new NetworkCredential ("user", "********", "dom");
 			CheckCustom (nc);
+		}
+
+		[Test]
+		public void DecipherSecureString ()
+		{
+			// many code snippets suggest using the following to get the decrypted string from a SecureString
+			var ss = new SecureString ();
+			ss.AppendChar('h');
+			ss.AppendChar('e');
+			ss.AppendChar('l');
+			ss.AppendChar('l');
+			ss.AppendChar('o');
+ 
+			string plain = new NetworkCredential (string.Empty, ss).Password;
+			Assert.AreEqual ("hello", plain);
 		}
 	}
 }

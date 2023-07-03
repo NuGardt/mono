@@ -18,8 +18,10 @@ namespace System.Diagnostics {
         [ThreadStatic]
         static int indentLevel;
         static volatile int indentSize;
+#if CONFIGURATION_DEP
         static volatile bool settingsInitialized;
         static volatile bool defaultInitialized;
+#endif
 
 
         // this is internal so TraceSource can use it.  We want to lock on the same object because both TraceInternal and 
@@ -62,10 +64,15 @@ namespace System.Diagnostics {
         internal static string AppName {
             get {
                 if (appName == null) {
-#if !DISABLE_CAS_USE
+#if MONO_FEATURE_CAS
                     new EnvironmentPermission(EnvironmentPermissionAccess.Read, "Path").Assert();
 #endif
-                    appName = Path.GetFileName(Environment.GetCommandLineArgs()[0]);
+                    // Make sure we have command line arguments before accessing them
+                    // prevents index out of range exception.
+                    // For example Wasm does not have access to command line arguments through browser
+                    var clArgs = Environment.GetCommandLineArgs();
+                    if (clArgs.Length > 0)
+                        appName = Path.GetFileName(clArgs[0]);
                 }
                 return appName;
             }
@@ -303,7 +310,9 @@ namespace System.Diagnostics {
         // in the System.Diagnostics.Trace class
         static internal void Refresh() {
             lock (critSec) {
+#if CONFIGURATION_DEP
                 settingsInitialized = false;
+#endif
                 listeners = null;
             }
             InitializeSettings();

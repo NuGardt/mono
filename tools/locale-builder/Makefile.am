@@ -41,11 +41,11 @@ minimal: locale-builder.exe locale-data
 	$(RUNTIME) locale-builder.exe --locales '$(MINIMAL_LOCALES)'
 
 locale-data:
-	if ! test -d CLDR/common ; then \
-		curl http://www.unicode.org/Public/cldr/24/core.zip -o core.zip ; \
+	if ! test -e CLDR/common/supplemental/supplementalData.xml ; then \
+		curl http://www.unicode.org/Public/cldr/30.0.2/core.zip -o core.zip ; \
 		unzip core.zip -d CLDR ; \
 	fi
 
 install-culture-table: culture-info-tables.h
-	cp -f culture-info-tables.h ../../mono/metadata/.
+	cp -f culture-info-tables.h ../../mono/culture/.
 

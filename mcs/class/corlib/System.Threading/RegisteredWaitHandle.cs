@@ -83,8 +83,10 @@ namespace System.Threading
 
 				lock (this) {
 					_unregistered = true;
-					if (_callsInProcess == 0 && _finalEvent != null)
+					if (_callsInProcess == 0 && _finalEvent != null) {
 						NativeEventCalls.SetEvent (_finalEvent.SafeWaitHandle);
+						_finalEvent = null;
+					}
 				}
 			} catch (ObjectDisposedException) {
 				// Can happen if we called Unregister before we had time to execute Wait
@@ -98,17 +100,18 @@ namespace System.Threading
 
 		private void DoCallBack (object timedOut)
 		{
-			if (_callback != null) {
-				try {
-					_callback (_state, (bool)timedOut); 
-				} catch {}
-			}
-
-			lock (this) 
-			{
-				_callsInProcess--;
-				if (_unregistered && _callsInProcess == 0 && _finalEvent != null)
-					NativeEventCalls.SetEvent (_finalEvent.SafeWaitHandle);
+			try {
+				if (_callback != null)
+					_callback (_state, (bool)timedOut);
+			} finally {
+				lock (this)
+				{
+					_callsInProcess--;
+					if (_unregistered && _callsInProcess == 0 && _finalEvent != null) {
+						NativeEventCalls.SetEvent (_finalEvent.SafeWaitHandle);
+						_finalEvent = null;
+					}
+				}
 			}
 		}
 

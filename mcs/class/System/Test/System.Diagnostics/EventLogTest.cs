@@ -47,17 +47,23 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Security;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Threading;
 
 using Microsoft.Win32;
 
 using NUnit.Framework;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.System.Diagnostics
 {
 	[TestFixture]
 	public class EventLogTest
 	{
+		private TempDirectory _temp;
 		private string _originalEventLogImpl;
 		private string _eventLogStore;
 
@@ -68,15 +74,26 @@ namespace MonoTests.System.Diagnostics
 		private const string WIN32_IMPL = "win32";
 		private const string NULL_IMPL = "null";
 
+		private static bool IsAzurePipelines => Environment.GetEnvironmentVariable("TF_BUILD") != null;
+
 		[SetUp]
 		public void SetUp ()
 		{
 			if (Win32EventLogEnabled)
+			{
+				// EventLog requires admin permissions on Windows
+				WindowsIdentity identity = WindowsIdentity.GetCurrent ();
+				WindowsPrincipal principal = new WindowsPrincipal (identity);
+				if (!principal.IsInRole (WindowsBuiltInRole.Administrator)) {
+					Assert.Ignore ("Not running as Administrator");
+				}
+
 				return;
+			}
 
 			// determine temp directory for eventlog store
-			_eventLogStore = Path.Combine (Path.GetTempPath (),
-				Guid.NewGuid ().ToString ());
+			_temp = new TempDirectory ();
+			_eventLogStore = _temp.Path;
 
 			// save original eventlog implementation type (if set)
 			_originalEventLogImpl = Environment.GetEnvironmentVariable (
@@ -98,8 +115,7 @@ namespace MonoTests.System.Diagnostics
 				_originalEventLogImpl);
 
 			// delete temp directory for eventlog store
-			if (Directory.Exists (_eventLogStore))
-				Directory.Delete (_eventLogStore, true);
+			_temp.Dispose ();
 		}
 
 		[Test]
@@ -165,7 +181,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#D8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#D9");
 					Assert.IsNotNull (entry.MachineName, "#D10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#D11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#D11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#D12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#D13");
 					Assert.AreEqual ("Clear3", entry.ReplacementStrings [0], "#D14");
@@ -184,7 +200,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#E8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#E9");
 					Assert.IsNotNull (entry.MachineName, "#E10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#E11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#E11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#E12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#E13");
 					Assert.AreEqual ("Clear4", entry.ReplacementStrings [0], "#E14");
@@ -1199,7 +1215,7 @@ namespace MonoTests.System.Diagnostics
 		[Test]
 		public void CreateEventSource1_Log_InvalidCustomerLog ()
 		{
-			if (EventLogImplType != NULL_IMPL)
+			if (EventLogImplType == NULL_IMPL)
 				// test cannot pass with NULL implementation
 				Assert.Ignore ("No EventLogImplType.");
 
@@ -1336,7 +1352,7 @@ namespace MonoTests.System.Diagnostics
 		[Test]
 		public void CreateEventSource1_Log_NotUnique ()
 		{
-			if (EventLogImplType != NULL_IMPL)
+			if (EventLogImplType == NULL_IMPL)
 				// test cannot pass with NULL implementation
 				Assert.Ignore ("No EventLogImplType.");
 
@@ -1722,6 +1738,9 @@ namespace MonoTests.System.Diagnostics
 				Assert.IsTrue (ex.Message.IndexOf ("'.'") != -1, "#5");
 				Assert.IsNull (ex.InnerException, "#6");
 				Assert.IsNull (ex.ParamName, "#7");
+			} catch (SecurityException) {
+				if (IsAzurePipelines) Assert.Ignore ("Azure Pipelines fails with: Requested registry access is not allowed on.");
+				throw;
 			}
 		}
 
@@ -1858,6 +1877,9 @@ namespace MonoTests.System.Diagnostics
 				Assert.IsTrue (ex.Message.IndexOf ("'.'") != -1, "#5");
 				Assert.IsNull (ex.InnerException, "#6");
 				Assert.IsNull (ex.ParamName, "#7");
+			} catch (SecurityException) {
+				if (IsAzurePipelines) Assert.Ignore ("Azure Pipelines fails with: Requested registry access is not allowed.");
+				throw;
 			}
 		}
 
@@ -1965,7 +1987,7 @@ namespace MonoTests.System.Diagnostics
 						Assert.AreEqual (typeof (ArgumentException), ex.GetType (), "#I2");
 						Assert.IsNotNull (ex.Message, "#I3");
 						Assert.IsNull (ex.InnerException, "#I4");
-						Assert.AreEqual ("", ex.ParamName, "#I5");
+						Assert.AreEqual ("destinationArray", ex.ParamName, "#I5");
 					}
 
 					entries = new EventLogEntry [1];
@@ -2391,7 +2413,7 @@ namespace MonoTests.System.Diagnostics
 						Assert.AreEqual (typeof (ArgumentException), ex.GetType (), "#I2");
 						Assert.IsNotNull (ex.Message, "#I3");
 						Assert.IsNull (ex.InnerException, "#I4");
-						Assert.AreEqual (string.Empty, ex.ParamName, "#I5");
+						Assert.AreEqual ("destinationArray", ex.ParamName, "#I5");
 					}
 
 					entries = new EventLogEntry [2];
@@ -2539,7 +2561,7 @@ namespace MonoTests.System.Diagnostics
 						Assert.AreEqual (typeof (ArgumentException), ex.GetType (), "#I2");
 						Assert.IsNotNull (ex.Message, "#I3");
 						Assert.IsNull (ex.InnerException, "#I4");
-						Assert.AreEqual ("", ex.ParamName, "#I5");
+						Assert.AreEqual ("destinationArray", ex.ParamName, "#I5");
 					}
 
 					entries = new EventLogEntry [2];
@@ -2699,7 +2721,7 @@ namespace MonoTests.System.Diagnostics
 						Assert.AreEqual (typeof (ArgumentException), ex.GetType (), "#I2");
 						Assert.IsNotNull (ex.Message, "#I3");
 						Assert.IsNull (ex.InnerException, "#I4");
-						Assert.AreEqual ("", ex.ParamName, "#I5");
+						Assert.AreEqual ("destinationArray", ex.ParamName, "#I5");
 					}
 
 					entries = new EventLogEntry [2];
@@ -2779,9 +2801,15 @@ namespace MonoTests.System.Diagnostics
 					Assert.Ignore ("Event log 'monologother' should not exist.");
 			}
 
-			using (RegistryKey sourceKey = FindSourceKeyByName ("monotempsource")) {
-				if (sourceKey != null)
-					Assert.Ignore ("Event log source 'monotempsource' should not exist.");
+			try {
+				using (RegistryKey sourceKey = FindSourceKeyByName ("monotempsource")) {
+					if (sourceKey != null)
+						Assert.Ignore ("Event log source 'monotempsource' should not exist.");
+				}
+			}
+ 			catch (SecurityException) {
+				if (IsAzurePipelines) Assert.Ignore ("Azure Pipelines fails with: Requested registry access is not allowed.");
+				throw;
 			}
 
 			Assert.IsFalse (EventLog.Exists ("monologtemp"), "#A1");
@@ -2847,9 +2875,14 @@ namespace MonoTests.System.Diagnostics
 					Assert.Ignore ("Event log 'monologother' should not exist.");
 			}
 
-			using (RegistryKey sourceKey = FindSourceKeyByName ("monotempsource")) {
-				if (sourceKey != null)
-					Assert.Ignore ("Event log source 'monotempsource' should not exist.");
+			try {
+				using (RegistryKey sourceKey = FindSourceKeyByName ("monotempsource")) {
+					if (sourceKey != null)
+						Assert.Ignore ("Event log source 'monotempsource' should not exist.");
+				}
+			} catch (SecurityException) {
+				if (IsAzurePipelines) Assert.Ignore ("Azure Pipelines fails with: Requested registry access is not allowed.");
+				throw;
 			}
 
 			Assert.IsFalse (EventLog.Exists ("monologtemp", "."), "#A1");
@@ -3279,9 +3312,14 @@ namespace MonoTests.System.Diagnostics
 					Assert.Ignore ("Event log 'monologtemp' should not exist.");
 			}
 
-			using (RegistryKey sourceKey = FindSourceKeyByName ("monotempsource")) {
-				if (sourceKey != null)
-					Assert.Ignore ("Event log source 'monotempsource' should not exist.");
+			try {
+				using (RegistryKey sourceKey = FindSourceKeyByName ("monotempsource")) {
+					if (sourceKey != null)
+						Assert.Ignore ("Event log source 'monotempsource' should not exist.");
+				}
+			} catch (SecurityException) {
+				if (IsAzurePipelines) Assert.Ignore ("Azure Pipelines fails with: Requested registry access is not allowed.");
+				throw;
 			}
 
 			Assert.IsFalse (EventLog.SourceExists ("monotempsource"), "#A1");
@@ -3352,9 +3390,14 @@ namespace MonoTests.System.Diagnostics
 					Assert.Ignore ("Event log 'monologtemp' should not exist.");
 			}
 
-			using (RegistryKey sourceKey = FindSourceKeyByName ("monotempsource")) {
-				if (sourceKey != null)
-					Assert.Ignore ("Event log source 'monotempsource' should not exist.");
+			try {
+				using (RegistryKey sourceKey = FindSourceKeyByName ("monotempsource")) {
+					if (sourceKey != null)
+						Assert.Ignore ("Event log source 'monotempsource' should not exist.");
+				}
+			} catch (SecurityException) {
+				if (IsAzurePipelines) Assert.Ignore ("Azure Pipelines fails with: Requested registry access is not allowed.");
+				throw;
 			}
 
 			Assert.IsFalse (EventLog.SourceExists ("monotempsource", "."), "#1");
@@ -3488,7 +3531,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry1a", entry.ReplacementStrings[0], "#B14");
@@ -3509,7 +3552,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry1b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -3634,7 +3677,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -3683,7 +3726,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -3735,7 +3778,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry1", entry.ReplacementStrings[0], "#B14");
@@ -3793,7 +3836,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry2a", entry.ReplacementStrings [0], "#B14");
@@ -3814,7 +3857,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry2b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -3952,7 +3995,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -4001,7 +4044,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -4053,7 +4096,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry1", entry.ReplacementStrings [0], "#B14");
@@ -4119,7 +4162,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry3a", entry.ReplacementStrings [0], "#B14");
@@ -4141,7 +4184,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry3b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -4184,7 +4227,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -4227,7 +4270,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -4276,7 +4319,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("test", entry.ReplacementStrings [0], "#B14");
@@ -4344,7 +4387,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (56, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry1", entry.ReplacementStrings [0], "#B14");
@@ -4365,7 +4408,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry2", entry.ReplacementStrings [0], "#C14");
@@ -4386,7 +4429,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (ushort.MaxValue, entry.EventID, "#D8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#D9");
 					Assert.IsNotNull (entry.MachineName, "#D10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#D11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#D11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#D12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#D13");
 					Assert.AreEqual ("WriteEntry2", entry.ReplacementStrings [0], "#D14");
@@ -4600,7 +4643,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (888, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -4649,7 +4692,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (343, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -4706,7 +4749,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (2, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry1", entry.ReplacementStrings [0], "#B14");
@@ -4773,7 +4816,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry3a", entry.ReplacementStrings [0], "#B14");
@@ -4795,7 +4838,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry3b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -4838,7 +4881,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -4881,7 +4924,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -4930,7 +4973,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("test", entry.ReplacementStrings [0], "#B14");
@@ -5006,7 +5049,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (56, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry6a", entry.ReplacementStrings [0], "#B14");
@@ -5028,7 +5071,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry6b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -5050,7 +5093,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (ushort.MaxValue, entry.EventID, "#D8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#D9");
 					Assert.IsNotNull (entry.MachineName, "#D10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#D11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#D11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#D12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#D13");
 					Assert.AreEqual ("WriteEntry6c", entry.ReplacementStrings [0], "#D14");
@@ -5264,7 +5307,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (888, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -5313,7 +5356,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (343, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -5365,7 +5408,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (2, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry1", entry.ReplacementStrings [0], "#B14");
@@ -5432,7 +5475,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (54, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry7a", entry.ReplacementStrings [0], "#B14");
@@ -5454,7 +5497,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry7b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -5477,7 +5520,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (ushort.MaxValue, entry.EventID, "#D8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#D9");
 					Assert.IsNotNull (entry.MachineName, "#D10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#D11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#D11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#D12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#D13");
 					Assert.AreEqual ("WriteEntry7c" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#D14");
@@ -5585,7 +5628,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (56, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -5629,7 +5672,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (76, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -5679,7 +5722,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (89, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("test", entry.ReplacementStrings [0], "#B14");
@@ -5757,7 +5800,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (56, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry8a", entry.ReplacementStrings [0], "#B14");
@@ -5779,7 +5822,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry8b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -5801,7 +5844,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (ushort.MaxValue, entry.EventID, "#D8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#D9");
 					Assert.IsNotNull (entry.MachineName, "#D10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#D11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#D11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#D12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#D13");
 					Assert.AreEqual ("WriteEntry8c", entry.ReplacementStrings [0], "#D14");
@@ -6017,7 +6060,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (888, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -6066,7 +6109,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (343, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -6118,7 +6161,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (2, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry1", entry.ReplacementStrings [0], "#B14");
@@ -6185,7 +6228,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (54, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry9a", entry.ReplacementStrings [0], "#B14");
@@ -6208,7 +6251,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry9b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -6231,7 +6274,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (ushort.MaxValue, entry.EventID, "#D8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#D9");
 					Assert.IsNotNull (entry.MachineName, "#D10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#D11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#D11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#D12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#D13");
 					Assert.AreEqual ("WriteEntry9c" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#D14");
@@ -6339,7 +6382,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (56, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -6383,7 +6426,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (76, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -6433,7 +6476,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (89, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("test", entry.ReplacementStrings [0], "#B14");
@@ -6513,7 +6556,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (54, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("WriteEntry9a", entry.ReplacementStrings [0], "#B14");
@@ -6536,7 +6579,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (0, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#C13");
 					Assert.AreEqual ("WriteEntry9b" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#C14");
@@ -6559,7 +6602,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (ushort.MaxValue, entry.EventID, "#D8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#D9");
 					Assert.IsNotNull (entry.MachineName, "#D10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#D11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#D11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#D12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#D13");
 					Assert.AreEqual ("WriteEntry9c" + Environment.NewLine + "ok", entry.ReplacementStrings [0], "#D14");
@@ -6667,7 +6710,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (56, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -6711,7 +6754,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (76, entry.EventID, "#A8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#A9");
 					Assert.IsNotNull (entry.MachineName, "#A10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#A11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#A11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#A12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#A13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#A14");
@@ -6761,7 +6804,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (89, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("test", entry.ReplacementStrings [0], "#B14");
@@ -6839,7 +6882,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (4, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("5", entry.ReplacementStrings [0], "#B14");
@@ -6863,7 +6906,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (0, entry.ReplacementStrings.Length, "#C13");
 					Assert.IsNotNull (entry.Source, "#C14");
@@ -6937,7 +6980,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (2, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("replace1", entry.ReplacementStrings[0], "#B14");
@@ -6987,7 +7030,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -7037,7 +7080,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (4, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("5", entry.ReplacementStrings [0], "#B14");
@@ -7061,7 +7104,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (0, entry.ReplacementStrings.Length, "#C13");
 					Assert.IsNotNull (entry.Source, "#C14");
@@ -7109,7 +7152,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (3, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("replace1", entry.ReplacementStrings [0], "#B14");
@@ -7189,7 +7232,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (2, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("replace1", entry.ReplacementStrings [0], "#B14");
@@ -7240,7 +7283,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.IsNotNull (entry.Source, "#B14");
@@ -7289,7 +7332,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (4, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("5", entry.ReplacementStrings [0], "#B14");
@@ -7313,7 +7356,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (0, entry.ReplacementStrings.Length, "#C13");
 					Assert.IsNotNull (entry.Source, "#C14");
@@ -7379,7 +7422,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (666, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (2, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("replace1", entry.ReplacementStrings [0], "#B14");
@@ -7434,7 +7477,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");
@@ -7485,7 +7528,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (4, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("5", entry.ReplacementStrings [0], "#B14");
@@ -7509,7 +7552,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#C8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#C9");
 					Assert.IsNotNull (entry.MachineName, "#C10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#C11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#C11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#C12");
 					Assert.AreEqual (0, entry.ReplacementStrings.Length, "#C13");
 					Assert.IsNotNull (entry.Source, "#C14");
@@ -7557,7 +7600,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (3, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("replace1", entry.ReplacementStrings [0], "#B14");
@@ -7627,7 +7670,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (666, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (2, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual ("replace1", entry.ReplacementStrings [0], "#B14");
@@ -7683,7 +7726,7 @@ namespace MonoTests.System.Diagnostics
 					Assert.AreEqual (5, entry.EventID, "#B8");
 					Assert.AreEqual (entry.EventID, entry.InstanceId, "#B9");
 					Assert.IsNotNull (entry.MachineName, "#B10");
-					Assert.AreEqual (Environment.MachineName, entry.MachineName, "#B11");
+					Assert.AreEqual (Environment.MachineName.ToUpper(), entry.MachineName.ToUpper(), "#B11");
 					Assert.IsNotNull (entry.ReplacementStrings, "#B12");
 					Assert.AreEqual (1, entry.ReplacementStrings.Length, "#B13");
 					Assert.AreEqual (string.Empty, entry.ReplacementStrings [0], "#B14");

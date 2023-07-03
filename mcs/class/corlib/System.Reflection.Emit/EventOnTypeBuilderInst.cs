@@ -27,7 +27,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System;
 using System.Collections;
 using System.Globalization;
@@ -42,17 +42,17 @@ namespace System.Reflection.Emit
 	[StructLayout (LayoutKind.Sequential)]
 	internal class EventOnTypeBuilderInst : EventInfo
 	{
-		MonoGenericClass instantiation;
+		TypeBuilderInstantiation instantiation;
 		EventBuilder event_builder;
 		EventInfo event_info;
 
-		internal EventOnTypeBuilderInst (MonoGenericClass instantiation, EventBuilder evt)
+		internal EventOnTypeBuilderInst (TypeBuilderInstantiation instantiation, EventBuilder evt)
 		{
 			this.instantiation = instantiation;
 			this.event_builder = evt;
 		}
 
-		internal EventOnTypeBuilderInst (MonoGenericClass instantiation, EventInfo evt)
+		internal EventOnTypeBuilderInst (TypeBuilderInstantiation instantiation, EventInfo evt)
 		{
 			this.instantiation = instantiation;
 			this.event_info = evt;

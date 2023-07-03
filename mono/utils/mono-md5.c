@@ -1,5 +1,6 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: t; c-basic-offset: 8 -*- */
-/*
+/**
+ * \file
  * This code implements the MD5 message-digest algorithm.
  * The algorithm is due to Ron Rivest.  This code was
  * written by Colin Plumb in 1993, no copyright is claimed.
@@ -29,23 +30,48 @@
 
 #if HAVE_COMMONCRYPTO_COMMONDIGEST_H
 
+// CC_MD5_* API is deprecated on macOS 10.15
+#if defined(__APPLE__) && defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+/**
+ * mono_md5_init:
+ */
 void
 mono_md5_init (MonoMD5Context *ctx)
 {
 	CC_MD5_Init (ctx);
 }
 
+/**
+ * mono_md5_update:
+ */
 void
 mono_md5_update (MonoMD5Context *ctx, const guchar *buf, guint32 len)
 {
 	CC_MD5_Update (ctx, buf, len);
 }
 
+/**
+ * mono_md5_final:
+ */
 void
 mono_md5_final (MonoMD5Context *ctx, guchar digest[16])
 {
 	CC_MD5_Final (digest, ctx);
 }
+
+uint64_t
+mono_md5_ctx_byte_length (MonoMD5Context *ctx)
+{
+	return ctx->num;
+}
+
+#if defined(__APPLE__) && defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 #else
 
@@ -213,7 +239,13 @@ mono_md5_final (MonoMD5Context *ctx, guchar digest[16])
 	memcpy (digest, ctx->buf, 16);
 }
 
-
+uint64_t
+mono_md5_ctx_byte_length (MonoMD5Context *ctx)
+{
+	uint64_t lo = ((uint64_t)ctx->bits[0]) >> 3;
+	uint64_t hi = ((uint64_t)ctx->bits[1]) << 29;
+	return hi + lo;
+}
 
 
 /* The four core functions - F1 is optimized somewhat */
@@ -236,7 +268,7 @@ mono_md5_final (MonoMD5Context *ctx, guchar digest[16])
 static void 
 md5_transform (guint32 buf[4], const guint32 in[16])
 {
-	register guint32 a, b, c, d;
+	guint32 a, b, c, d;
 	
 	a = buf[0];
 	b = buf[1];
@@ -321,14 +353,14 @@ md5_transform (guint32 buf[4], const guint32 in[16])
 
 
 /**
- * mono_md5_get_digest: get the md5 hash of a buffer
- * @buffer: byte buffer
- * @buffer_size: buffer size (in bytes)
- * @digest: 16 bytes buffer receiving the hash code.
+ * mono_md5_get_digest:
+ * \param buffer byte buffer
+ * \param buffer_size buffer size (in bytes)
+ * \param digest 16-byte buffer receiving the hash code.
  * 
- * Get the md5 hash of a buffer. The result is put in 
- * the 16 bytes buffer @digest .
- **/
+ * Get the MD5 hash of a buffer. The result is put in 
+ * the 16-byte buffer \p digest.
+ */
 void
 mono_md5_get_digest (const guchar *buffer, gint buffer_size, guchar digest[16])
 {	
@@ -342,15 +374,15 @@ mono_md5_get_digest (const guchar *buffer, gint buffer_size, guchar digest[16])
 
 
 /**
- * mono_md5_get_digest_from_file: get the md5 hash of a file
- * @filename: file name
- * @digest: 16 bytes buffer receiving the hash code.
+ * mono_md5_get_digest_from_file:
+ * \param filename file name
+ * \param digest 16-byte buffer receiving the hash code.
  * 
- * Get the md5 hash of a file. The result is put in 
- * the 16 bytes buffer @digest .
+ * Get the MD5 hash of a file. The result is put in 
+ * the 16-byte buffer \p digest.
  * 
- * If an IO error happens the value in @digest is not updated.
- **/
+ * If an IO error happens the value in \p digest is not updated.
+ */
 void
 mono_md5_get_digest_from_file (const gchar *filename, guchar digest[16])
 {	

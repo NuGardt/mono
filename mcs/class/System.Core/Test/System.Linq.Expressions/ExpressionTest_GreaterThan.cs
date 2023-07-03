@@ -35,6 +35,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions
 {
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_GreaterThan
 	{
 		[Test]
@@ -191,7 +192,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void UserDefinedGreaterThanLifted ()
 		{
 			var l = Expression.Parameter (typeof (Slot?), "l");
@@ -214,7 +214,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void UserDefinedGreaterThanLiftedToNull ()
 		{
 			var l = Expression.Parameter (typeof (Slot?), "l");

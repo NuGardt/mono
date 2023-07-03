@@ -23,6 +23,7 @@ namespace System.Diagnostics {
     using Microsoft.Win32;        
     using Microsoft.Win32.SafeHandles;
     using System.Collections.Specialized;
+    using System.Collections.Generic;
     using System.Globalization;
     using System.Security;
     using System.Security.Permissions;
@@ -66,16 +67,20 @@ namespace System.Diagnostics {
         ProcessModuleCollection modules;
 #endif // !FEATURE_PAL        
 
+#if !MONO
         bool haveMainWindow;
         IntPtr mainWindowHandle;  // no need to use SafeHandle for window        
         string mainWindowTitle;
+#endif
         
         bool haveWorkingSetLimits;
         IntPtr minWorkingSet;
         IntPtr maxWorkingSet;
-        
+
+#if !MONO
         bool haveProcessorAffinity;
         IntPtr processorAffinity;
+#endif
 
         bool havePriorityClass;
         ProcessPriorityClass priorityClass;
@@ -91,12 +96,14 @@ namespace System.Diagnostics {
 		
         DateTime exitTime;
         bool haveExitTime;
-        
+
+#if !MONO
         bool responding;
         bool haveResponding;
         
         bool priorityBoostEnabled;
         bool havePriorityBoostEnabled;
+#endif
         
         bool raisedOnExited;
         RegisteredWaitHandle registeredWaitHandle;
@@ -108,7 +115,9 @@ namespace System.Diagnostics {
         OperatingSystem operatingSystem;
         bool disposed;
         
+#if !MONO
         static object s_CreateProcessLock = new object();
+#endif
         
         // This enum defines the operation mode for redirected process stream.
         // We don't support switching between synchronous mode and asynchronous mode.
@@ -122,6 +131,9 @@ namespace System.Diagnostics {
         StreamReadMode outputStreamReadMode;
         StreamReadMode errorStreamReadMode;
         
+#if MONO
+        StreamReadMode inputStreamReadMode;
+#endif
        
         // Support for asynchrously reading streams
         [Browsable(true), MonitoringDescription(SR.ProcessAssociated)]
@@ -136,8 +148,9 @@ namespace System.Diagnostics {
         internal bool pendingOutputRead;
         internal bool pendingErrorRead;
 
-
+#if !MONO
         private static SafeFileHandle InvalidPipeHandle = new SafeFileHandle(IntPtr.Zero, false);
+#endif
 #if DEBUG
         internal static TraceSwitch processTracing = new TraceSwitch("processTracing", "Controls debug output from Process component");
 #else
@@ -218,7 +231,7 @@ namespace System.Diagnostics {
             get {
                 EnsureState(State.Exited);
 #if MONO
-                if (exitCode == -1)
+                if (exitCode == -1 && !RuntimeInformation.IsOSPlatform (OSPlatform.Windows))
                     throw new InvalidOperationException ("Cannot get the exit code from a non-child process on Unix");
 #endif
                 return exitCode;
@@ -1183,6 +1196,9 @@ namespace System.Diagnostics {
                     throw new InvalidOperationException(SR.GetString(SR.CantGetStandardIn));
                 }
 
+#if MONO
+                inputStreamReadMode = StreamReadMode.syncMode;
+#endif
                 return standardInput;
             }
         }
@@ -1346,6 +1362,40 @@ namespace System.Diagnostics {
                 machineName = ".";
                 raisedOnExited = false;
 
+#if MONO
+                //Call close on streams if the user never saw them.
+                //A stream in the undefined mode was never fetched by the user.
+                //A stream in the async mode is wrapped on a AsyncStreamReader and we should dispose that instead.
+                //  no way for users to get a hand on a AsyncStreamReader.
+                var tmpIn = standardInput;
+                standardInput = null;
+                if (inputStreamReadMode == StreamReadMode.undefined && tmpIn != null)
+                    tmpIn.Close ();
+
+                var tmpOut = standardOutput;
+                standardOutput = null;
+                if (outputStreamReadMode == StreamReadMode.undefined && tmpOut != null)
+                    tmpOut.Close ();
+
+                tmpOut = standardError;
+                standardError = null;
+                if (errorStreamReadMode == StreamReadMode.undefined && tmpOut != null)
+                    tmpOut.Close ();
+
+                var tmpAsync = output;
+                output = null;
+                if (outputStreamReadMode == StreamReadMode.asyncMode && tmpAsync != null) {
+                    tmpAsync.CancelOperation ();
+                    tmpAsync.Close ();
+                }
+
+                tmpAsync = error;
+                error = null;
+                if (errorStreamReadMode == StreamReadMode.asyncMode && tmpAsync != null) {
+                    tmpAsync.CancelOperation ();
+                    tmpAsync.Close ();
+                }
+#else
                 //Don't call close on the Readers and writers
                 //since they might be referenced by somebody else while the 
                 //process is still alive but this method called.
@@ -1356,6 +1406,7 @@ namespace System.Diagnostics {
                 output = null;
                 error = null;
 	
+#endif
 
                 Refresh();
             }
@@ -1568,6 +1619,7 @@ namespace System.Diagnostics {
             
             return new Process(machineName, ProcessManager.IsRemoteMachine(machineName), processId, null);
         }
+#endif
 
         /// <devdoc>
         ///    <para>
@@ -1595,6 +1647,7 @@ namespace System.Diagnostics {
             return GetProcessesByName(processName, ".");
         }
 
+#if !MONO
         /// <devdoc>
         ///    <para>
         ///       Creates an array of <see cref='System.Diagnostics.Process'/> components that are associated with process resources on a
@@ -1620,6 +1673,7 @@ namespace System.Diagnostics {
             list.CopyTo(temp, 0);
             return temp;
         }
+#endif
 
         /// <devdoc>
         ///    <para>
@@ -1633,6 +1687,7 @@ namespace System.Diagnostics {
             return GetProcesses(".");
         }
 
+#if !MONO
         /// <devdoc>
         ///    <para>
         ///       Creates a new <see cref='System.Diagnostics.Process'/>
@@ -1824,16 +1879,24 @@ namespace System.Diagnostics {
             threads = null;
             modules = null;
 #endif // !FEATURE_PAL            
+#if !MONO
             mainWindowTitle = null;
+#endif
             exited = false;
             signaled = false;
+#if !MONO
             haveMainWindow = false;
+#endif
             haveWorkingSetLimits = false;
+#if !MONO
             haveProcessorAffinity = false;
+#endif
             havePriorityClass = false;
             haveExitTime = false;
+#if !MONO
             haveResponding = false;
             havePriorityBoostEnabled = false;
+#endif
         }
 
         /// <devdoc>
@@ -2038,6 +2101,9 @@ namespace System.Diagnostics {
                 throw new InvalidOperationException(SR.GetString(SR.StandardErrorEncodingNotAllowed));
             }            
             
+            if (!string.IsNullOrEmpty(startInfo.Arguments) && startInfo.ArgumentList.Count > 0)
+                throw new InvalidOperationException(SR.ArgumentAndArgumentListInitialized);
+
             // See knowledge base article Q190351 for an explanation of the following code.  Noteworthy tricky points:
             //    * The handles are duplicated as non-inheritable before they are passed to CreateProcess so
             //      that the child process can not close them
@@ -2049,7 +2115,17 @@ namespace System.Diagnostics {
                 throw new ObjectDisposedException(GetType().Name);
             }
 
-            StringBuilder commandLine = BuildCommandLine(startInfo.FileName, startInfo.Arguments);
+            string arguments;
+            if (startInfo.ArgumentList.Count > 0) {
+                StringBuilder sb = new StringBuilder ();
+                Process.AppendArguments (sb, startInfo.ArgumentList);
+                arguments = sb.ToString ();
+            }
+            else {
+                arguments = startInfo.Arguments;
+            }
+
+            StringBuilder commandLine = BuildCommandLine(startInfo.FileName, arguments);
 
             NativeMethods.STARTUPINFO startupInfo = new NativeMethods.STARTUPINFO();
             SafeNativeMethods.PROCESS_INFORMATION processInfo = new SafeNativeMethods.PROCESS_INFORMATION();
@@ -2507,11 +2583,6 @@ namespace System.Diagnostics {
                         signaled = false;
                     }
                 }
-            }
-            finally {
-                if( processWaitHandle != null) {
-                    processWaitHandle.Close();
-                }
 
                 // If we have a hard timeout, we cannot wait for the streams
                 if( output != null && milliseconds == -1) {
@@ -2520,6 +2591,11 @@ namespace System.Diagnostics {
 
                 if( error != null && milliseconds == -1) {
                     error.WaitUtilEOF();
+                }
+            }
+            finally {
+                if( processWaitHandle != null) {
+                    processWaitHandle.Close();
                 }
 
                 ReleaseProcessHandle(handle);

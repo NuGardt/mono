@@ -423,6 +423,8 @@ namespace MonoTests.System.Windows.Forms
 			Assert.AreEqual ("{Width=0, Height=0}", mycmbbox.MinimumSize.ToString (), "#27");
 			Assert.AreEqual ("{Left=0,Top=0,Right=0,Bottom=0}", mycmbbox.Padding.ToString (), "#28");
 			
+			Assert.AreEqual (SystemColors.Window, mycmbbox.BackColor, "#29");
+			Assert.AreEqual (SystemColors.WindowText, mycmbbox.ForeColor, "#30");
 		}
 
 		[Test]
@@ -728,6 +730,22 @@ namespace MonoTests.System.Windows.Forms
 			int x = -1;
 			x = cmbbox.GetItemHeight (x);
 			Assert.IsTrue (cmbbox.ItemHeight > 0, "#21");
+		}
+
+		[Test]
+		public void RemoveAt_SelectedIndex ()
+		{
+			ComboBox cmbbox = new ComboBox ();
+			cmbbox.Items.AddRange (new object[] {"1", "2", "3"});
+			cmbbox.SelectedIndex = 0;
+			cmbbox.Items.RemoveAt (0);
+			Assert.AreEqual (0, cmbbox.SelectedIndex, "#A1");
+
+			cmbbox.Items.Clear ();
+			cmbbox.Items.AddRange (new object[] {"1", "2", "3"});
+			cmbbox.SelectedIndex = 2;
+			cmbbox.Items.RemoveAt (0);
+			Assert.AreEqual (1, cmbbox.SelectedIndex, "#A2");
 		}
 
 		//
@@ -1498,7 +1516,25 @@ namespace MonoTests.System.Windows.Forms
 			cmb.Items.Add (new ComboVal ("A"));
 			cmb.Sorted = true;
 		}
-	}
+
+        [Test]
+        public void SetTextAfterDisposeTest()
+        {
+            var comboBox = new ComboBox();
+            comboBox.Dispose();
+            comboBox.Text = "1";
+        }
+
+        [Test]
+        public void SetNullTextDropDownTest()
+        {
+            var comboBox = new ComboBox();
+            comboBox.DropDownStyle = ComboBoxStyle.DropDown;
+            comboBox.SelectedIndex = -1;
+            comboBox.Dispose();
+            comboBox.Text = null;
+        }
+    }
 
 	[TestFixture]
 	public class ComboBoxObjectCollectionTest : TestHelper

@@ -110,6 +110,7 @@ namespace MonoTests.System {
 		}
 
 		[Test]
+		[Category ("Calendars")]
 		public void ParameterlessToString ()
 		{
 			DateTimeOffset dt = new DateTimeOffset (2007, 12, 18, 12, 16, 30, new TimeSpan (1, 0, 0));
@@ -121,6 +122,7 @@ namespace MonoTests.System {
 		}
 
 		[Test]
+		[Category ("Calendars")]
 		public void ToStringWithCultureInfo ()
 		{
 			DateTimeOffset dto = new DateTimeOffset(2007, 5, 1, 9, 0, 0, TimeSpan.Zero);
@@ -146,6 +148,7 @@ namespace MonoTests.System {
 		}
 
 		[Test]
+		[Category ("Calendars")]
 		public void ToStringWithFormat ()
 		{
 			DateTimeOffset dto = new DateTimeOffset (2007, 10, 31, 21, 0, 0, new TimeSpan(-8, 0, 0));
@@ -171,12 +174,12 @@ namespace MonoTests.System {
 		public void ToStringWithFormatAndCulture ()
 		{
 			DateTimeOffset dto = new DateTimeOffset (2007, 11, 1, 9, 0, 0, new TimeSpan(-7, 0, 0));
-			string format = "dddd, MMM dd yyyy HH:mm:ss zzz";
-			if (CultureInfo.CurrentCulture == CultureInfo.InvariantCulture)
-				Assert.AreEqual ("Thursday, Nov 01 2007 09:00:00 -07:00", dto.ToString (format, null as DateTimeFormatInfo), "ts1");
+			const string format = "dddd, MMM dd yyyy HH:mm:ss zzz";
 			Assert.AreEqual ("Thursday, Nov 01 2007 09:00:00 -07:00", dto.ToString (format, CultureInfo.InvariantCulture), "ts2");
-			Assert.AreEqual ("jeudi, nov. 01 2007 09:00:00 -07:00", dto.ToString (format, new CultureInfo ("fr-FR")), "ts3");
-			Assert.AreEqual ("jueves, Nov. 01 2007 09:00:00 -07:00", dto.ToString (format, new CultureInfo ("es-ES")), "ts4");
+			if (!GlobalizationMode.Invariant) {
+				Assert.AreEqual ("jeudi, nov. 01 2007 09:00:00 -07:00", dto.ToString (format, new CultureInfo ("fr-FR")), "ts3");
+				Assert.AreEqual ("jueves, nov. 01 2007 09:00:00 -07:00", dto.ToString (format, new CultureInfo ("es-ES")), "ts4");
+			}
 		}
 
 		[Test]
@@ -253,6 +256,7 @@ namespace MonoTests.System {
 		// see bug 589227
 		//
 		[Test]
+		[Category ("Calendars")]
 		public void ParseExactWithKFormat ()
 		{
 			DateTimeOffset o = DateTimeOffset.ParseExact ("Wed Mar 17 22:25:08 +0000 2010", "ddd MMM d H:m:ss K yyyy", CultureInfo.InvariantCulture);

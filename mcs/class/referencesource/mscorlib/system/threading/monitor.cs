@@ -4,7 +4,7 @@
 // 
 // ==--==
 //
-// <OWNER>[....]</OWNER>
+// <OWNER>Microsoft</OWNER>
 /*=============================================================================
 **
 ** Class: Monitor
@@ -20,7 +20,9 @@
 namespace System.Threading {
 
     using System;
+#if !MONO
     using System.Security.Permissions;
+#endif
     using System.Runtime;
     using System.Runtime.Remoting;
     using System.Threading;
@@ -29,9 +31,11 @@ namespace System.Threading {
     using System.Runtime.Versioning;
     using System.Diagnostics.Contracts;
 
+#if !MONO
     [HostProtection(Synchronization=true, ExternalThreading=true)]
     [System.Runtime.InteropServices.ComVisible(true)]
-    public static class Monitor 
+#endif
+    public static partial class Monitor
     {
         /*=========================================================================
         ** Obtain the monitor lock of obj. Will block if another thread holds the lock
@@ -41,8 +45,10 @@ namespace System.Threading {
         **
         ** Exceptions: ArgumentNullException if object is null.
         =========================================================================*/
+#if !MONO
         [System.Security.SecuritySafeCritical]
         [ResourceExposure(ResourceScope.None)]
+#endif
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         public static extern void Enter(Object obj);
 
@@ -66,11 +72,12 @@ namespace System.Threading {
             throw new ArgumentException(Environment.GetResourceString("Argument_MustBeFalse"), "lockTaken");
         }
 
+#if !MONO
         [System.Security.SecuritySafeCritical]
         [ResourceExposure(ResourceScope.None)]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern void ReliableEnter(Object obj, ref bool lockTaken);
-
+#endif
 
 
         /*=========================================================================
@@ -83,7 +90,9 @@ namespace System.Threading {
         **             own the lock.
         =========================================================================*/
         [System.Security.SecuritySafeCritical]
+#if !MONO
         [ResourceExposure(ResourceScope.None)]
+#endif
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
         public static extern void Exit(Object obj);
@@ -160,10 +169,12 @@ namespace System.Threading {
             ReliableEnterTimeout(obj, MillisecondsTimeoutFromTimeSpan(timeout), ref lockTaken);
         }
 
+#if !MONO
         [System.Security.SecuritySafeCritical]
         [ResourceExposure(ResourceScope.None)]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern void ReliableEnterTimeout(Object obj, int timeout, ref bool lockTaken);
+#endif
 
         [System.Security.SecuritySafeCritical]
         public static bool IsEntered(object obj)
@@ -174,10 +185,12 @@ namespace System.Threading {
             return IsEnteredNative(obj);
         }
 
+#if !MONO
         [System.Security.SecurityCritical]
         [ResourceExposure(ResourceScope.None)]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern bool IsEnteredNative(Object obj);
+#endif
 
         /*========================================================================
     ** Waits for notification from the object (via a Pulse/PulseAll). 
@@ -190,10 +203,12 @@ namespace System.Threading {
     **
         ** Exceptions: ArgumentNullException if object is null.
     ========================================================================*/
+#if !MONO
         [System.Security.SecurityCritical]  // auto-generated
         [ResourceExposure(ResourceScope.None)]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern bool ObjWait(bool exitContext, int millisecondsTimeout, Object obj);
+#endif
 
         [System.Security.SecuritySafeCritical]  // auto-generated
         public static bool Wait(Object obj, int millisecondsTimeout, bool exitContext)
@@ -228,10 +243,12 @@ namespace System.Threading {
         * Exceptions: SynchronizationLockException if this method is not called inside
         * a synchronized block of code.
         ========================================================================*/
+#if !MONO
         [System.Security.SecurityCritical]  // auto-generated
         [ResourceExposure(ResourceScope.None)]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern void ObjPulse(Object obj);
+#endif
 
         [System.Security.SecuritySafeCritical]  // auto-generated
         public static void Pulse(Object obj)
@@ -247,10 +264,12 @@ namespace System.Threading {
         /*========================================================================
         ** Sends a notification to all waiting objects. 
         ========================================================================*/
+#if !MONO
         [System.Security.SecurityCritical]  // auto-generated
         [ResourceExposure(ResourceScope.None)]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern void ObjPulseAll(Object obj);
+#endif
 
         [System.Security.SecuritySafeCritical]  // auto-generated
         public static void PulseAll(Object obj)

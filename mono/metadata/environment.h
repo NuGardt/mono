@@ -1,5 +1,6 @@
-/*
- * environment.h: System.Environment support internal calls
+/**
+ * \file
+ * System.Environment support internal calls
  *
  * Author:
  *	Dick Porter (dick@ximian.com)
@@ -14,8 +15,8 @@
 
 MONO_BEGIN_DECLS
 
-MONO_API extern int32_t mono_environment_exitcode_get (void);
-MONO_API extern void mono_environment_exitcode_set (int32_t value);
+MONO_API int32_t mono_environment_exitcode_get (void);
+MONO_API void mono_environment_exitcode_set (int32_t value);
 
 MONO_END_DECLS
 

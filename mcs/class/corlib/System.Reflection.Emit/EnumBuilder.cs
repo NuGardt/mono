@@ -31,7 +31,7 @@
 // (C) 2001 Ximian, Inc.  http://www.ximian.com
 //
 
-#if !FULL_AOT_RUNTIME
+#if MONO_FEATURE_SRE
 using System;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -40,12 +40,36 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace System.Reflection.Emit {
+
+#if !MOBILE
 	[ComVisible (true)]
 	[ComDefaultInterface (typeof (_EnumBuilder))]
 	[ClassInterface (ClassInterfaceType.None)]
-	public sealed class EnumBuilder : 
-		TypeInfo
-		, _EnumBuilder
+	partial class EnumBuilder : _EnumBuilder
+	{
+		void _EnumBuilder.GetIDsOfNames ([In] ref Guid riid, IntPtr rgszNames, uint cNames, uint lcid, IntPtr rgDispId)
+		{
+			throw new NotImplementedException ();
+		}
+
+		void _EnumBuilder.GetTypeInfo (uint iTInfo, uint lcid, IntPtr ppTInfo)
+		{
+			throw new NotImplementedException ();
+		}
+
+		void _EnumBuilder.GetTypeInfoCount (out uint pcTInfo)
+		{
+			throw new NotImplementedException ();
+		}
+
+		void _EnumBuilder.Invoke (uint dispIdMember, [In] ref Guid riid, uint lcid, short wFlags, IntPtr pDispParams, IntPtr pVarResult, IntPtr pExcepInfo, IntPtr puArgErr)
+		{
+			throw new NotImplementedException ();
+		}
+	}
+#endif
+
+	public sealed partial class EnumBuilder : 	TypeInfo
 	{
 		private TypeBuilder _tb;
 		private FieldBuilder _underlyingField;
@@ -71,6 +95,9 @@ namespace System.Reflection.Emit {
 			return _tb.InternalResolve (); 
 		}
 
+		internal override Type RuntimeResolve () {
+			return _tb.RuntimeResolve ();
+		}
 
 		public override Assembly Assembly {
 			get {
@@ -160,6 +187,11 @@ namespace System.Reflection.Emit {
 		{
 			Type res = _tb.CreateType ();
 			return res;
+		}
+
+		public TypeInfo CreateTypeInfo()
+		{
+			return _tb.CreateTypeInfo ();
 		}
 
 		public override Type GetEnumUnderlyingType ()
@@ -394,26 +426,6 @@ namespace System.Reflection.Emit {
 			return new NotSupportedException ("The invoked member is not supported in a dynamic module.");
 		}
 
-		void _EnumBuilder.GetIDsOfNames ([In] ref Guid riid, IntPtr rgszNames, uint cNames, uint lcid, IntPtr rgDispId)
-		{
-			throw new NotImplementedException ();
-		}
-
-		void _EnumBuilder.GetTypeInfo (uint iTInfo, uint lcid, IntPtr ppTInfo)
-		{
-			throw new NotImplementedException ();
-		}
-
-		void _EnumBuilder.GetTypeInfoCount (out uint pcTInfo)
-		{
-			throw new NotImplementedException ();
-		}
-
-		void _EnumBuilder.Invoke (uint dispIdMember, [In] ref Guid riid, uint lcid, short wFlags, IntPtr pDispParams, IntPtr pVarResult, IntPtr pExcepInfo, IntPtr puArgErr)
-		{
-			throw new NotImplementedException ();
-		}
-
 		internal override bool IsUserType {
 			get {
 				return false;
@@ -429,6 +441,7 @@ namespace System.Reflection.Emit {
 			return base.IsAssignableFrom (typeInfo);
 		}
 
+		public override bool IsTypeDefinition => true;
 	}
 }
 #endif

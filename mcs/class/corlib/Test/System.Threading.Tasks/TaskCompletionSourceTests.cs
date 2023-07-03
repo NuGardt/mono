@@ -30,9 +30,6 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using NUnit.Framework;
-#if !MOBILE
-using NUnit.Framework.SyntaxHelpers;
-#endif
 
 namespace MonoTests.System.Threading.Tasks
 {
@@ -155,6 +152,7 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void ContinuationTest ()
 		{
 			bool result = false;
@@ -201,6 +199,7 @@ namespace MonoTests.System.Threading.Tasks
 
 		[Test]
 		[Ignore ("#4550, Mono GC is lame")]
+		[Category ("MultiThreaded")]
 		public void SetExceptionAndUnobservedEvent ()
 		{
 			bool notFromMainThread = false;
@@ -228,6 +227,7 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void WaitingTest ()
 		{
 			var tcs = new TaskCompletionSource<int> ();

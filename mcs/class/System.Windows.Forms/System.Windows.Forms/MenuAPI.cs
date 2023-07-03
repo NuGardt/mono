@@ -315,6 +315,8 @@ namespace System.Windows.Forms {
 				}
 			}
 
+			XplatUI.EndLoop(Thread.CurrentThread);
+
 			if (tracker.GrabControl.IsDisposed)
 				return true;
 
@@ -421,6 +423,8 @@ namespace System.Windows.Forms {
 			item.Wnd = puw;
 
 			puw.ShowWindow ();
+			if (menu.Tracker.ShowSubPopupEvent != null)
+				menu.Tracker.ShowSubPopupEvent (this, new SubPopupEventArgs (item));
 		}
 
 		static public void HideSubPopups (Menu menu, Menu topmenu)
@@ -431,6 +435,10 @@ namespace System.Windows.Forms {
 
 			if (menu.Wnd == null)
 				return;
+
+			var parentTracker = menu.parent_menu?.Tracker;
+			if (parentTracker?.HideSubPopupEvent != null)
+				parentTracker.HideSubPopupEvent (menu.parent_menu, new SubPopupEventArgs (menu));
 
 			PopUpWindow puw = menu.Wnd as PopUpWindow;
 			if (puw != null) {
@@ -824,6 +832,27 @@ namespace System.Windows.Forms {
 
 			return active;
 		}
+
+		#region Internal events (UIA API needs)
+
+		internal delegate void SubPopupHandler (object sender, SubPopupEventArgs e); 
+
+		// `ShowSubPopupEvent` and  `HideSubPopupEvent` are used by UIA API.
+		internal event SubPopupHandler ShowSubPopupEvent; 
+		internal event SubPopupHandler HideSubPopupEvent;
+
+		internal class SubPopupEventArgs : EventArgs
+		{
+			public readonly Menu Popup;
+
+			public SubPopupEventArgs (Menu popup)
+			{
+				Popup = popup;
+			}
+		}
+
+		#endregion  // Internal events (UIA API needs)
+
 	}
 
 	internal class PopUpWindow : Control
@@ -837,6 +866,7 @@ namespace System.Windows.Forms {
 			this.form = form;
 			SetStyle (ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint, true);
 			SetStyle (ControlStyles.ResizeRedraw | ControlStyles.Opaque, true);
+			SetTopLevel (true);
 			is_visible = false;
 		}
 

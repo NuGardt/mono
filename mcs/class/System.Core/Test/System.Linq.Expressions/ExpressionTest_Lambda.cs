@@ -30,6 +30,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions
 {
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_Lambda
 	{
 		[Test]
@@ -194,7 +195,7 @@ namespace MonoTests.System.Linq.Expressions
 		{
 			var l = Expression.Lambda ("foo".ToConstant ());
 
-			Assert.AreEqual (typeof (Expression<Func<string>>), l.GetType ());
+			Assert.AreEqual (typeof (Func<string>), l.Type);
 		}
 
 		public static int CallDelegate (Func<int, int> e)

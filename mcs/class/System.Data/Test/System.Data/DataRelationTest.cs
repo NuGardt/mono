@@ -34,9 +34,8 @@
 using NUnit.Framework;
 using System;
 using System.Data;
-#if !MOBILE
-using NUnit.Framework.SyntaxHelpers;
-#endif
+
+using MonoTests.Helpers;
 
 namespace MonoTests.System.Data
 {
@@ -385,7 +384,7 @@ namespace MonoTests.System.Data
 		public void RelationFromSchema ()
 		{
 			DataSet Set = new DataSet ();
-			Set.ReadXmlSchema ("Test/System.Data/store.xsd");
+			Set.ReadXmlSchema (TestResourceHelper.GetFullPathOfResource ("Test/System.Data/store.xsd"));
 			DataTable Table = Set.Tables [0];
 			
 			Assert.That (Table.CaseSensitive, Is.False, "test#01");

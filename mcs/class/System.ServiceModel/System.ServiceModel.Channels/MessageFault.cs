@@ -40,8 +40,9 @@ namespace System.ServiceModel.Channels
 		public static MessageFault CreateFault (Message message, int maxBufferSize)
 		{
 			try {
-				if (message.Version.Envelope == EnvelopeVersion.Soap11)
-					return CreateFault11 (message, maxBufferSize);
+				if (message.Version.Envelope == EnvelopeVersion.Soap11) {
+					return CreateFault11 (message, maxBufferSize);					
+				}
 				else // common to None and SOAP12
 					return CreateFault12 (message, maxBufferSize);
 			} catch (XmlException ex) {
@@ -53,24 +54,26 @@ namespace System.ServiceModel.Channels
 		{
 			FaultCode fc = null;
 			FaultReason fr = null;
-			object details = null;
+			string actor = null;
 			XmlDictionaryReader r = message.GetReaderAtBodyContents ();
+			
 			r.ReadStartElement ("Fault", message.Version.Envelope.Namespace);
+			fc = ReadFaultCode11 (r, maxBufferSize);
+
 			r.MoveToContent ();
 
 			while (r.NodeType != XmlNodeType.EndElement) {
-				switch (r.LocalName) {
-				case "faultcode":
-					fc = ReadFaultCode11 (r);
-					break;
+				switch (r.LocalName) {				
 				case "faultstring":
 					fr = new FaultReason (r.ReadElementContentAsString());
 					break;
-				case "detail":
-					return new XmlReaderDetailMessageFault (message, r, fc, fr, null, null);
 				case "faultactor":
+					actor = r.ReadElementContentAsString();
+					break;
+				case "detail":
+					return new XmlReaderDetailMessageFault (message, r, fc, fr, actor, null);
 				default:
-					throw new NotImplementedException ();
+					throw new XmlException (String.Format ("Unexpected node {0} name {1}", r.NodeType, r.Name));
 				}
 				r.MoveToContent ();
 			}
@@ -79,9 +82,7 @@ namespace System.ServiceModel.Channels
 			if (fr == null)
 				throw new XmlException ("Reason is missing in the Fault message");
 
-			if (details == null)
-				return CreateFault (fc, fr);
-			return CreateFault (fc, fr, details);
+			return new SimpleMessageFault (fc, fr, false, null, null, actor, null);
 		}
 
 		static MessageFault CreateFault12 (Message message, int maxBufferSize)
@@ -128,26 +129,27 @@ namespace System.ServiceModel.Channels
 			return new SimpleMessageFault (fc, fr, false, null, null, null, node);
 		}
 
-		static FaultCode ReadFaultCode11 (XmlDictionaryReader r)
+		// In reference source for soap 1.1, the fault code value is not strictly enforced as per the
+		// Namespaces in XML spec.
+		//
+		// Additionally, the fault sub code is not looked for:
+		//
+		// See: https://referencesource.microsoft.com/#System.ServiceModel/System/ServiceModel/Channels/MessageFault.cs,f23a5298fd999b2d
+		//
+		static FaultCode ReadFaultCode11 (XmlDictionaryReader reader, int maxBufferSize)
 		{
-			FaultCode subcode = null;
-			XmlQualifiedName value = XmlQualifiedName.Empty;
+			FaultCode code;
+			string ns;
+			string name;
 
-			if (r.IsEmptyElement)
-				throw new ArgumentException ("Fault Code is mandatory in SOAP fault message.");
+			reader.ReadStartElement ("faultcode", "");
+			
+			XmlUtil.ReadContentAsQName (reader, out name, out ns);
+			code = new FaultCode (name, ns);
 
-			r.ReadStartElement ("faultcode");
-			r.MoveToContent ();
-			while (r.NodeType != XmlNodeType.EndElement) {
-				if (r.NodeType == XmlNodeType.Element)
-					subcode = ReadFaultCode11 (r);
-				else
-					value = (XmlQualifiedName) r.ReadContentAs (typeof (XmlQualifiedName), r as IXmlNamespaceResolver);
-				r.MoveToContent ();
-			}
-			r.ReadEndElement ();
-
-			return new FaultCode (value.Name, value.Namespace, subcode);
+			reader.ReadEndElement ();
+			
+			return code;
 		}
 
 		static FaultCode ReadFaultCode12 (XmlDictionaryReader r, string ns)
@@ -220,26 +222,26 @@ namespace System.ServiceModel.Channels
 
 		public static MessageFault CreateFault (FaultCode code,
 			FaultReason reason, object detail,
-			XmlObjectSerializer formatter)
+			XmlObjectSerializer serializer)
 		{
 			return new SimpleMessageFault (code, reason, true,
-				detail, formatter, String.Empty, String.Empty);
+				detail, serializer, String.Empty, String.Empty);
 		}
 
 		public static MessageFault CreateFault (FaultCode code,
 			FaultReason reason, object detail,
-			XmlObjectSerializer formatter, string actor)
+			XmlObjectSerializer serializer, string actor)
 		{
 			return new SimpleMessageFault (code, reason,
-				true, detail, formatter, actor, String.Empty);
+				true, detail, serializer, actor, String.Empty);
 		}
 
 		public static MessageFault CreateFault (FaultCode code,
 			FaultReason reason, object detail,
-			XmlObjectSerializer formatter, string actor, string node)
+			XmlObjectSerializer serializer, string actor, string node)
 		{
 			return new SimpleMessageFault (code, reason,
-				true, detail, formatter, actor, node);
+				true, detail, serializer, actor, node);
 		}
 
 		// pretty simple implementation class
@@ -397,12 +399,12 @@ namespace System.ServiceModel.Channels
 			return GetDetail<T> (new DataContractSerializer (typeof (T)));
 		}
 
-		public T GetDetail<T> (XmlObjectSerializer formatter)
+		public T GetDetail<T> (XmlObjectSerializer serializer)
 		{
 			if (!HasDetail)
 				throw new InvalidOperationException ("This message does not have details.");
 
-			return (T) formatter.ReadObject (GetReaderAtDetailContents ());
+			return (T) serializer.ReadObject (GetReaderAtDetailContents ());
 		}
 
 		public XmlDictionaryReader GetReaderAtDetailContents ()

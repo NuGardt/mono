@@ -1,5 +1,6 @@
-/*
- * mini-arm64-gsharedvt.c: gsharedvt support code for arm64
+/**
+ * \file
+ * gsharedvt support code for arm64
  *
  * Authors:
  *   Zoltan Varga <vargaz@gmail.com>
@@ -10,18 +11,16 @@
 #include "mini.h"
 #include "mini-arm64.h"
 #include "mini-arm64-gsharedvt.h"
+#include "aot-runtime.h"
 
 /*
  * GSHAREDVT
  */
 #ifdef MONO_ARCH_GSHAREDVT_SUPPORTED
 
-#define ALIGN_TO(val,align) ((((guint64)val) + ((align) - 1)) & ~((align) - 1))
-
 void
 mono_arm_gsharedvt_init (void)
 {
-	mono_aot_register_jit_icall ("mono_arm_start_gsharedvt_call", mono_arm_start_gsharedvt_call);
 }
 
 gboolean
@@ -34,7 +33,7 @@ mono_arch_gsharedvt_sig_supported (MonoMethodSignature *sig)
 	return TRUE;
 }
 
-static inline void
+static void
 add_to_map (GPtrArray *map, int src, int dst)
 {
 	g_ptr_array_add (map, GUINT_TO_POINTER (src));
@@ -48,19 +47,19 @@ add_to_map (GPtrArray *map, int src, int dst)
  * 17..  - stack slots
  */
 
-static inline int
+static int
 map_reg (int reg)
 {
 	return reg;
 }
 
-static inline int
+static int
 map_freg (int reg)
 {
 	return reg + NUM_GSHAREDVT_ARG_GREGS;
 }
 
-static inline int
+static int
 map_stack_slot (int slot)
 {
 	return slot + NUM_GSHAREDVT_ARG_GREGS + NUM_GSHAREDVT_ARG_FREGS;
@@ -105,6 +104,8 @@ get_arg_slots (ArgInfo *ainfo, int **out_slots)
 			src [i] = map_reg (sreg + i);
 		break;
 	case ArgOnStack:
+	case ArgOnStackR4:
+	case ArgOnStackR8:
 		nsrc = 1;
 		src = g_malloc (nsrc * sizeof (int));
 		src [0] = map_stack_slot (sslot);
@@ -213,7 +214,7 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 			if (ainfo->storage == ArgVtypeByRef)
 				src_slot = map_reg (ainfo->reg);
 			else
-				src_slot = map_stack_slot (ainfo->offset / 8);
+				src_slot = map_stack_slot (ainfo->offset / sizeof (target_mgreg_t));
 			g_assert (ndst < 256);
 			g_assert (src_slot < 64);
 			src [0] = (ndst << 6) | src_slot;
@@ -228,7 +229,7 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 		}
 		if (ainfo2->storage == ArgVtypeByRef && ainfo2->gsharedvt) {
 			/* Pass the address of the first src slot in a reg */
-			if (ainfo->storage != ArgVtypeByRef) {
+			if (ainfo->storage != ArgVtypeByRef && ainfo->storage != ArgVtypeByRefOnStack) {
 				if (ainfo->storage == ArgHFA && ainfo->esize == 4) {
 					arg_marshal = GSHAREDVT_ARG_BYVAL_TO_BYREF_HFAR4;
 					g_assert (src [0] < 64);
@@ -243,17 +244,17 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 			dst [0] = map_reg (ainfo2->reg);
 		} else if (ainfo2->storage == ArgVtypeByRefOnStack && ainfo2->gsharedvt) {
 			/* Pass the address of the first src slot in a stack slot */
-			if (ainfo->storage != ArgVtypeByRef)
+			if (ainfo->storage != ArgVtypeByRef && ainfo->storage != ArgVtypeByRefOnStack)
 				arg_marshal = GSHAREDVT_ARG_BYVAL_TO_BYREF;
 			ndst = 1;
 			dst = g_new0 (int, 1);
-			dst [0] = map_stack_slot (ainfo2->offset / 8);
+			dst [0] = map_stack_slot (ainfo2->offset / sizeof (target_mgreg_t));
 		} else {
 			ndst = get_arg_slots (ainfo2, &dst);
 		}
 		if (nsrc)
 			src [0] |= (arg_marshal << 18);
-		if (ainfo->storage == ArgOnStack && ainfo->slot_size != 8) {
+		if ((ainfo->storage == ArgOnStack || ainfo->storage == ArgOnStackR4) && ainfo->slot_size != 8) {
 			GSharedVtArgSize arg_size = GSHAREDVT_ARG_SIZE_NONE;
 
 			/*
@@ -279,7 +280,7 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 			src [0] |= (arg_size << 22);
 			/* Encode the offset inside the stack slot */
 			src [0] |= ((ainfo->offset % 8) << 26);
-			if (ainfo2->storage == ArgOnStack)
+			if (ainfo2->storage == ArgOnStack || ainfo2->storage == ArgOnStackR4)
 				dst [0] |= ((ainfo2->offset % 8) << 26);
 		} else if (ainfo2->storage == ArgOnStack && ainfo2->slot_size != 8) {
 			/* The caller passes in an address, need to store it into a stack slot */
@@ -347,19 +348,19 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 			if (!gsharedvt_in || sig->ret->byref) {
 				info->ret_marshal = GSHAREDVT_RET_I8;
 			} else {
-				switch (sig->ret->type) {
+				MonoType *rtype = mini_get_underlying_type (sig->ret);
+
+				switch (rtype->type) {
 				case MONO_TYPE_I1:
 					info->ret_marshal = GSHAREDVT_RET_I1;
 					break;
 				case MONO_TYPE_U1:
-				case MONO_TYPE_BOOLEAN:
 					info->ret_marshal = GSHAREDVT_RET_U1;
 					break;
 				case MONO_TYPE_I2:
 					info->ret_marshal = GSHAREDVT_RET_I2;
 					break;
 				case MONO_TYPE_U2:
-				case MONO_TYPE_CHAR:
 					info->ret_marshal = GSHAREDVT_RET_U2;
 					break;
 				case MONO_TYPE_I4:
@@ -399,8 +400,8 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 
 	if (gsharedvt_in && var_ret && cinfo->ret.storage != ArgVtypeByRef) {
 		/* Allocate stack space for the return value */
-		info->vret_slot = map_stack_slot (info->stack_usage / sizeof (gpointer));
-		info->stack_usage += mono_type_stack_size_internal (normal_sig->ret, NULL, FALSE) + sizeof (gpointer);
+		info->vret_slot = map_stack_slot (info->stack_usage / sizeof (target_mgreg_t));
+		info->stack_usage += mono_type_stack_size_internal (normal_sig->ret, NULL, FALSE) + sizeof (target_mgreg_t);
 	}
 
 	info->stack_usage = ALIGN_TO (info->stack_usage, MONO_ARCH_FRAME_ALIGNMENT);

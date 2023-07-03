@@ -26,17 +26,15 @@
 // Copyright (C) 2004 Novell, Inc (http://www.novell.com)
 //
 
-#if !FULL_AOT_RUNTIME || IOS_REFLECTION
-
 using System.Runtime.InteropServices;
 
 namespace System.Reflection.Emit {
 
 	[ComVisible (true)]
-	public struct OpCode {
+	public readonly struct OpCode : IEquatable<OpCode> {
 
-		internal byte op1, op2;
-		byte push, pop, size, type, args, flow;
+		internal readonly byte op1, op2;
+		readonly byte push, pop, size, type, args, flow;
 
 		//
 		// The order is:
@@ -151,4 +149,3 @@ namespace System.Reflection.Emit {
 		}
 	}
 } 
-#endif

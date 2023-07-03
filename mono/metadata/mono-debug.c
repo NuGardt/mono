@@ -1,5 +1,5 @@
-/*
- * mono-debug.c: 
+/**
+ * \file
  *
  * Author:
  *	Mono Project (http://www.mono-project.com)
@@ -12,19 +12,21 @@
 
 #include <config.h>
 #include <mono/metadata/assembly.h>
+#include <mono/metadata/assembly-internals.h>
 #include <mono/metadata/tabledefs.h>
 #include <mono/metadata/tokentype.h>
 #include <mono/metadata/appdomain.h>
 #include <mono/metadata/class-internals.h>
 #include <mono/metadata/mono-debug.h>
-#include <mono/metadata/mono-debug-debugger.h>
+#include <mono/metadata/debug-internals.h>
 #include <mono/metadata/mono-endian.h>
 #include <mono/metadata/gc-internals.h>
 #include <mono/metadata/mempool.h>
+#include <mono/metadata/debug-mono-symfile.h>
 #include <mono/metadata/debug-mono-ppdb.h>
+#include <mono/metadata/exception-internals.h>
+#include <mono/metadata/runtime.h>
 #include <string.h>
-
-#define ALIGN_TO(val,align) ((((guint64)val) + ((align) - 1)) & ~((align) - 1))
 
 #if NO_UNALIGNED_ACCESS
 #define WRITE_UNALIGNED(type, addr, val) \
@@ -39,10 +41,10 @@
 #endif
 
 /* This contains per-domain info */
-struct _MonoDebugDataTable {
+typedef struct {
 	MonoMemPool *mp;
-	GHashTable *method_address_hash;
-};
+	GHashTable *method_hash;
+} DebugDomainInfo;
 
 /* This contains JIT debugging information about a method in serialized format */
 struct _MonoDebugMethodAddress {
@@ -56,8 +58,6 @@ static MonoDebugFormat mono_debug_format = MONO_DEBUG_FORMAT_NONE;
 static gboolean mono_debug_initialized = FALSE;
 /* Maps MonoImage -> MonoMonoDebugHandle */
 static GHashTable *mono_debug_handles;
-/* Maps MonoDomain -> MonoDataTable */
-static GHashTable *data_table_hash;
 
 static mono_mutex_t debugger_lock_mutex;
 
@@ -66,47 +66,16 @@ static gboolean is_attached = FALSE;
 static MonoDebugHandle     *mono_debug_open_image      (MonoImage *image, const guint8 *raw_contents, int size);
 
 static MonoDebugHandle     *mono_debug_get_image      (MonoImage *image);
-static void                 mono_debug_add_assembly    (MonoAssembly *assembly,
-							gpointer user_data);
+static void                 add_assembly    (MonoAssemblyLoadContext *alc, MonoAssembly *assembly, gpointer user_data, MonoError *error);
 
 static MonoDebugHandle     *open_symfile_from_bundle   (MonoImage *image);
 
-static MonoDebugDataTable *
-create_data_table (MonoDomain *domain)
+static DebugDomainInfo*
+get_domain_info (MonoDomain *domain)
 {
-	MonoDebugDataTable *table;
+	g_assert (domain->debug_info);
 
-	table = g_new0 (MonoDebugDataTable, 1);
-
-	table->mp = mono_mempool_new ();
-	table->method_address_hash = g_hash_table_new (NULL, NULL);
-
-	if (domain)
-		g_hash_table_insert (data_table_hash, domain, table);
-
-	return table;
-}
-
-static void
-free_data_table (MonoDebugDataTable *table)
-{
-	mono_mempool_destroy (table->mp);
-	g_hash_table_destroy (table->method_address_hash);
-
-	g_free (table);
-}
-
-static MonoDebugDataTable *
-lookup_data_table (MonoDomain *domain)
-{
-	MonoDebugDataTable *table;
-
-	table = (MonoDebugDataTable *)g_hash_table_lookup (data_table_hash, domain);
-	if (!table) {
-		g_error ("lookup_data_table () failed for %p\n", domain);
-		g_assert (table);
-	}
-	return table;
+	return (DebugDomainInfo*)domain->debug_info;
 }
 
 static void
@@ -145,10 +114,7 @@ mono_debug_init (MonoDebugFormat format)
 	mono_debug_handles = g_hash_table_new_full
 		(NULL, NULL, NULL, (GDestroyNotify) free_debug_handle);
 
-	data_table_hash = g_hash_table_new_full (
-		NULL, NULL, NULL, (GDestroyNotify) free_data_table);
-
-	mono_install_assembly_load_hook (mono_debug_add_assembly, NULL);
+	mono_install_assembly_load_hook_v2 (add_assembly, NULL, FALSE);
 
 	mono_debugger_unlock ();
 }
@@ -156,10 +122,13 @@ mono_debug_init (MonoDebugFormat format)
 void
 mono_debug_open_image_from_memory (MonoImage *image, const guint8 *raw_contents, int size)
 {
+	MONO_ENTER_GC_UNSAFE;
 	if (!mono_debug_initialized)
-		return;
+		goto leave;
 
 	mono_debug_open_image (image, raw_contents, size);
+leave:
+	MONO_EXIT_GC_UNSAFE;
 }
 
 void
@@ -168,47 +137,38 @@ mono_debug_cleanup (void)
 	if (mono_debug_handles)
 		g_hash_table_destroy (mono_debug_handles);
 	mono_debug_handles = NULL;
-
-	if (data_table_hash) {
-		g_hash_table_destroy (data_table_hash);
-		data_table_hash = NULL;
-	}
 }
 
+/**
+ * mono_debug_domain_create:
+ */
 void
 mono_debug_domain_create (MonoDomain *domain)
 {
+	DebugDomainInfo *info;
+
 	if (!mono_debug_initialized)
 		return;
 
-	mono_debugger_lock ();
+	info = g_new0 (DebugDomainInfo, 1);
+	info->mp = mono_mempool_new ();
+	info->method_hash = g_hash_table_new (NULL, NULL);
 
-	create_data_table (domain);
-
-	mono_debugger_unlock ();
+	domain->debug_info = info;
 }
 
 void
 mono_debug_domain_unload (MonoDomain *domain)
 {
-	MonoDebugDataTable *table;
+	DebugDomainInfo *info = (DebugDomainInfo*)domain->debug_info;
 
-	if (!mono_debug_initialized)
+	if (!info)
 		return;
 
-	mono_debugger_lock ();
+	mono_mempool_destroy (info->mp);
+	g_hash_table_destroy (info->method_hash);
 
-	table = (MonoDebugDataTable *)g_hash_table_lookup (data_table_hash, domain);
-	if (!table) {
-		g_warning (G_STRLOC ": unloading unknown domain %p / %d",
-			   domain, mono_domain_get_id (domain));
-		mono_debugger_unlock ();
-		return;
-	}
-
-	g_hash_table_remove (data_table_hash, domain);
-
-	mono_debugger_unlock ();
+	g_free (info);
 }
 
 /*
@@ -220,6 +180,9 @@ mono_debug_get_image (MonoImage *image)
 	return (MonoDebugHandle *)g_hash_table_lookup (mono_debug_handles, image);
 }
 
+/**
+ * mono_debug_close_image:
+ */
 void
 mono_debug_close_image (MonoImage *image)
 {
@@ -239,6 +202,12 @@ mono_debug_close_image (MonoImage *image)
 	g_hash_table_remove (mono_debug_handles, image);
 
 	mono_debugger_unlock ();
+}
+
+MonoDebugHandle *
+mono_debug_get_handle (MonoImage *image)
+{
+    return mono_debug_open_image (image, NULL, 0);
 }
 
 static MonoDebugHandle *
@@ -276,13 +245,13 @@ mono_debug_open_image (MonoImage *image, const guint8 *raw_contents, int size)
 }
 
 static void
-mono_debug_add_assembly (MonoAssembly *assembly, gpointer user_data)
+add_assembly (MonoAssemblyLoadContext *alc, MonoAssembly *assembly, gpointer user_data, MonoError *error)
 {
 	MonoDebugHandle *handle;
 	MonoImage *image;
 
 	mono_debugger_lock ();
-	image = mono_assembly_get_image (assembly);
+	image = mono_assembly_get_image_internal (assembly);
 	handle = open_symfile_from_bundle (image);
 	if (!handle)
 		mono_debug_open_image (image, NULL, 0);
@@ -311,7 +280,7 @@ lookup_method_func (gpointer key, gpointer value, gpointer user_data)
 }
 
 static MonoDebugMethodInfo *
-mono_debug_lookup_method_internal (MonoMethod *method)
+lookup_method (MonoMethod *method)
 {
 	struct LookupMethodData data;
 
@@ -328,9 +297,9 @@ mono_debug_lookup_method_internal (MonoMethod *method)
 /**
  * mono_debug_lookup_method:
  *
- * Lookup symbol file information for the method @method.  The returned
- * `MonoDebugMethodInfo' is a private structure, but it can be passed to
- * mono_debug_symfile_lookup_location().
+ * Lookup symbol file information for the method \p method.  The returned
+ * \c MonoDebugMethodInfo is a private structure, but it can be passed to
+ * \c mono_debug_symfile_lookup_location.
  */
 MonoDebugMethodInfo *
 mono_debug_lookup_method (MonoMethod *method)
@@ -341,7 +310,7 @@ mono_debug_lookup_method (MonoMethod *method)
 		return NULL;
 
 	mono_debugger_lock ();
-	minfo = mono_debug_lookup_method_internal (method);
+	minfo = lookup_method (method);
 	mono_debugger_unlock ();
 	return minfo;
 }
@@ -361,7 +330,7 @@ lookup_image_func (gpointer key, gpointer value, gpointer user_data)
 	if (data->found)
 		return;
 
-	if (handle->image == data->image && handle->symfile)
+	if (handle->image == data->image && (handle->symfile || handle->ppdb))
 		data->found = TRUE;
 }
 
@@ -382,7 +351,7 @@ mono_debug_image_has_debug_info (MonoImage *image)
 	return data.found;
 }
 
-static inline void
+static void
 write_leb128 (guint32 value, guint8 *ptr, guint8 **rptr)
 {
 	do {
@@ -396,7 +365,7 @@ write_leb128 (guint32 value, guint8 *ptr, guint8 **rptr)
 	*rptr = ptr;
 }
 
-static inline void
+static void
 write_sleb128 (gint32 value, guint8 *ptr, guint8 **rptr)
 {
 	gboolean more = 1;
@@ -415,6 +384,10 @@ write_sleb128 (gint32 value, guint8 *ptr, guint8 **rptr)
 	*rptr = ptr;
 }
 
+/* leb128 uses a maximum of 5 bytes for a 32 bit value */
+#define LEB128_MAX_SIZE 5
+#define WRITE_VARIABLE_MAX_SIZE (5 * LEB128_MAX_SIZE + sizeof (gpointer))
+
 static void
 write_variable (MonoDebugVarInfo *var, guint8 *ptr, guint8 **rptr)
 {
@@ -428,21 +401,37 @@ write_variable (MonoDebugVarInfo *var, guint8 *ptr, guint8 **rptr)
 	*rptr = ptr;
 }
 
+/**
+ * mono_debug_add_method:
+ */
 MonoDebugMethodAddress *
 mono_debug_add_method (MonoMethod *method, MonoDebugMethodJitInfo *jit, MonoDomain *domain)
 {
-	MonoDebugDataTable *table;
+	DebugDomainInfo *info;
 	MonoDebugMethodAddress *address;
 	guint8 buffer [BUFSIZ];
 	guint8 *ptr, *oldptr;
 	guint32 i, size, total_size, max_size;
 
-	mono_debugger_lock ();
+	info = get_domain_info (domain);
 
-	table = lookup_data_table (domain);
-
-	max_size = (5 * 5) + 1 + (10 * jit->num_line_numbers) +
-		(25 + sizeof (gpointer)) * (1 + jit->num_params + jit->num_locals);
+	max_size = (5 * LEB128_MAX_SIZE) + 1 + (2 * LEB128_MAX_SIZE * jit->num_line_numbers);
+	if (jit->has_var_info) {
+		/* this */
+		max_size += 1;
+		if (jit->this_var)
+			max_size += WRITE_VARIABLE_MAX_SIZE;
+		/* params */
+		max_size += LEB128_MAX_SIZE;
+		max_size += jit->num_params * WRITE_VARIABLE_MAX_SIZE;
+		/* locals */
+		max_size += LEB128_MAX_SIZE;
+		max_size += jit->num_locals * WRITE_VARIABLE_MAX_SIZE;
+		/* gsharedvt */
+		max_size += 1;
+		if (jit->gsharedvt_info_var)
+			max_size += 2 * WRITE_VARIABLE_MAX_SIZE;
+	}
 
 	if (max_size > BUFSIZ)
 		ptr = oldptr = (guint8 *)g_malloc (max_size);
@@ -459,33 +448,37 @@ mono_debug_add_method (MonoMethod *method, MonoDebugMethodJitInfo *jit, MonoDoma
 		write_sleb128 (lne->il_offset, ptr, &ptr);
 		write_sleb128 (lne->native_offset, ptr, &ptr);
 	}
+	write_leb128 (jit->has_var_info, ptr, &ptr);
+	if (jit->has_var_info) {
+		*ptr++ = jit->this_var ? 1 : 0;
+		if (jit->this_var)
+			write_variable (jit->this_var, ptr, &ptr);
 
-	*ptr++ = jit->this_var ? 1 : 0;
-	if (jit->this_var)
-		write_variable (jit->this_var, ptr, &ptr);
+		write_leb128 (jit->num_params, ptr, &ptr);
+		for (i = 0; i < jit->num_params; i++)
+			write_variable (&jit->params [i], ptr, &ptr);
 
-	write_leb128 (jit->num_params, ptr, &ptr);
-	for (i = 0; i < jit->num_params; i++)
-		write_variable (&jit->params [i], ptr, &ptr);
+		write_leb128 (jit->num_locals, ptr, &ptr);
+		for (i = 0; i < jit->num_locals; i++)
+			write_variable (&jit->locals [i], ptr, &ptr);
 
-	write_leb128 (jit->num_locals, ptr, &ptr);
-	for (i = 0; i < jit->num_locals; i++)
-		write_variable (&jit->locals [i], ptr, &ptr);
-
-	*ptr++ = jit->gsharedvt_info_var ? 1 : 0;
-	if (jit->gsharedvt_info_var) {
-		write_variable (jit->gsharedvt_info_var, ptr, &ptr);
-		write_variable (jit->gsharedvt_locals_var, ptr, &ptr);
+		*ptr++ = jit->gsharedvt_info_var ? 1 : 0;
+		if (jit->gsharedvt_info_var) {
+			write_variable (jit->gsharedvt_info_var, ptr, &ptr);
+			write_variable (jit->gsharedvt_locals_var, ptr, &ptr);
+		}
 	}
 
 	size = ptr - oldptr;
 	g_assert (size < max_size);
 	total_size = size + sizeof (MonoDebugMethodAddress);
 
+	mono_debugger_lock ();
+
 	if (method_is_dynamic (method)) {
 		address = (MonoDebugMethodAddress *)g_malloc0 (total_size);
 	} else {
-		address = (MonoDebugMethodAddress *)mono_mempool_alloc (table->mp, total_size);
+		address = (MonoDebugMethodAddress *)mono_mempool_alloc (info->mp, total_size);
 	}
 
 	address->code_start = jit->code_start;
@@ -495,7 +488,7 @@ mono_debug_add_method (MonoMethod *method, MonoDebugMethodJitInfo *jit, MonoDoma
 	if (max_size > BUFSIZ)
 		g_free (oldptr);
 
-	g_hash_table_insert (table->method_address_hash, method, address);
+	g_hash_table_insert (info->method_hash, method, address);
 
 	mono_debugger_unlock ();
 	return address;
@@ -504,7 +497,7 @@ mono_debug_add_method (MonoMethod *method, MonoDebugMethodJitInfo *jit, MonoDoma
 void
 mono_debug_remove_method (MonoMethod *method, MonoDomain *domain)
 {
-	MonoDebugDataTable *table;
+	DebugDomainInfo *info;
 	MonoDebugMethodAddress *address;
 
 	if (!mono_debug_initialized)
@@ -512,25 +505,28 @@ mono_debug_remove_method (MonoMethod *method, MonoDomain *domain)
 
 	g_assert (method_is_dynamic (method));
 
+	info = get_domain_info (domain);
+
 	mono_debugger_lock ();
 
-	table = lookup_data_table (domain);
-
-	address = (MonoDebugMethodAddress *)g_hash_table_lookup (table->method_address_hash, method);
+	address = (MonoDebugMethodAddress *)g_hash_table_lookup (info->method_hash, method);
 	if (address)
 		g_free (address);
 
-	g_hash_table_remove (table->method_address_hash, method);
+	g_hash_table_remove (info->method_hash, method);
 
 	mono_debugger_unlock ();
 }
 
+/**
+ * mono_debug_add_delegate_trampoline:
+ */
 void
 mono_debug_add_delegate_trampoline (gpointer code, int size)
 {
 }
 
-static inline guint32
+static guint32
 read_leb128 (guint8 *ptr, guint8 **rptr)
 {
 	guint32 result = 0, shift = 0;
@@ -548,7 +544,7 @@ read_leb128 (guint8 *ptr, guint8 **rptr)
 	return result;
 }
 
-static inline gint32
+static gint32
 read_sleb128 (guint8 *ptr, guint8 **rptr)
 {
 	gint32 result = 0;
@@ -585,8 +581,8 @@ read_variable (MonoDebugVarInfo *var, guint8 *ptr, guint8 **rptr)
 	*rptr = ptr;
 }
 
-void
-mono_debug_free_method_jit_info (MonoDebugMethodJitInfo *jit)
+static void
+free_method_jit_info (MonoDebugMethodJitInfo *jit, gboolean stack)
 {
 	if (!jit)
 		return;
@@ -596,17 +592,23 @@ mono_debug_free_method_jit_info (MonoDebugMethodJitInfo *jit)
 	g_free (jit->locals);
 	g_free (jit->gsharedvt_info_var);
 	g_free (jit->gsharedvt_locals_var);
-	g_free (jit);
+	if (!stack)
+		g_free (jit);
+}
+
+void
+mono_debug_free_method_jit_info (MonoDebugMethodJitInfo *jit)
+{
+	free_method_jit_info (jit, FALSE);
 }
 
 static MonoDebugMethodJitInfo *
-mono_debug_read_method (MonoDebugMethodAddress *address)
+mono_debug_read_method (MonoDebugMethodAddress *address, MonoDebugMethodJitInfo *jit)
 {
-	MonoDebugMethodJitInfo *jit;
 	guint32 i;
 	guint8 *ptr;
 
-	jit = g_new0 (MonoDebugMethodJitInfo, 1);
+	memset (jit, 0, sizeof (*jit));
 	jit->code_start = address->code_start;
 	jit->code_size = address->code_size;
 
@@ -623,57 +625,59 @@ mono_debug_read_method (MonoDebugMethodAddress *address)
 		lne->il_offset = read_sleb128 (ptr, &ptr);
 		lne->native_offset = read_sleb128 (ptr, &ptr);
 	}
+	jit->has_var_info = read_leb128 (ptr, &ptr);
+	if (jit->has_var_info) {
+		if (*ptr++) {
+			jit->this_var = g_new0 (MonoDebugVarInfo, 1);
+			read_variable (jit->this_var, ptr, &ptr);
+		}
 
-	if (*ptr++) {
-		jit->this_var = g_new0 (MonoDebugVarInfo, 1);
-		read_variable (jit->this_var, ptr, &ptr);
-	}
+		jit->num_params = read_leb128 (ptr, &ptr);
+		jit->params = g_new0 (MonoDebugVarInfo, jit->num_params);
+		for (i = 0; i < jit->num_params; i++)
+			read_variable (&jit->params [i], ptr, &ptr);
 
-	jit->num_params = read_leb128 (ptr, &ptr);
-	jit->params = g_new0 (MonoDebugVarInfo, jit->num_params);
-	for (i = 0; i < jit->num_params; i++)
-		read_variable (&jit->params [i], ptr, &ptr);
+		jit->num_locals = read_leb128 (ptr, &ptr);
+		jit->locals = g_new0 (MonoDebugVarInfo, jit->num_locals);
+		for (i = 0; i < jit->num_locals; i++)
+			read_variable (&jit->locals [i], ptr, &ptr);
 
-	jit->num_locals = read_leb128 (ptr, &ptr);
-	jit->locals = g_new0 (MonoDebugVarInfo, jit->num_locals);
-	for (i = 0; i < jit->num_locals; i++)
-		read_variable (&jit->locals [i], ptr, &ptr);
-
-	if (*ptr++) {
-		jit->gsharedvt_info_var = g_new0 (MonoDebugVarInfo, 1);
-		jit->gsharedvt_locals_var = g_new0 (MonoDebugVarInfo, 1);
-		read_variable (jit->gsharedvt_info_var, ptr, &ptr);
-		read_variable (jit->gsharedvt_locals_var, ptr, &ptr);
+		if (*ptr++) {
+			jit->gsharedvt_info_var = g_new0 (MonoDebugVarInfo, 1);
+			jit->gsharedvt_locals_var = g_new0 (MonoDebugVarInfo, 1);
+			read_variable (jit->gsharedvt_info_var, ptr, &ptr);
+			read_variable (jit->gsharedvt_locals_var, ptr, &ptr);
+		}
 	}
 
 	return jit;
 }
 
 static MonoDebugMethodJitInfo *
-find_method (MonoMethod *method, MonoDomain *domain)
+find_method (MonoMethod *method, MonoDomain *domain, MonoDebugMethodJitInfo *jit)
 {
-	MonoDebugDataTable *table;
+	DebugDomainInfo *info;
 	MonoDebugMethodAddress *address;
 
-	table = lookup_data_table (domain);
-	address = (MonoDebugMethodAddress *)g_hash_table_lookup (table->method_address_hash, method);
+	info = get_domain_info (domain);
+	address = (MonoDebugMethodAddress *)g_hash_table_lookup (info->method_hash, method);
 
 	if (!address)
 		return NULL;
 
-	return mono_debug_read_method (address);
+	return mono_debug_read_method (address, jit);
 }
 
 MonoDebugMethodJitInfo *
 mono_debug_find_method (MonoMethod *method, MonoDomain *domain)
 {
-	MonoDebugMethodJitInfo *res;
+	MonoDebugMethodJitInfo *res = g_new0 (MonoDebugMethodJitInfo, 1);
 
 	if (mono_debug_format == MONO_DEBUG_FORMAT_NONE)
 		return NULL;
 
 	mono_debugger_lock ();
-	res = find_method (method, domain);
+	find_method (method, domain, res);
 	mono_debugger_unlock ();
 	return res;
 }
@@ -688,10 +692,10 @@ mono_debug_lookup_method_addresses (MonoMethod *method)
 static gint32
 il_offset_from_address (MonoMethod *method, MonoDomain *domain, guint32 native_offset)
 {
-	MonoDebugMethodJitInfo *jit;
+	MonoDebugMethodJitInfo mem;
 	int i;
 
-	jit = find_method (method, domain);
+	MonoDebugMethodJitInfo *jit = find_method (method, domain, &mem);
 	if (!jit || !jit->line_numbers)
 		goto cleanup_and_fail;
 
@@ -699,21 +703,21 @@ il_offset_from_address (MonoMethod *method, MonoDomain *domain, guint32 native_o
 		MonoDebugLineNumberEntry lne = jit->line_numbers [i];
 
 		if (lne.native_offset <= native_offset) {
-			mono_debug_free_method_jit_info (jit);
+			free_method_jit_info (jit, TRUE);
 			return lne.il_offset;
 		}
 	}
 
 cleanup_and_fail:
-	mono_debug_free_method_jit_info (jit);
+	free_method_jit_info (jit, TRUE);
 	return -1;
 }
 
 /**
  * mono_debug_il_offset_from_address:
  *
- *   Compute the IL offset corresponding to NATIVE_OFFSET inside the native
- * code of METHOD in DOMAIN.
+ * Compute the IL offset corresponding to \p native_offset inside the native
+ * code of \p method in \p domain.
  */
 gint32
 mono_debug_il_offset_from_address (MonoMethod *method, MonoDomain *domain, guint32 native_offset)
@@ -731,14 +735,12 @@ mono_debug_il_offset_from_address (MonoMethod *method, MonoDomain *domain, guint
 
 /**
  * mono_debug_lookup_source_location:
- * @address: Native offset within the @method's machine code.
- *
+ * \param address Native offset within the \p method's machine code.
  * Lookup the source code corresponding to the machine instruction located at
- * native offset @address within @method.
- *
- * The returned `MonoDebugSourceLocation' contains both file / line number
+ * native offset \p address within \p method.
+ * The returned \c MonoDebugSourceLocation contains both file / line number
  * information and the corresponding IL offset.  It must be freed by
- * mono_debug_free_source_location().
+ * \c mono_debug_free_source_location.
  */
 MonoDebugSourceLocation *
 mono_debug_lookup_source_location (MonoMethod *method, guint32 address, MonoDomain *domain)
@@ -751,7 +753,7 @@ mono_debug_lookup_source_location (MonoMethod *method, guint32 address, MonoDoma
 		return NULL;
 
 	mono_debugger_lock ();
-	minfo = mono_debug_lookup_method_internal (method);
+	minfo = lookup_method (method);
 	if (!minfo || !minfo->handle) {
 		mono_debugger_unlock ();
 		return NULL;
@@ -772,6 +774,40 @@ mono_debug_lookup_source_location (MonoMethod *method, guint32 address, MonoDoma
 		location = mono_ppdb_lookup_location (minfo, offset);
 	else
 		location = mono_debug_symfile_lookup_location (minfo, offset);
+	mono_debugger_unlock ();
+	return location;
+}
+
+/**
+ * mono_debug_lookup_source_location_by_il:
+ *
+ *   Same as mono_debug_lookup_source_location but take an IL_OFFSET argument.
+ */
+MonoDebugSourceLocation *
+mono_debug_lookup_source_location_by_il (MonoMethod *method, guint32 il_offset, MonoDomain *domain)
+{
+	MonoDebugMethodInfo *minfo;
+	MonoDebugSourceLocation *location;
+
+	if (mono_debug_format == MONO_DEBUG_FORMAT_NONE)
+		return NULL;
+
+	mono_debugger_lock ();
+	minfo = lookup_method (method);
+	if (!minfo || !minfo->handle) {
+		mono_debugger_unlock ();
+		return NULL;
+	}
+
+	if (!minfo->handle->ppdb && (!minfo->handle->symfile || !mono_debug_symfile_is_loaded (minfo->handle->symfile))) {
+		mono_debugger_unlock ();
+		return NULL;
+	}
+
+	if (minfo->handle->ppdb)
+		location = mono_ppdb_lookup_location (minfo, il_offset);
+	else
+		location = mono_debug_symfile_lookup_location (minfo, il_offset);
 	mono_debugger_unlock ();
 	return location;
 }
@@ -806,7 +842,7 @@ mono_debug_lookup_locals (MonoMethod *method)
 		return NULL;
 
 	mono_debugger_lock ();
-	minfo = mono_debug_lookup_method_internal (method);
+	minfo = lookup_method (method);
 	if (!minfo || !minfo->handle) {
 		mono_debugger_unlock ();
 		return NULL;
@@ -842,11 +878,56 @@ mono_debug_free_locals (MonoDebugLocalsInfo *info)
 	g_free (info);
 }
 
+/*
+* mono_debug_lookup_method_async_debug_info:
+*
+*   Return information about the async stepping information of method.
+* The result should be freed using mono_debug_free_async_debug_info ().
+*/
+MonoDebugMethodAsyncInfo*
+mono_debug_lookup_method_async_debug_info (MonoMethod *method)
+{
+	MonoDebugMethodInfo *minfo;
+	MonoDebugMethodAsyncInfo *res = NULL;
+
+	if (mono_debug_format == MONO_DEBUG_FORMAT_NONE)
+		return NULL;
+
+	mono_debugger_lock ();
+	minfo = lookup_method (method);
+	if (!minfo || !minfo->handle) {
+		mono_debugger_unlock ();
+		return NULL;
+	}
+
+	if (minfo->handle->ppdb)
+		res = mono_ppdb_lookup_method_async_debug_info (minfo);
+
+	mono_debugger_unlock ();
+
+	return res;
+}
+
+/*
+ * mono_debug_free_method_async_debug_info:
+ *
+ *   Free all the data allocated by mono_debug_lookup_method_async_debug_info ().
+ */
+void
+mono_debug_free_method_async_debug_info (MonoDebugMethodAsyncInfo *info)
+{
+	if (info->num_awaits) {
+		g_free (info->yield_offsets);
+		g_free (info->resume_offsets);
+		g_free (info->move_next_method_token);
+	}
+	g_free (info);
+}
+
 /**
  * mono_debug_free_source_location:
- * @location: A `MonoDebugSourceLocation'.
- *
- * Frees the @location.
+ * \param location A \c MonoDebugSourceLocation
+ * Frees the \p location.
  */
 void
 mono_debug_free_source_location (MonoDebugSourceLocation *location)
@@ -857,11 +938,18 @@ mono_debug_free_source_location (MonoDebugSourceLocation *location)
 	}
 }
 
+static int (*get_seq_point) (MonoDomain *domain, MonoMethod *method, gint32 native_offset);
+
+void
+mono_install_get_seq_point (MonoGetSeqPointFunc func)
+{
+	get_seq_point = func;
+}
+
 /**
  * mono_debug_print_stack_frame:
- * @native_offset: Native offset within the @method's machine code.
- *
- * Conventient wrapper around mono_debug_lookup_source_location() which can be
+ * \param native_offset Native offset within the \p method's machine code.
+ * Conventient wrapper around \c mono_debug_lookup_source_location which can be
  * used if you only want to use the location to print a stack frame.
  */
 gchar *
@@ -887,10 +975,22 @@ mono_debug_print_stack_frame (MonoMethod *method, guint32 native_offset, MonoDom
 			offset = -1;
 		}
 
+		if (offset < 0 && get_seq_point)
+			offset = get_seq_point (domain, method, native_offset);
+
 		if (offset < 0)
 			res = g_strdup_printf ("at %s <0x%05x>", fname, native_offset);
-		else
-			res = g_strdup_printf ("at %s <IL 0x%05x, 0x%05x>", fname, offset, native_offset);
+		else {
+			char *mvid = mono_guid_to_string_minimal ((uint8_t*)m_class_get_image (method->klass)->heap_guid.data);
+			char *aotid = mono_runtime_get_aotid ();
+			if (aotid)
+				res = g_strdup_printf ("at %s [0x%05x] in <%s#%s>:0" , fname, offset, mvid, aotid);
+			else
+				res = g_strdup_printf ("at %s [0x%05x] in <%s>:0" , fname, offset, mvid);
+
+			g_free (aotid);
+			g_free (mvid);
+		}
 		g_free (fname);
 		return res;
 	}
@@ -930,6 +1030,9 @@ struct _BundledSymfile {
 
 static BundledSymfile *bundled_symfiles = NULL;
 
+/**
+ * mono_register_symfile_for_assembly:
+ */
 void
 mono_register_symfile_for_assembly (const char *assembly_name, const mono_byte *raw_contents, int size)
 {
@@ -990,4 +1093,15 @@ mono_debug_get_seq_points (MonoDebugMethodInfo *minfo, char **source_file, GPtrA
 		mono_ppdb_get_seq_points (minfo, source_file, source_file_list, source_files, seq_points, n_seq_points);
 	else
 		mono_debug_symfile_get_seq_points (minfo, source_file, source_file_list, source_files, seq_points, n_seq_points);
+}
+
+char*
+mono_debug_image_get_sourcelink (MonoImage *image)
+{
+	MonoDebugHandle *handle = mono_debug_get_handle (image);
+
+	if (handle && handle->ppdb)
+		return mono_ppdb_get_sourcelink (handle);
+	else
+		return NULL;
 }

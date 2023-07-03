@@ -1,5 +1,6 @@
-/*
- * ssa.c: Static single assign form support for the JIT compiler.
+/**
+ * \file
+ * Static single assign form support for the JIT compiler.
  *
  * Author:
  *    Dietmar Maurer (dietmar@ximian.com)
@@ -13,10 +14,12 @@
 #include <mono/metadata/debug-helpers.h>
 #include <mono/metadata/mempool.h>
 #include <mono/metadata/mempool-internals.h>
+#include <mono/utils/mono-compiler.h>
 
 #ifndef DISABLE_JIT
 
 #include "mini.h"
+#include "mini-runtime.h"
 #ifdef HAVE_ALLOCA_H
 #include <alloca.h>
 #endif
@@ -119,7 +122,7 @@ remove_bb_from_phis (MonoCompile *cfg, MonoBasicBlock *bb, MonoBasicBlock *targe
 	}
 }
 
-static inline int
+static int
 op_phi_to_move (int opcode)
 {
 	switch (opcode) {
@@ -138,7 +141,7 @@ op_phi_to_move (int opcode)
 	return -1;
 }
 
-static inline void
+static void
 record_use (MonoCompile *cfg, MonoInst *var, MonoBasicBlock *bb, MonoInst *ins)
 {
 	MonoMethodVar *info;
@@ -158,9 +161,8 @@ typedef struct {
 
 /**
  * mono_ssa_rename_vars:
- *
- *  Implement renaming of SSA variables. Also compute def-use information in parallel.
- * @stack_history points to an area of memory which can be used for storing changes 
+ * Implement renaming of SSA variables. Also compute def-use information in parallel.
+ * \p stack_history points to an area of memory which can be used for storing changes 
  * made to the stack, so they can be reverted later.
  */
 static void
@@ -237,8 +239,13 @@ mono_ssa_rename_vars (MonoCompile *cfg, int max_vars, MonoBasicBlock *bb, gboole
 				if (var->opcode == OP_ARG)
 					originals_used [idx] = TRUE;
 
-				/* FIXME: */
-				g_assert (stack_history_len < stack_history_size);
+				if (stack_history_len + 128 > stack_history_size) {
+					stack_history_size += 1024;
+					RenameInfo *new_history = mono_mempool_alloc (cfg->mempool, sizeof (RenameInfo) * stack_history_size);
+					memcpy (new_history, stack_history, stack_history_len * sizeof (RenameInfo));
+					stack_history = new_history;
+				}
+
 				stack_history [stack_history_len].var = stack [idx];
 				stack_history [stack_history_len].idx = idx;
 				stack_history_len ++;
@@ -458,7 +465,7 @@ mono_ssa_compute (MonoCompile *cfg)
 
 	/* Renaming phase */
 
-	stack = (MonoInst **)alloca (sizeof (MonoInst *) * cfg->num_varinfo);
+	stack = g_newa (MonoInst*, cfg->num_varinfo);
 	memset (stack, 0, sizeof (MonoInst *) * cfg->num_varinfo);
 
 	lvreg_stack = g_new0 (guint32, cfg->next_vreg);
@@ -502,7 +509,7 @@ mono_ssa_remove_gsharedvt (MonoCompile *cfg)
 			printf ("\nREMOVE SSA %d:\n", bb->block_num);
 
 		for (ins = bb->code; ins; ins = ins->next) {
-			if (!(MONO_IS_PHI (ins) && ins->opcode == OP_VPHI && mini_is_gsharedvt_variable_type (&ins->klass->byval_arg)))
+			if (!(MONO_IS_PHI (ins) && ins->opcode == OP_VPHI && mini_is_gsharedvt_variable_type (m_class_get_byval_arg (ins->klass))))
 				continue;
 
 			g_assert (ins->inst_phi_args [0] == bb->in_count);
@@ -819,6 +826,10 @@ evaluate_ins (MonoCompile *cfg, MonoInst *ins, MonoInst **res, MonoInst **carray
 		return 2;
 
 	num_sregs = mono_inst_get_src_registers (ins, sregs);
+
+	if (num_sregs > 2)
+		return 2;
+
 	for (i = 0; i < MONO_MAX_SRC_REGS; ++i)
 		args [i] = NULL;
 	for (i = 0; i < num_sregs; ++i) {
@@ -866,7 +877,7 @@ evaluate_ins (MonoCompile *cfg, MonoInst *ins, MonoInst **res, MonoInst **carray
 	return 0;
 }
 
-static inline void
+static void
 change_varstate (MonoCompile *cfg, GList **cvars, MonoMethodVar *info, int state, MonoInst *c0, MonoInst **carray)
 {
 	if (info->cpstate >= state)
@@ -887,7 +898,7 @@ change_varstate (MonoCompile *cfg, GList **cvars, MonoMethodVar *info, int state
 	}
 }
 
-static inline void
+static void
 add_cprop_bb (MonoCompile *cfg, MonoBasicBlock *bb, GList **bblist)
 {
 	if (G_UNLIKELY (cfg->verbose_level > 1))
@@ -1109,7 +1120,7 @@ fold_ins (MonoCompile *cfg, MonoBasicBlock *bb, MonoInst *ins, MonoInst **carray
 				ins->sreg2 = -1;
 
 				if ((opcode2 == OP_VOIDCALL) || (opcode2 == OP_CALL) || (opcode2 == OP_LCALL) || (opcode2 == OP_FCALL))
-					((MonoCallInst*)ins)->fptr = (gpointer)ins->inst_imm;
+					((MonoCallInst*)ins)->fptr = (gpointer)(uintptr_t)ins->inst_imm;
 			}
 		} else {
 			/* FIXME: Handle 3 op insns */
@@ -1297,7 +1308,7 @@ mono_ssa_cprop (MonoCompile *cfg)
 	}
 }
 
-static inline void
+static void
 add_to_dce_worklist (MonoCompile *cfg, MonoMethodVar *var, MonoMethodVar *use, GList **wl)
 {
 	GList *tmp;
@@ -1494,6 +1505,14 @@ mono_ssa_loop_invariant_code_motion (MonoCompile *cfg)
 					ins->sreg1 = sreg;
 				}
 
+				/* if any successor block of the immediate post dominator is an
+				 * exception handler, it's not safe to do the code motion */
+				skip = FALSE;
+				for (int j = 0; j < idom->out_count && !skip; j++)
+					skip |= !!(idom->out_bb [j]->flags & BB_EXCEPTION_HANDLER);
+				if (skip)
+					continue;
+
 				if (cfg->verbose_level > 1) {
 					printf ("licm in BB%d on ", bb->block_num);
 					mono_print_ins (ins);
@@ -1502,7 +1521,7 @@ mono_ssa_loop_invariant_code_motion (MonoCompile *cfg)
 				MONO_REMOVE_INS (bb, ins);
 				mono_bblock_insert_before_ins (idom, idom->last_ins, ins);
 				if (ins->opcode == OP_LDLEN || ins->opcode == OP_STRLEN)
-					idom->has_array_access = TRUE;
+					idom->needs_decompose = TRUE;
 			}
 		}
 	}
@@ -1515,4 +1534,8 @@ mono_ssa_loop_invariant_code_motion (MonoCompile *cfg)
 	}
 }
 
-#endif /* DISABLE_JIT */
+#else /* !DISABLE_JIT */
+
+MONO_EMPTY_SOURCE_FILE (ssa);
+
+#endif /* !DISABLE_JIT */

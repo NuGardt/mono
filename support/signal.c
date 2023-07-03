@@ -115,12 +115,12 @@ int Mono_Posix_FromRealTimeSignum (int offset, int *r)
 // We can still use atomic.h because that's all inline functions--
 // unless WAPI_NO_ATOMIC_ASM is defined, in which case atomic.h calls linked functions.
 #ifndef WAPI_NO_ATOMIC_ASM
-	#define mph_int_get(p)     InterlockedExchangeAdd ((p), 0)
-	#define mph_int_inc(p)     InterlockedIncrement ((p))
-	#define mph_int_dec_test(p)     (InterlockedDecrement ((p)) == 0)
-	#define mph_int_set(p,n) InterlockedExchange ((p), (n))
+	#define mph_int_get(p)     mono_atomic_fetch_add_i32 ((p), 0)
+	#define mph_int_inc(p)     mono_atomic_inc_i32 ((p))
+	#define mph_int_dec_test(p)     (mono_atomic_dec_i32 ((p)) == 0)
+	#define mph_int_set(p,n) mono_atomic_xchg_i32 ((p), (n))
 	// Pointer, original, new
-	#define mph_int_test_and_set(p,o,n) (o == InterlockedCompareExchange ((p), (n), (o)))
+	#define mph_int_test_and_set(p,o,n) (o == mono_atomic_cas_i32 ((p), (n), (o)))
 #elif GLIB_CHECK_VERSION(2,4,0)
 	#define mph_int_get(p) g_atomic_int_get ((p))
  	#define mph_int_inc(p) do {g_atomic_int_inc ((p));} while (0)
@@ -132,6 +132,18 @@ int Mono_Posix_FromRealTimeSignum (int offset, int *r)
 #endif
 
 #if HAVE_PSIGNAL
+
+/* 
+ * HACK: similar to the mkdtemp one in glib; turns out gcc "helpfully"
+ * shadows system headers with "fixed" versions that omit functions...
+ * in any case, psignal is another victim of poor GNU decisions. Even
+ * then, we may have to do this anyways, as psignal, while present in
+ * libc, isn't in PASE headers - so do it anyways
+ */
+#if defined(_AIX)
+extern void psignal(int, const char *);
+#endif
+
 int
 Mono_Posix_Syscall_psignal (int sig, const char* s)
 {
@@ -165,7 +177,7 @@ static void release_mutex (pthread_mutex_t *mutex)
 	}
 }
 
-static inline int
+static int
 keep_trying (int r)
 {
 	return r == -1 && errno == EINTR;
@@ -187,7 +199,7 @@ keep_trying (int r)
 #define PIPELOCK_GET_COUNT(x)      ((x) & PIPELOCK_COUNT_MASK)
 #define PIPELOCK_INCR_COUNT(x, by) (((x) & PIPELOCK_TEARDOWN_BIT) | (PIPELOCK_GET_COUNT (PIPELOCK_GET_COUNT (x) + (by))))
 
-static inline void
+static void
 acquire_pipelock_teardown (int *lock)
 {
 	int lockvalue_draining;
@@ -208,7 +220,7 @@ acquire_pipelock_teardown (int *lock)
 	}
 }
 
-static inline void
+static void
 release_pipelock_teardown (int *lock)
 {
 	while (1) {
@@ -221,7 +233,7 @@ release_pipelock_teardown (int *lock)
 }
 
 // Return 1 for success
-static inline int
+static int
 acquire_pipelock_handler (int *lock)
 {
 	while (1) {
@@ -234,7 +246,7 @@ acquire_pipelock_handler (int *lock)
 	}
 }
 
-static inline void
+static void
 release_pipelock_handler (int *lock)
 {
 	while (1) {
@@ -469,13 +481,6 @@ wait_for_any (signal_info** signals, int count, int *currfd, struct pollfd* fd_s
 	// Poll until one of this signal_info's pipes is ready to read.
 	// Once a second, stop to check if the VM is shutting down.
 	do {
-		struct timeval tv;
-		struct timeval *ptv = NULL;
-		if (timeout != -1) {
-			tv.tv_sec  = timeout / 1000;
-			tv.tv_usec = (timeout % 1000)*1000;
-			ptv = &tv;
-		}
 		r = poll (fd_structs, count, timeout);
 	} while (keep_trying (r) && !shutting_down ());
 

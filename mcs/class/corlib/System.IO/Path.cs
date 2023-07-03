@@ -46,11 +46,12 @@ using System.Security;
 using System.Security.Cryptography;
 using System.Security.Permissions;
 using System.Text;
+using System.Diagnostics;
 
 namespace System.IO {
 
 	[ComVisible (true)]
-	public static class Path {
+	public static partial class Path {
 
 		[Obsolete ("see GetInvalidPathChars and GetInvalidFileNameChars methods.")]
 		public static readonly char[] InvalidPathChars;
@@ -140,6 +141,7 @@ namespace System.IO {
 		{
 			int l = s.Length;
 			int sub = 0;
+			int alt = 0;
 			int start = 0;
 
 			// Host prefix?
@@ -158,6 +160,8 @@ namespace System.IO {
 				
 				if (c != DirectorySeparatorChar && c != AltDirectorySeparatorChar)
 					continue;
+				if (DirectorySeparatorChar != AltDirectorySeparatorChar && c == AltDirectorySeparatorChar)
+					alt++;
 				if (i+1 == l)
 					sub++;
 				else {
@@ -167,7 +171,7 @@ namespace System.IO {
 				}
 			}
 
-			if (sub == 0)
+			if (sub == 0 && alt == 0)
 				return s;
 
 			char [] copy = new char [l-sub];
@@ -237,6 +241,11 @@ namespace System.IO {
 			return String.Empty;
 		}
 
+		public static ReadOnlySpan<char> GetDirectoryName (ReadOnlySpan<char> path)
+		{
+			return Path.GetDirectoryName (path.ToString ()).AsSpan ();
+		}
+
 		public static string GetExtension (string path)
 		{
 			if (path == null)
@@ -269,7 +278,6 @@ namespace System.IO {
 
 			return path;
 		}
-
 		public static string GetFileNameWithoutExtension (string path)
 		{
 			return ChangeExtension (GetFileName (path), null);
@@ -281,7 +289,7 @@ namespace System.IO {
 
 			SecurityManager.EnsureElevatedPermissions (); // this is a no-op outside moonlight
 
-#if !NET_2_1
+#if MONO_FEATURE_CAS
 			if (SecurityManager.SecurityEnabled) {
 				new FileIOPermission (FileIOPermissionAccess.PathDiscovery, fullpath).Demand ();
 			}
@@ -294,7 +302,7 @@ namespace System.IO {
 			return InsecureGetFullPath (path);
 		}
 
-#if !MOBILE
+#if WIN_PLATFORM
 		// http://msdn.microsoft.com/en-us/library/windows/desktop/aa364963%28v=vs.85%29.aspx
 		[DllImport("Kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
 		private static extern int GetFullPathName(string path, int numBufferChars, StringBuilder buffer, ref IntPtr lpFilePartOrNull); 
@@ -315,14 +323,19 @@ namespace System.IO {
 				buffer = new StringBuilder(length);
 				GetFullPathName(path, length, buffer, ref ptr);
 			}
+
 			return buffer.ToString();
 		}
 
 		internal static string WindowsDriveAdjustment (string path)
 		{
-			// two special cases to consider when a drive is specified
-			if (path.Length < 2)
+
+			// three special cases to consider when a drive is specified
+			if (path.Length < 2) {
+				if (path.Length == 1 && (path[0] == '\\' || path[0] == '/'))
+					return Path.GetPathRoot(Directory.GetCurrentDirectory());
 				return path;
+			}
 			if ((path [1] != ':') || !Char.IsLetter (path [0]))
 				return path;
 
@@ -359,7 +372,7 @@ namespace System.IO {
 				string msg = Locale.GetText ("The specified path is not of a legal form (empty).");
 				throw new ArgumentException (msg);
 			}
-#if !MOBILE
+#if WIN_PLATFORM
 			// adjust for drives, i.e. a special case for windows
 			if (Environment.IsRunningOnWindows)
 				path = WindowsDriveAdjustment (path);
@@ -420,7 +433,6 @@ namespace System.IO {
 		internal static bool IsDirectorySeparator (char c) {
 			return c == DirectorySeparatorChar || c == AltDirectorySeparatorChar;
 		}
-
 		public static string GetPathRoot (string path)
 		{
 			if (path == null)
@@ -532,13 +544,10 @@ namespace System.IO {
 			return 0 <= pos && pos < path.Length - 1;
 		}
 
-		public static bool IsPathRooted (string path)
+		public static bool IsPathRooted (ReadOnlySpan<char> path)
 		{
-			if (path == null || path.Length == 0)
+			if (path.Length == 0)
 				return false;
-
-			if (path.IndexOfAny (InvalidPathChars) != -1)
-				throw new ArgumentException ("Illegal characters in path.");
 
 			char c = path [0];
 			return (c == DirectorySeparatorChar 	||
@@ -546,8 +555,19 @@ namespace System.IO {
 				(!dirEqualsVolume && path.Length > 1 && path [1] == VolumeSeparatorChar));
 		}
 
+		public static bool IsPathRooted (string path)
+		{
+			if (path == null || path.Length == 0)
+				return false;
+
+			if (path.IndexOfAny (InvalidPathChars) != -1)
+				throw new ArgumentException ("Illegal characters in path.");
+			return IsPathRooted (path.AsSpan());
+		}
+
 		public static char[] GetInvalidFileNameChars ()
 		{
+#pragma warning disable 162
 			// return a new array as we do not want anyone to be able to change the values
 			if (Environment.IsRunningOnWindows) {
 				return new char [41] { '\x00', '\x01', '\x02', '\x03', '\x04', '\x05', '\x06', '\x07',
@@ -557,10 +577,12 @@ namespace System.IO {
 			} else {
 				return new char [2] { '\x00', '/' };
 			}
+#pragma warning restore 162
 		}
 
 		public static char[] GetInvalidPathChars ()
 		{
+#pragma warning disable 162
 			// return a new array as we do not want anyone to be able to change the values
 			if (Environment.IsRunningOnWindows) {
 				return new char [36] { '\x22', '\x3C', '\x3E', '\x7C', '\x00', '\x01', '\x02', '\x03', '\x04', '\x05', '\x06', '\x07',
@@ -570,6 +592,7 @@ namespace System.IO {
 			} else {
 				return new char [1] { '\x00' };
 			}
+#pragma warning restore 162
 		}
 
 		public static string GetRandomFileName ()
@@ -678,6 +701,7 @@ namespace System.IO {
 
 		static string CanonicalizePath (string path)
 		{
+#pragma warning disable 162
 			// STEP 1: Check for empty string
 			if (path == null)
 				return path;
@@ -710,7 +734,7 @@ namespace System.IO {
 				if (Environment.IsRunningOnWindows)
 					dirs[i] = dirs[i].TrimEnd ();
 				
-				if (dirs[i] == "." || (i != 0 && dirs[i].Length == 0))
+				if ((!(isUnc && i == 2) && dirs[i] == ".") || (i != 0 && dirs[i].Length == 0))
 					continue;
 				else if (dirs[i] == "..") {
 					// don't overwrite path segments below the limit
@@ -726,6 +750,7 @@ namespace System.IO {
 			else {
 				string ret = String.Join (DirectorySeparatorStr, dirs, 0, target);
 				if (Environment.IsRunningOnWindows) {
+#if WIN_PLATFORM
 					// append leading '\' of the UNC path that was lost in STEP 3.
 					if (isUnc)
 						ret = Path.DirectorySeparatorStr + ret;
@@ -751,12 +776,14 @@ namespace System.IO {
 						else
 							return current + ret;
 					}
+#endif
 				} else {
 					if (root != "" && ret.Length > 0 && ret [0] != '/')
 						ret = root + ret;
 				}
 				return ret;
 			}
+#pragma warning restore 162
 		}
 
 		// required for FileIOPermission (and most proibably reusable elsewhere too)
@@ -870,11 +897,13 @@ namespace System.IO {
 				throw new ArgumentException (Locale.GetText ("Path is empty"));
 			if (path.IndexOfAny (Path.InvalidPathChars) != -1)
 				throw new ArgumentException (Locale.GetText ("Path contains invalid chars"));
+#if WIN_PLATFORM
 			if (Environment.IsRunningOnWindows) {
 				int idx = path.IndexOf (':');
 				if (idx >= 0 && idx != 1)
 					throw new ArgumentException (parameterName);
 			}
+#endif
 		}
 
 		internal static string DirectorySeparatorCharAsString {
@@ -882,5 +911,340 @@ namespace System.IO {
 				return DirectorySeparatorStr;
 			}
 		}
+
+		internal const int MAX_PATH = 260;  // From WinDef.h
+
+#region Copied from referencesource
+		// this was copied from corefx since it's not available in referencesource
+		internal static readonly char[] trimEndCharsWindows = { (char)0x9, (char)0xA, (char)0xB, (char)0xC, (char)0xD, (char)0x20, (char)0x85, (char)0xA0 };
+		internal static readonly char[] trimEndCharsUnix = { };
+
+		internal static char[] TrimEndChars => Environment.IsRunningOnWindows ? trimEndCharsWindows : trimEndCharsUnix;
+
+        // ".." can only be used if it is specified as a part of a valid File/Directory name. We disallow
+        //  the user being able to use it to move up directories. Here are some examples eg 
+        //    Valid: a..b  abc..d
+        //    Invalid: ..ab   ab..  ..   abc..d\abc..
+        //
+        internal static void CheckSearchPattern(String searchPattern)
+        {
+            int index;
+            while ((index = searchPattern.IndexOf("..", StringComparison.Ordinal)) != -1) {
+                    
+                 if (index + 2 == searchPattern.Length) // Terminal ".." . Files names cannot end in ".."
+                    throw new ArgumentException(Environment.GetResourceString("Arg_InvalidSearchPattern"));
+                
+                 if ((searchPattern[index+2] ==  DirectorySeparatorChar)
+                    || (searchPattern[index+2] == AltDirectorySeparatorChar))
+                    throw new ArgumentException(Environment.GetResourceString("Arg_InvalidSearchPattern"));
+                
+                searchPattern = searchPattern.Substring(index + 2);
+            }
+        }
+
+        internal static void CheckInvalidPathChars(string path, bool checkAdditional = false)
+        {
+            if (path == null)
+                throw new ArgumentNullException("path");
+
+            if (PathInternal.HasIllegalCharacters(path, checkAdditional))
+                throw new ArgumentException(Environment.GetResourceString("Argument_InvalidPathChars"));
+        }
+
+        internal static String InternalCombine(String path1, String path2) {
+            if (path1==null || path2==null)
+                throw new ArgumentNullException((path1==null) ? "path1" : "path2");
+            CheckInvalidPathChars(path1);
+            CheckInvalidPathChars(path2);
+            
+            if (path2.Length == 0)
+                throw new ArgumentException(Environment.GetResourceString("Argument_PathEmpty"), "path2");
+            if (IsPathRooted(path2))
+                throw new ArgumentException(Environment.GetResourceString("Arg_Path2IsRooted"), "path2");
+            int i = path1.Length;
+            if (i == 0) return path2;
+            char ch = path1[i - 1];
+            if (ch != DirectorySeparatorChar && ch != AltDirectorySeparatorChar && ch != VolumeSeparatorChar) 
+                return path1 + DirectorySeparatorCharAsString + path2;
+            return path1 + path2;
+        }
+#endregion
+
+#region Copied from corefx
+
+        public static ReadOnlySpan<char> GetFileName(ReadOnlySpan<char> path)
+        {
+            int root = GetPathRoot(new string (path)).Length;
+
+            // We don't want to cut off "C:\file.txt:stream" (i.e. should be "file.txt:stream")
+            // but we *do* want "C:Foo" => "Foo". This necessitates checking for the root.
+
+            for (int i = path.Length; --i >= 0;)
+            {
+                if (i < root || IsDirectorySeparator(path[i]))
+                    return path.Slice(i + 1, path.Length - i - 1);
+            }
+
+            return path;
+        }
+
+		public static string Join(ReadOnlySpan<char> path1, ReadOnlySpan<char> path2)
+		{
+			if (path1.Length == 0)
+				return new string(path2);
+			if (path2.Length == 0)
+				return new string(path1);
+
+			return JoinInternal(path1, path2);
+		}
+
+		public static string Join(ReadOnlySpan<char> path1, ReadOnlySpan<char> path2, ReadOnlySpan<char> path3)
+		{
+			if (path1.Length == 0)
+				return Join(path2, path3);
+
+			if (path2.Length == 0)
+				return Join(path1, path3);
+
+			if (path3.Length == 0)
+				return Join(path1, path2);
+
+			return JoinInternal(path1, path2, path3);
+		}
+
+		public static bool TryJoin(ReadOnlySpan<char> path1, ReadOnlySpan<char> path2, Span<char> destination, out int charsWritten)
+		{
+			charsWritten = 0;
+			if (path1.Length == 0 && path2.Length == 0)
+				return true;
+
+			if (path1.Length == 0 || path2.Length == 0)
+			{
+				ref ReadOnlySpan<char> pathToUse = ref path1.Length == 0 ? ref path2 : ref path1;
+				if (destination.Length < pathToUse.Length)
+				{
+					return false;
+				}
+
+				pathToUse.CopyTo(destination);
+				charsWritten = pathToUse.Length;
+				return true;
+			}
+
+			bool needsSeparator = !(PathInternal.EndsInDirectorySeparator(path1) || PathInternal.StartsWithDirectorySeparator(path2));
+			int charsNeeded = path1.Length + path2.Length + (needsSeparator ? 1 : 0);
+			if (destination.Length < charsNeeded)
+				return false;
+
+			path1.CopyTo(destination);
+			if (needsSeparator)
+				destination[path1.Length] = DirectorySeparatorChar;
+
+			path2.CopyTo(destination.Slice(path1.Length + (needsSeparator ? 1 : 0)));
+
+			charsWritten = charsNeeded;
+			return true;
+		}
+
+		public static bool TryJoin(ReadOnlySpan<char> path1, ReadOnlySpan<char> path2, ReadOnlySpan<char> path3, Span<char> destination, out int charsWritten)
+		{
+			charsWritten = 0;
+			if (path1.Length == 0 && path2.Length == 0 && path3.Length == 0)
+				return true;
+
+			if (path1.Length == 0)
+				return TryJoin(path2, path3, destination, out charsWritten);
+			if (path2.Length == 0)
+				return TryJoin(path1, path3, destination, out charsWritten);
+			if (path3.Length == 0)
+				return TryJoin(path1, path2, destination, out charsWritten);
+
+			int neededSeparators = PathInternal.EndsInDirectorySeparator(path1) || PathInternal.StartsWithDirectorySeparator(path2) ? 0 : 1;
+			bool needsSecondSeparator = !(PathInternal.EndsInDirectorySeparator(path2) || PathInternal.StartsWithDirectorySeparator(path3));
+			if (needsSecondSeparator)
+				neededSeparators++;
+
+			int charsNeeded = path1.Length + path2.Length + path3.Length + neededSeparators;
+			if (destination.Length < charsNeeded)
+				return false;
+
+			bool result = TryJoin(path1, path2, destination, out charsWritten);
+			Debug.Assert(result, "should never fail joining first two paths");
+
+			if (needsSecondSeparator)
+				destination[charsWritten++] = DirectorySeparatorChar;
+
+			path3.CopyTo(destination.Slice(charsWritten));
+			charsWritten += path3.Length;
+
+			return true;
+		}
+
+
+		private static unsafe string JoinInternal(ReadOnlySpan<char> first, ReadOnlySpan<char> second)
+		{
+			Debug.Assert(first.Length > 0 && second.Length > 0, "should have dealt with empty paths");
+
+			bool hasSeparator = PathInternal.IsDirectorySeparator(first[first.Length - 1])
+				|| PathInternal.IsDirectorySeparator(second[0]);
+
+			fixed (char* f = &MemoryMarshal.GetReference(first), s = &MemoryMarshal.GetReference(second))
+			{
+				return string.Create(
+					first.Length + second.Length + (hasSeparator ? 0 : 1),
+					(First: (IntPtr)f, FirstLength: first.Length, Second: (IntPtr)s, SecondLength: second.Length, HasSeparator: hasSeparator),
+					(destination, state) =>
+					{
+						new Span<char>((char*)state.First, state.FirstLength).CopyTo(destination);
+						if (!state.HasSeparator)
+							destination[state.FirstLength] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Second, state.SecondLength).CopyTo(destination.Slice(state.FirstLength + (state.HasSeparator ? 0 : 1)));
+					});
+			}
+		}
+
+#if !__MonoCS__
+
+		private static unsafe string JoinInternal(ReadOnlySpan<char> first, ReadOnlySpan<char> second, ReadOnlySpan<char> third)
+		{
+			Debug.Assert(first.Length > 0 && second.Length > 0 && third.Length > 0, "should have dealt with empty paths");
+
+			bool firstHasSeparator = PathInternal.IsDirectorySeparator(first[first.Length - 1])
+				|| PathInternal.IsDirectorySeparator(second[0]);
+			bool thirdHasSeparator = PathInternal.IsDirectorySeparator(second[second.Length - 1])
+				|| PathInternal.IsDirectorySeparator(third[0]);
+
+			fixed (char* f = &MemoryMarshal.GetReference(first), s = &MemoryMarshal.GetReference(second), t = &MemoryMarshal.GetReference(third))
+			{
+				return string.Create(
+					first.Length + second.Length + third.Length + (firstHasSeparator ? 0 : 1) + (thirdHasSeparator ? 0 : 1),
+					(First: (IntPtr)f, FirstLength: first.Length, Second: (IntPtr)s, SecondLength: second.Length,
+						Third: (IntPtr)t, ThirdLength: third.Length, FirstHasSeparator: firstHasSeparator, ThirdHasSeparator: thirdHasSeparator),
+					(destination, state) =>
+					{
+						new Span<char>((char*)state.First, state.FirstLength).CopyTo(destination);
+						if (!state.FirstHasSeparator)
+							destination[state.FirstLength] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Second, state.SecondLength).CopyTo(destination.Slice(state.FirstLength + (state.FirstHasSeparator ? 0 : 1)));
+						if (!state.ThirdHasSeparator)
+							destination[destination.Length - state.ThirdLength - 1] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Third, state.ThirdLength).CopyTo(destination.Slice(destination.Length - state.ThirdLength));
+					});
+			}
+		}
+
+		private static unsafe string JoinInternal(ReadOnlySpan<char> first, ReadOnlySpan<char> second, ReadOnlySpan<char> third, ReadOnlySpan<char> fourth)
+		{
+			Debug.Assert(first.Length > 0 && second.Length > 0 && third.Length > 0 && fourth.Length > 0, "should have dealt with empty paths");
+
+			bool firstHasSeparator = PathInternal.IsDirectorySeparator(first[first.Length - 1])
+				|| PathInternal.IsDirectorySeparator(second[0]);
+			bool thirdHasSeparator = PathInternal.IsDirectorySeparator(second[second.Length - 1])
+				|| PathInternal.IsDirectorySeparator(third[0]);
+			bool fourthHasSeparator = PathInternal.IsDirectorySeparator(third[third.Length - 1])
+				|| PathInternal.IsDirectorySeparator(fourth[0]);
+
+			fixed (char* f = &MemoryMarshal.GetReference(first), s = &MemoryMarshal.GetReference(second), t = &MemoryMarshal.GetReference(third), u = &MemoryMarshal.GetReference(fourth))
+			{
+				return string.Create(
+					first.Length + second.Length + third.Length + fourth.Length + (firstHasSeparator ? 0 : 1) + (thirdHasSeparator ? 0 : 1) + (fourthHasSeparator ? 0 : 1),
+					(First: (IntPtr)f, FirstLength: first.Length, Second: (IntPtr)s, SecondLength: second.Length,
+						Third: (IntPtr)t, ThirdLength: third.Length, Fourth: (IntPtr)u, FourthLength:fourth.Length,
+						FirstHasSeparator: firstHasSeparator, ThirdHasSeparator: thirdHasSeparator, FourthHasSeparator: fourthHasSeparator),
+					(destination, state) =>
+					{
+						new Span<char>((char*)state.First, state.FirstLength).CopyTo(destination);
+						if (!state.FirstHasSeparator)
+							destination[state.FirstLength] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Second, state.SecondLength).CopyTo(destination.Slice(state.FirstLength + (state.FirstHasSeparator ? 0 : 1)));
+						if (!state.ThirdHasSeparator)
+							destination[state.FirstLength + state.SecondLength + (state.FirstHasSeparator ? 0 : 1)] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Third, state.ThirdLength).CopyTo(destination.Slice(state.FirstLength + state.SecondLength + (state.FirstHasSeparator ? 0 : 1) + (state.ThirdHasSeparator ? 0 : 1)));
+						if (!state.FourthHasSeparator)
+							destination[destination.Length - state.FourthLength - 1] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Fourth, state.FourthLength).CopyTo(destination.Slice(destination.Length - state.FourthLength));
+					});
+			}
+		}
+#else // MCS cannot handle tuples with more than 7 members
+		private struct JoinData {
+			public IntPtr First;
+			public int FirstLength;
+			public bool FirstHasSeparator;
+			public IntPtr Second;
+			public int SecondLength;
+			public IntPtr Third;
+			public int ThirdLength;
+			public bool ThirdHasSeparator;
+			public IntPtr Fourth;
+			public int FourthLength;
+			public bool FourthHasSeparator;
+		}
+
+		private static unsafe string JoinInternal(ReadOnlySpan<char> first, ReadOnlySpan<char> second, ReadOnlySpan<char> third)
+		{
+			Debug.Assert(first.Length > 0 && second.Length > 0 && third.Length > 0, "should have dealt with empty paths");
+
+			bool firstHasSeparator = PathInternal.IsDirectorySeparator(first[first.Length - 1])
+				|| PathInternal.IsDirectorySeparator(second[0]);
+			bool thirdHasSeparator = PathInternal.IsDirectorySeparator(second[second.Length - 1])
+				|| PathInternal.IsDirectorySeparator(third[0]);
+
+			fixed (char* f = &MemoryMarshal.GetReference(first), s = &MemoryMarshal.GetReference(second), t = &MemoryMarshal.GetReference(third))
+			{
+				return string.Create(
+					first.Length + second.Length + third.Length + (firstHasSeparator ? 0 : 1) + (thirdHasSeparator ? 0 : 1),
+					new JoinData { First = (IntPtr)f, FirstLength = first.Length, Second = (IntPtr)s, SecondLength = second.Length,
+						Third = (IntPtr)t, ThirdLength = third.Length, FirstHasSeparator = firstHasSeparator, ThirdHasSeparator = thirdHasSeparator },
+					(destination, state) =>
+					{
+						new Span<char>((char*)state.First, state.FirstLength).CopyTo(destination);
+						if (!state.FirstHasSeparator)
+							destination[state.FirstLength] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Second, state.SecondLength).CopyTo(destination.Slice(state.FirstLength + (state.FirstHasSeparator ? 0 : 1)));
+						if (!state.ThirdHasSeparator)
+							destination[destination.Length - state.ThirdLength - 1] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Third, state.ThirdLength).CopyTo(destination.Slice(destination.Length - state.ThirdLength));
+					});
+			}
+		}
+
+		private static unsafe string JoinInternal(ReadOnlySpan<char> first, ReadOnlySpan<char> second, ReadOnlySpan<char> third, ReadOnlySpan<char> fourth)
+		{
+			Debug.Assert(first.Length > 0 && second.Length > 0 && third.Length > 0 && fourth.Length > 0, "should have dealt with empty paths");
+
+			bool firstHasSeparator = PathInternal.IsDirectorySeparator(first[first.Length - 1])
+				|| PathInternal.IsDirectorySeparator(second[0]);
+			bool thirdHasSeparator = PathInternal.IsDirectorySeparator(second[second.Length - 1])
+				|| PathInternal.IsDirectorySeparator(third[0]);
+			bool fourthHasSeparator = PathInternal.IsDirectorySeparator(third[third.Length - 1])
+				|| PathInternal.IsDirectorySeparator(fourth[0]);
+
+			fixed (char* f = &MemoryMarshal.GetReference(first), s = &MemoryMarshal.GetReference(second), t = &MemoryMarshal.GetReference(third), u = &MemoryMarshal.GetReference(fourth))
+			{
+				return string.Create(
+					first.Length + second.Length + third.Length + fourth.Length + (firstHasSeparator ? 0 : 1) + (thirdHasSeparator ? 0 : 1) + (fourthHasSeparator ? 0 : 1),
+					new JoinData { First = (IntPtr)f, FirstLength = first.Length, Second = (IntPtr)s, SecondLength = second.Length,
+						Third = (IntPtr)t, ThirdLength = third.Length, Fourth = (IntPtr)u, FourthLength = fourth.Length,
+						FirstHasSeparator = firstHasSeparator, ThirdHasSeparator =  thirdHasSeparator, FourthHasSeparator = fourthHasSeparator},
+					(destination, state) =>
+					{
+						new Span<char>((char*)state.First, state.FirstLength).CopyTo(destination);
+						if (!state.FirstHasSeparator)
+							destination[state.FirstLength] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Second, state.SecondLength).CopyTo(destination.Slice(state.FirstLength + (state.FirstHasSeparator ? 0 : 1)));
+						if (!state.ThirdHasSeparator)
+							destination[state.FirstLength + state.SecondLength + (state.FirstHasSeparator ? 0 : 1)] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Third, state.ThirdLength).CopyTo(destination.Slice(state.FirstLength + state.SecondLength + (state.FirstHasSeparator ? 0 : 1) + (state.ThirdHasSeparator ? 0 : 1)));
+						if (!state.FourthHasSeparator)
+							destination[destination.Length - state.FourthLength - 1] = PathInternal.DirectorySeparatorChar;
+						new Span<char>((char*)state.Fourth, state.FourthLength).CopyTo(destination.Slice(destination.Length - state.FourthLength));
+					});
+			}
+		}
+
+#endif
+
+#endregion
 	}
 }

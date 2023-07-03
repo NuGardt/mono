@@ -25,10 +25,6 @@ namespace MonoTests.System.IO
 	{
 		string TempFolder = Path.Combine (Path.GetTempPath (), "MonoTests.System.IO.Tests");
 		static readonly char DSC = Path.DirectorySeparatorChar;
-		static bool MacOSX = false;
-
-		[DllImport ("libc")]
-		static extern int uname (IntPtr buf);
 
 		[TearDown]
 		public void TearDown ()
@@ -44,13 +40,6 @@ namespace MonoTests.System.IO
 				Directory.Delete (TempFolder, true);
 
 			Directory.CreateDirectory (TempFolder);
-#if !MOBILE			
-			// from XplatUI.cs
-			IntPtr buf = Marshal.AllocHGlobal (8192);
-			if (uname (buf) == 0)
-				MacOSX = Marshal.PtrToStringAnsi (buf) == "Darwin";
-			Marshal.FreeHGlobal (buf);
-#endif
 		}
 
 		public void TestCtr ()
@@ -1553,6 +1542,7 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void BeginWrite_Recursive ()
 		{
 			string path = TempFolder + Path.DirectorySeparatorChar + "temp";
@@ -1660,6 +1650,29 @@ namespace MonoTests.System.IO
 			
 		}
 
+		// See https://github.com/mono/mono/issues/16032
+		[Test]
+		public void DeleteOnCloseWithFileCopy ()
+		{
+			string source = TempFolder + DSC + "source.txt";
+			string target = TempFolder + DSC + "target.txt";
+
+			File.WriteAllText (source, "text");
+			FileStream fs = new FileStream (source, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite, 2048,
+							FileOptions.DeleteOnClose);
+
+			Assert.AreEqual (true, File.Exists (source), "DCFC#1");
+
+			try {
+				File.Copy (fs.Name, target, true);
+			} finally {
+				fs.Dispose();
+			}
+
+			Assert.AreEqual (false, File.Exists (source), "DCFC#2");
+			Assert.AreEqual (true, File.Exists (target), "DCFC#3");
+		}
+
 		[Test]
 		public void OpenCharDeviceRepeatedly ()
 		{
@@ -1670,6 +1683,9 @@ namespace MonoTests.System.IO
 				}
 			} catch (FileNotFoundException) {
 				// Only run this test on platforms where /dev/zero exists
+				Assert.Ignore();
+			} catch (DirectoryNotFoundException) {
+				// Only run this test on platforms where /dev exists
 				Assert.Ignore();
 			}
 
@@ -1748,6 +1764,16 @@ namespace MonoTests.System.IO
 				}
 			} finally {
 				DeleteFile (path);
+			}
+		}
+
+		[Test]
+		public void NamePropertyNormalization ()
+		{
+			string fname = TempFolder + DSC + ".." + DSC + "MonoTests.System.IO.Tests" + DSC + "tfile.txt";
+
+			using (var s = new FileStream (fname, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Delete)) {
+				Assert.AreEqual (TempFolder + DSC + "tfile.txt", s.Name);
 			}
 		}
 	}

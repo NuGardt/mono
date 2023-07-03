@@ -31,15 +31,13 @@
       </Parameters>
       <Docs>
         <param name="folder">
-               A <see cref="T:System.Environment+SpecialFolder" /> instance.
-             </param>
+              A <see cref="T:System.Environment+SpecialFolder" /> instance.
+            </param>
         <summary>To be added.</summary>
         <returns>To be added.</returns>
         <remarks>
           <c>M:System.Environment.GetFolderPath(System.Environment+SpecialFolder)</c>
         </remarks>
-        <exception cref="T:System.NotSupportedException">To be added; from:
-          <see cref="M:System.Environment.GetFolderPath(System.Environment.SpecialFolder)" /></exception>
       </Docs>
     </Member>
   </Members>

@@ -29,6 +29,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions
 {
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_OrElse
 	{
 		[Test]
@@ -173,7 +174,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void OrElseTestNullable ()
 		{
 			var a = Expression.Parameter (typeof (bool?), "a");
@@ -217,7 +217,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void OrElseNullableBoolItem ()
 		{
 			var i = Expression.Parameter (typeof (Item<bool?>), "i");
@@ -258,7 +257,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void UserDefinedOrElse ()
 		{
 			var l = Expression.Parameter (typeof (Slot), "l");
@@ -276,8 +274,8 @@ namespace MonoTests.System.Linq.Expressions
 			Assert.AreEqual (new Slot (64), orelse (new Slot (64), new Slot (64)));
 			Assert.AreEqual (new Slot (32), orelse (new Slot (32), new Slot (64)));
 		}
+
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void UserDefinedOrElseShortCircuit ()
 		{
 			var i = Expression.Parameter (typeof (Item<Slot>), "i");
@@ -294,7 +292,6 @@ namespace MonoTests.System.Linq.Expressions
 
 		[Test]
 		[Category ("NotDotNet")] // https://connect.microsoft.com/VisualStudio/feedback/ViewFeedback.aspx?FeedbackID=350228
-		[Category ("NotWorkingInterpreter")]
 		public void UserDefinedLiftedOrElseShortCircuit ()
 		{
 			var i = Expression.Parameter (typeof (Item<Slot?>), "i");

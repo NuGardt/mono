@@ -1,5 +1,6 @@
-/*
- * sgen-pinning.h: All about pinning objects.
+/**
+ * \file
+ * All about pinning objects.
  *
  * Copyright 2011 Xamarin Inc (http://www.xamarin.com)
  * Copyright (C) 2012 Xamarin Inc
@@ -22,6 +23,8 @@ void sgen_pinning_init (void);
 void sgen_pin_stage_ptr (void *ptr);
 void sgen_optimize_pin_queue (void);
 void sgen_init_pinning (void);
+void sgen_init_pinning_for_conc (void);
+void sgen_finish_pinning_for_conc (void);
 void sgen_finish_pinning (void);
 void sgen_pinning_register_pinned_in_nursery (GCObject *obj);
 void sgen_scan_pin_queue_objects (ScanCopyContext ctx);
@@ -39,10 +42,17 @@ void sgen_pin_objects_in_section (GCMemSection *section, ScanCopyContext ctx);
 
 /* Pinning stats */
 
+#ifndef DISABLE_SGEN_DEBUG_HELPERS
 void sgen_pin_stats_register_address (char *addr, int pin_type);
 size_t sgen_pin_stats_get_pinned_byte_count (int pin_type);
 SgenPointerQueue *sgen_pin_stats_get_object_list (void);
 void sgen_pin_stats_reset (void);
+#else
+static inline void sgen_pin_stats_register_address (char *addr, int pin_type) { }
+static inline size_t sgen_pin_stats_get_pinned_byte_count (int pin_type) { return 0; }
+static inline SgenPointerQueue *sgen_pin_stats_get_object_list (void) { return NULL; }
+static inline void sgen_pin_stats_reset (void) { }
+#endif
 
 /* Perpetual pinning, aka cementing */
 

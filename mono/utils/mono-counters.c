@@ -1,4 +1,5 @@
-/*
+/**
+ * \file
  * Copyright 2006-2010 Novell
  * Copyright 2011 Xamarin Inc
  * Licensed under the MIT license. See LICENSE file in the project root for full license information.
@@ -7,9 +8,11 @@
 #include <stdlib.h>
 #include <glib.h>
 #include "config.h"
-#include "mono-counters.h"
-#include "mono-proclib.h"
-#include "mono-os-mutex.h"
+
+#include "mono/utils/mono-counters.h"
+#include "mono/utils/mono-proclib.h"
+#include "mono/utils/mono-os-mutex.h"
+#include "mono/utils/mono-time.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -26,6 +29,9 @@ struct _MonoCounter {
 static MonoCounter *counters = NULL;
 static mono_mutex_t counters_mutex;
 
+static mono_clock_id_t real_time_clock;
+static guint64 real_time_start;
+
 static volatile gboolean initialized = FALSE;
 
 static int valid_mask = 0;
@@ -37,11 +43,11 @@ static void initialize_system_counters (void);
 
 /**
  * mono_counter_get_variance:
- * @counter: counter to get the variance
+ * \param counter counter to get the variance
  *
  * Variance specifies how the counter value is expected to behave between any two samplings.
  *
- * Returns: the monotonicity of the counter.
+ * \returns the monotonicity of the counter.
  */
 int
 mono_counter_get_variance (MonoCounter *counter)
@@ -51,11 +57,11 @@ mono_counter_get_variance (MonoCounter *counter)
 
 /**
  * mono_counter_get_unit:
- * @counter: counter to get the unit
+ * \param counter counter to get the unit
  *
  * The unit gives a high level view of the unit that the counter is measuring.
  *
- * Returns: the unit of the counter.
+ * \returns the unit of the counter.
  */
 int
 mono_counter_get_unit (MonoCounter *counter)
@@ -65,11 +71,9 @@ mono_counter_get_unit (MonoCounter *counter)
 
 /**
  * mono_counter_get_section:
- * @counter: counter to get the section
- *
+ * \param counter counter to get the section
  * Sections are the unit of organization between all counters.
- *
- * Returns: the section of the counter.
+ * \returns the section of the counter.
  */
 
 int
@@ -80,11 +84,8 @@ mono_counter_get_section (MonoCounter *counter)
 
 /**
  * mono_counter_get_type:
- * @counter: counter to get the type
- *
- * Returns the type used to strong the value of the counter.
- *
- * Returns:the type of the counter.
+ * \param counter counter to get the type
+ * \returns the type used to store the value of the counter.
  */
 int
 mono_counter_get_type (MonoCounter *counter)
@@ -94,11 +95,8 @@ mono_counter_get_type (MonoCounter *counter)
 
 /**
  * mono_counter_get_name:
- * @counter: counter to get the name
- *
- * Returns the counter name. The string should not be freed.
- *
- * Returns the name of the counter.
+ * \param counter counter to get the name
+ * \returns the counter name. The string should not be freed.
  */
 
 const char*
@@ -109,11 +107,9 @@ mono_counter_get_name (MonoCounter *counter)
 
 /**
  * mono_counter_get_size:
- * @counter: counter to get the max size of the counter
- *
- * Use the returned size to create the buffer used with mono_counters_sample
- *
- * Returns: the max size of the counter data.
+ * \param counter counter to get the max size of the counter
+ * Use the returned size to create the buffer used with \c mono_counters_sample
+ * \returns the max size of the counter data.
  */
 size_t
 mono_counter_get_size (MonoCounter *counter)
@@ -123,8 +119,7 @@ mono_counter_get_size (MonoCounter *counter)
 
 /**
  * mono_counters_enable:
- * @section_mask: a mask listing the sections that will be displayed
- *
+ * \param sectionmask a mask listing the sections that will be displayed
  * This is used to track which counters will be displayed.
  */
 void
@@ -140,6 +135,9 @@ mono_counters_init (void)
 		return;
 
 	mono_os_mutex_init (&counters_mutex);
+
+	mono_clock_init (&real_time_clock);
+	real_time_start = mono_clock_get_time_ns (real_time_clock);
 
 	initialize_system_counters ();
 
@@ -160,13 +158,13 @@ register_internal (const char *name, int type, void *addr, int size)
 
 	for (counter = counters; counter; counter = counter->next) {
 		if (counter->addr == addr) {
-			g_warning ("you are registering twice the same counter address");
+			g_warning ("you are registering the same counter address twice: %s at %p", name, addr);
 			mono_os_mutex_unlock (&counters_mutex);
 			return;
 		}
 	}
 
-	counter = (MonoCounter *) malloc (sizeof (MonoCounter));
+	counter = (MonoCounter *) g_malloc (sizeof (MonoCounter));
 	if (!counter) {
 		mono_os_mutex_unlock (&counters_mutex);
 		return;
@@ -197,19 +195,18 @@ register_internal (const char *name, int type, void *addr, int size)
 
 /**
  * mono_counters_register:
- * @name: The name for this counters.
- * @type: One of the possible MONO_COUNTER types, or MONO_COUNTER_CALLBACK for a function pointer.
- * @addr: The address to register.
+ * \param name The name for this counters.
+ * \param type One of the possible \c MONO_COUNTER types, or \c MONO_COUNTER_CALLBACK for a function pointer.
+ * \param addr The address to register.
  *
- * Register addr as the address of a counter of type type.
- * Note that @name must be a valid string at all times until
- * mono_counters_dump () is called.
+ * Register \p addr as the address of a counter of type type.
+ * Note that \p name must be a valid string at all times until
+ * \c mono_counters_dump() is called.
  *
  * This function should not be used with counter types that require an explicit size such as string
  * as the counter size will be set to zero making them effectively useless.
  *
- *
- * It may be a function pointer if MONO_COUNTER_CALLBACK is specified:
+ * It may be a function pointer if \c MONO_COUNTER_CALLBACK is specified:
  * the function should return the value and take no arguments.
  */
 void 
@@ -251,23 +248,23 @@ mono_counters_register (const char* name, int type, void *addr)
 
 /**
  * mono_counters_register_with_size:
- * @name: The name for this counters.
- * @type: One of the possible MONO_COUNTER types, or MONO_COUNTER_CALLBACK for a function pointer.
- * @addr: The address to register.
- * @size: Max size of the counter data.
+ * \param name The name for this counters.
+ * \param type One of the possible MONO_COUNTER types, or MONO_COUNTER_CALLBACK for a function pointer.
+ * \param addr The address to register.
+ * \param size Max size of the counter data.
  *
- * Register addr as the address of a counter of type @type.
- * Note that @name must be a valid string at all times until
- * mono_counters_dump () is called.
+ * Register \p addr as the address of a counter of type \p type.
+ * Note that \p name must be a valid string at all times until
+ * \c mono_counters_dump() is called.
  *
- * It may be a function pointer if MONO_COUNTER_CALLBACK is specified:
+ * It may be a function pointer if \c MONO_COUNTER_CALLBACK is specified:
  * the function should return the value and take no arguments.
  *
- * The value of @size is ignored for types with fixed size such as int and long.
+ * The value of \p size is ignored for types with fixed size such as int and long.
  *
- * Use @size for types that can have dynamic size such as string.
+ * Use \p size for types that can have dynamic size such as string.
  *
- * If @size is negative, it's silently converted to zero.
+ * If \p size is negative, it's silently converted to zero.
  */
 void
 mono_counters_register_with_size (const char *name, int type, void *addr, int size)
@@ -280,8 +277,7 @@ mono_counters_register_with_size (const char *name, int type, void *addr, int si
 
 /**
  * mono_counters_on_register
- * @callback : function to callback when a counter is registered
- *
+ * \param callback function to callback when a counter is registered
  * Add a callback that is going to be called when a counter is registered
  */
 void
@@ -323,6 +319,12 @@ total_time (void)
 	return mono_process_get_data (GINT_TO_POINTER (mono_process_current_pid ()), MONO_PROCESS_TOTAL_TIME);
 }
 
+static guint64
+real_time (void)
+{
+	return mono_clock_get_time_ns (real_time_clock) - real_time_start;
+}
+
 static gint64
 working_set (void)
 {
@@ -347,6 +349,19 @@ page_faults (void)
 	return mono_process_get_data (GINT_TO_POINTER (mono_process_current_pid ()), MONO_PROCESS_FAULTS);
 }
 
+static gint64
+paged_bytes (void)
+{
+	return mono_process_get_data (GINT_TO_POINTER (mono_process_current_pid ()), MONO_PROCESS_PAGED_BYTES);
+}
+
+
+// If cpu_load gets inlined on Windows then cpu_load_1min, cpu_load_5min and cpu_load_15min can be folded into a single function and that will
+// cause a failure when registering counters since the same function address will be used by all three functions. Preventing this method from being inlined
+// will make sure the registered callback functions remains unique.
+#ifdef _MSC_VER
+#pragma optimize("", off)
+#endif
 static double
 cpu_load (int kind)
 {
@@ -398,6 +413,9 @@ cpu_load_15min (void)
 {
 	return cpu_load (2);
 }
+#ifdef _MSC_VER
+#pragma optimize("", on)
+#endif
 
 #define SYSCOUNTER_TIME (MONO_COUNTER_SYSTEM | MONO_COUNTER_LONG | MONO_COUNTER_TIME | MONO_COUNTER_MONOTONIC | MONO_COUNTER_CALLBACK)
 #define SYSCOUNTER_BYTES (MONO_COUNTER_SYSTEM | MONO_COUNTER_LONG | MONO_COUNTER_BYTES | MONO_COUNTER_VARIABLE | MONO_COUNTER_CALLBACK)
@@ -410,9 +428,11 @@ initialize_system_counters (void)
 	register_internal ("User Time", SYSCOUNTER_TIME, (gpointer) &user_time, sizeof (gint64));
 	register_internal ("System Time", SYSCOUNTER_TIME, (gpointer) &system_time, sizeof (gint64));
 	register_internal ("Total Time", SYSCOUNTER_TIME, (gpointer) &total_time, sizeof (gint64));
+	register_internal ("Real Time", SYSCOUNTER_TIME, (gpointer) &real_time, sizeof (guint64));
 	register_internal ("Working Set", SYSCOUNTER_BYTES, (gpointer) &working_set, sizeof (gint64));
 	register_internal ("Private Bytes", SYSCOUNTER_BYTES, (gpointer) &private_bytes, sizeof (gint64));
 	register_internal ("Virtual Bytes", SYSCOUNTER_BYTES, (gpointer) &virtual_bytes, sizeof (gint64));
+	register_internal ("Page File Bytes", SYSCOUNTER_BYTES, (gpointer) &paged_bytes, sizeof (gint64));
 	register_internal ("Page Faults", SYSCOUNTER_COUNT, (gpointer) &page_faults, sizeof (gint64));
 	register_internal ("CPU Load Average - 1min", SYSCOUNTER_LOAD, (gpointer) &cpu_load_1min, sizeof (double));
 	register_internal ("CPU Load Average - 5min", SYSCOUNTER_LOAD, (gpointer) &cpu_load_5min, sizeof (double));
@@ -421,12 +441,10 @@ initialize_system_counters (void)
 
 /**
  * mono_counters_foreach:
- * @cb: The callback that will be called for each counter.
- * @user_data: Value passed as second argument of the callback.
- *
- * Iterate over all counters and call @cb for each one of them. Stop iterating if
+ * \param cb The callback that will be called for each counter.
+ * \param user_data Value passed as second argument of the callback.
+ * Iterate over all counters and call \p cb for each one of them. Stop iterating if
  * the callback returns FALSE.
- *
  */
 void
 mono_counters_foreach (CountersEnumCallback cb, gpointer user_data)
@@ -498,7 +516,7 @@ sample_internal (MonoCounter *counter, void *buffer, int buffer_size)
 				size = 0;
 			} else {
 				size = counter->size;
-				strncpy ((char *) buffer, strval, size - 1);
+				memcpy ((char *) buffer, strval, size - 1);
 				((char*)buffer)[size - 1] = '\0';
 			}
 		}
@@ -518,6 +536,14 @@ mono_counters_sample (MonoCounter *counter, void *buffer, int buffer_size)
 	return sample_internal (counter, buffer, buffer_size);
 }
 
+// We want to default to g_print if outfile is not specified. This matters because on some platforms (e.g. Android),
+// printing to stdout is not the actual way to see output, and we've wrapped that logic in `g_print`.
+#define FPRINTF_OR_G_PRINT(outfile, ...) if (outfile) { \
+	fprintf (outfile, __VA_ARGS__); \
+} else { \
+	g_print (__VA_ARGS__); \
+}
+
 #define ENTRY_FMT "%-36s: "
 static void
 dump_counter (MonoCounter *counter, FILE *outfile) {
@@ -526,34 +552,36 @@ dump_counter (MonoCounter *counter, FILE *outfile) {
 
 	switch (counter->type & MONO_COUNTER_TYPE_MASK) {
 	case MONO_COUNTER_INT:
-		fprintf (outfile, ENTRY_FMT "%d\n", counter->name, *(int*)buffer);
+		FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%d\n", counter->name, *(int*)buffer);
 		break;
 	case MONO_COUNTER_UINT:
-		fprintf (outfile, ENTRY_FMT "%u\n", counter->name, *(guint*)buffer);
+		FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%u\n", counter->name, *(guint*)buffer);
 		break;
 	case MONO_COUNTER_LONG:
-		if ((counter->type & MONO_COUNTER_UNIT_MASK) == MONO_COUNTER_TIME)
-			fprintf (outfile, ENTRY_FMT "%.2f ms\n", counter->name, (double)(*(gint64*)buffer) / 10000.0);
-		else
-			fprintf (outfile, ENTRY_FMT "%lld\n", counter->name, *(long long *)buffer);
+		if ((counter->type & MONO_COUNTER_UNIT_MASK) == MONO_COUNTER_TIME) {
+			FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%.2f ms\n", counter->name, (double)(*(gint64*)buffer) / 10000.0);
+		} else {
+			FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%" PRId64 "\n", counter->name, *(gint64 *)buffer);
+		}
 		break;
 	case MONO_COUNTER_ULONG:
-		if ((counter->type & MONO_COUNTER_UNIT_MASK) == MONO_COUNTER_TIME)
-			fprintf (outfile, ENTRY_FMT "%.2f ms\n", counter->name, (double)(*(guint64*)buffer) / 10000.0);
-		else
-			fprintf (outfile, ENTRY_FMT "%llu\n", counter->name, *(unsigned long long *)buffer);
+		if ((counter->type & MONO_COUNTER_UNIT_MASK) == MONO_COUNTER_TIME) {
+			FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%.2f ms\n", counter->name, (double)(*(guint64*)buffer) / 10000.0);
+		} else {
+			FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%" PRIu64 "\n", counter->name, *(guint64 *)buffer);
+		}
 		break;
 	case MONO_COUNTER_WORD:
-		fprintf (outfile, ENTRY_FMT "%zd\n", counter->name, *(gssize*)buffer);
+		FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%" PRId64 "\n", counter->name, (gint64)*(gssize*)buffer);
 		break;
 	case MONO_COUNTER_DOUBLE:
-		fprintf (outfile, ENTRY_FMT "%.4f\n", counter->name, *(double*)buffer);
+		FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%.4f\n", counter->name, *(double*)buffer);
 		break;
 	case MONO_COUNTER_STRING:
-		fprintf (outfile, ENTRY_FMT "%s\n", counter->name, (size == 0) ? "(null)" : (char*)buffer);
+		FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%s\n", counter->name, (size == 0) ? "(null)" : (char*)buffer);
 		break;
 	case MONO_COUNTER_TIME_INTERVAL:
-		fprintf (outfile, ENTRY_FMT "%.2f ms\n", counter->name, (double)(*(gint64*)buffer) / 1000.0);
+		FPRINTF_OR_G_PRINT (outfile, ENTRY_FMT "%.2f ms\n", counter->name, (double)(*(gint64*)buffer) / 1000.0);
 		break;
 	}
 
@@ -571,6 +599,8 @@ section_names [][12] = {
 	"System",
 	"", // MONO_COUNTER_PERFCOUNTERS - not used.
 	"Profiler",
+	"Interp",
+	"Tiered",
 };
 
 static void
@@ -586,12 +616,11 @@ mono_counters_dump_section (int section, int variance, FILE *outfile)
 
 /**
  * mono_counters_dump:
- * @section_mask: The sections to dump counters for
- * @outfile: a FILE to dump the results to
- *
+ * \param section_mask The sections to dump counters for
+ * \param outfile a FILE to dump the results to; NULL will default to g_print
  * Displays the counts of all the enabled counters registered. 
  * To filter by variance, you can OR one or more variance with the specific section you want.
- * Use MONO_COUNTER_SECTION_MASK to dump all categories of a specific variance.
+ * Use \c MONO_COUNTER_SECTION_MASK to dump all categories of a specific variance.
  */
 void
 mono_counters_dump (int section_mask, FILE *outfile)
@@ -619,14 +648,18 @@ mono_counters_dump (int section_mask, FILE *outfile)
 
 	for (j = 0, i = MONO_COUNTER_JIT; i < MONO_COUNTER_LAST_SECTION; j++, i <<= 1) {
 		if ((section_mask & i) && (set_mask & i)) {
-			fprintf (outfile, "\n%s statistics\n", section_names [j]);
+			FPRINTF_OR_G_PRINT (outfile, "\n%s statistics\n", section_names [j]);
 			mono_counters_dump_section (i, variance, outfile);
 		}
 	}
 
-	fflush (outfile);
+	if (outfile)
+		fflush (outfile);
+
 	mono_os_mutex_unlock (&counters_mutex);
 }
+
+#undef FPRINTF_OR_G_PRINT
 
 /**
  * mono_counters_cleanup:
@@ -648,8 +681,8 @@ mono_counters_cleanup (void)
 	while (counter) {
 		MonoCounter *tmp = counter;
 		counter = counter->next;
-		free ((void*)tmp->name);
-		free (tmp);
+		g_free ((void*)tmp->name);
+		g_free (tmp);
 	}
 
 	mono_os_mutex_unlock (&counters_mutex);
@@ -660,9 +693,8 @@ static uintptr_t resource_limits [MONO_RESOURCE_COUNT * 2];
 
 /**
  * mono_runtime_resource_check_limit:
- * @resource_type: one of the #MonoResourceType enum values
- * @value: the current value of the resource usage
- *
+ * \param resource_type one of the \c MonoResourceType enum values
+ * \param value the current value of the resource usage
  * Check if a runtime resource limit has been reached. This function
  * is intended to be used by the runtime only.
  */
@@ -682,17 +714,15 @@ mono_runtime_resource_check_limit (int resource_type, uintptr_t value)
 
 /**
  * mono_runtime_resource_limit:
- * @resource_type: one of the #MonoResourceType enum values
- * @soft_limit: the soft limit value
- * @hard_limit: the hard limit value
- *
+ * \param resource_type one of the \c MonoResourceType enum values
+ * \param soft_limit the soft limit value
+ * \param hard_limit the hard limit value
  * This function sets the soft and hard limit for runtime resources. When the limit
  * is reached, a user-specified callback is called. The callback runs in a restricted
  * environment, in which the world coult be stopped, so it can't take locks, perform
  * allocations etc. The callback may be called multiple times once a limit has been reached
  * if action is not taken to decrease the resource use.
- *
- * Returns: 0 on error or a positive integer otherwise.
+ * \returns 0 on error or a positive integer otherwise.
  */
 int
 mono_runtime_resource_limit (int resource_type, uintptr_t soft_limit, uintptr_t hard_limit)
@@ -708,8 +738,7 @@ mono_runtime_resource_limit (int resource_type, uintptr_t soft_limit, uintptr_t 
 
 /**
  * mono_runtime_resource_set_callback:
- * @callback: a function pointer
- * 
+ * \param callback a function pointer
  * Set the callback to be invoked when a resource limit is reached.
  * The callback will receive the resource type, the resource amount in resource-specific
  * units and a flag indicating whether the soft or hard limit was reached.

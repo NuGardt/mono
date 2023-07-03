@@ -37,7 +37,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if !NET_2_1
+#if WIN_PLATFORM || XAMMAC_4_5
 
 using System;
 using System.Collections;
@@ -690,7 +690,12 @@ namespace Microsoft.Win32 {
 
 		public void DirtyTimeout (object state)
 		{
-			Flush ();
+			try {
+				Flush ();
+			} catch {
+				// This was identified as a crasher under some scenarios
+				// Internal MS issue: https://devdiv.visualstudio.com/DevDiv/_workitems/edit/787119
+			}
 		}
 
 		public void Flush ()
@@ -1029,5 +1034,4 @@ namespace Microsoft.Win32 {
 	}
 }
 
-#endif // NET_2_1
-
+#endif // MOBILE

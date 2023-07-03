@@ -92,14 +92,16 @@ namespace System.Windows.Forms {
 		#region	Protected Methods
 		protected override void OnClick (EventArgs e)
 		{
-			if (dialog_result != DialogResult.None) {
-				Form p = FindForm ();
-
-				if (p != null)
+			Form p = FindForm ();
+			if (p != null) {
+				p.dialog_result_changed = false; // manages the case where the DialogResult of the form is overriden in the button click event.
+				base.OnClick (e);
+				if (dialog_result != DialogResult.None && !p.dialog_result_changed) {
 					p.DialogResult = dialog_result;
+				}
+			} else {
+				base.OnClick (e);
 			}
-			
-			base.OnClick (e);
 		}
 
 		protected override void OnFontChanged (EventArgs e)
@@ -188,10 +190,18 @@ namespace System.Windows.Forms {
 
 		internal override Size GetPreferredSizeCore (Size proposedSize)
 		{
+			Size size;
+
 			if (this.AutoSize)
-				return ThemeEngine.Current.CalculateButtonAutoSize (this);
-				
-			return base.GetPreferredSizeCore (proposedSize);
+				size = ThemeEngine.Current.CalculateButtonAutoSize (this);
+			else
+				size = base.GetPreferredSizeCore (proposedSize);
+
+			// Button has a special legacy behavior and implements AutoSizeMode itself
+			if (AutoSizeMode == AutoSizeMode.GrowOnly)
+				size = new Size (Math.Max (size.Width, Width), Math.Max (size.Height, Height));
+
+			return size;
 		}
 		#endregion	// Internal methods
 	}

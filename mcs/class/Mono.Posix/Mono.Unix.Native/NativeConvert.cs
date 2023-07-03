@@ -8,6 +8,9 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using Mono.Unix.Native;
+#if MONODROID
+using Mono.Unix.Android;
+#endif
 
 namespace Mono.Unix.Native {
 
@@ -17,7 +20,17 @@ namespace Mono.Unix.Native {
 		//
 		// Non-generated exports
 		//
-#if !MONODROID
+#if MONODROID
+		[DllImport (LIB, EntryPoint="Mono_Posix_FromRealTimeSignum")]
+		static extern int HelperFromRealTimeSignum (Int32 offset, out Int32 rval);
+
+		static int FromRealTimeSignum (Int32 offset, out Int32 rval)
+		{
+			if (!AndroidUtils.AreRealTimeSignalsSafe ())
+				throw new PlatformNotSupportedException ("Real-time signals are not supported on this Android architecture");
+			return HelperFromRealTimeSignum (offset, out rval);
+		}
+#else
 		[DllImport (LIB, EntryPoint="Mono_Posix_FromRealTimeSignum")]
 		private static extern int FromRealTimeSignum (Int32 offset, out Int32 rval);
 #endif
@@ -326,6 +339,38 @@ namespace Mono.Unix.Native {
 			if (fopen_mode [0] != 'r' && fopen_mode [0] != 'w' && fopen_mode [0] != 'a')
 				throw new ArgumentException (fopen_mode);
 			return fopen_mode;
+		}
+
+		[DllImport (LIB, EntryPoint="Mono_Posix_FromMremapFlags")]
+		private static extern int FromMremapFlags (MremapFlags value, out UInt64 rval);
+
+		public static bool TryFromMremapFlags (MremapFlags value, out UInt64 rval)
+		{
+			return FromMremapFlags (value, out rval) == 0;
+		}
+
+		public static UInt64 FromMremapFlags (MremapFlags value)
+		{
+			UInt64 rval;
+			if (FromMremapFlags (value, out rval) == -1)
+				ThrowArgumentException (value);
+			return rval;
+		}
+
+		[DllImport (LIB, EntryPoint="Mono_Posix_ToMremapFlags")]
+		private static extern int ToMremapFlags (UInt64 value, out MremapFlags rval);
+
+		public static bool TryToMremapFlags (UInt64 value, out MremapFlags rval)
+		{
+			return ToMremapFlags (value, out rval) == 0;
+		}
+
+		public static MremapFlags ToMremapFlags (UInt64 value)
+		{
+			MremapFlags rval;
+			if (ToMremapFlags (value, out rval) == -1)
+				ThrowArgumentException (value);
+			return rval;
 		}
 
 		[DllImport (LIB, EntryPoint="Mono_Posix_FromStat")]

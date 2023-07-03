@@ -27,60 +27,30 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Security;
+using System.Threading;
 using System.Threading.Tasks;
 using SSA = System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Principal;
 using System.Security.Cryptography;
-using Mono.Net.Security;
 
 namespace Mono.Security.Interface
 {
 	public interface IMonoSslStream : IDisposable
 	{
-		void AuthenticateAsClient (string targetHost);
-
-		void AuthenticateAsClient (string targetHost, X509CertificateCollection clientCertificates, SSA.SslProtocols enabledSslProtocols, bool checkCertificateRevocation);
-
-		IAsyncResult BeginAuthenticateAsClient (string targetHost, AsyncCallback asyncCallback, object asyncState);
-
-		IAsyncResult BeginAuthenticateAsClient (string targetHost, X509CertificateCollection clientCertificates, SSA.SslProtocols enabledSslProtocols, bool checkCertificateRevocation, AsyncCallback asyncCallback, object asyncState);
-
-		void EndAuthenticateAsClient (IAsyncResult asyncResult);
-
-		void AuthenticateAsServer (X509Certificate serverCertificate);
-
-		void AuthenticateAsServer (X509Certificate serverCertificate, bool clientCertificateRequired, SSA.SslProtocols enabledSslProtocols, bool checkCertificateRevocation);
-
-		IAsyncResult BeginAuthenticateAsServer (X509Certificate serverCertificate, AsyncCallback asyncCallback, object asyncState);
-
-		IAsyncResult BeginAuthenticateAsServer (X509Certificate serverCertificate, bool clientCertificateRequired, SSA.SslProtocols enabledSslProtocols, bool checkCertificateRevocation, AsyncCallback asyncCallback, object asyncState);
-
-		void EndAuthenticateAsServer (IAsyncResult asyncResult);
-
-		Task AuthenticateAsClientAsync (string targetHost);
+		SslStream SslStream {
+			get;
+		}
 
 		Task AuthenticateAsClientAsync (string targetHost, X509CertificateCollection clientCertificates, SSA.SslProtocols enabledSslProtocols, bool checkCertificateRevocation);
 
-		Task AuthenticateAsServerAsync (X509Certificate serverCertificate);
-
 		Task AuthenticateAsServerAsync (X509Certificate serverCertificate, bool clientCertificateRequired, SSA.SslProtocols enabledSslProtocols, bool checkCertificateRevocation);
 
-		void Flush ();
+		Task<int> ReadAsync (byte[] buffer, int offset, int count, CancellationToken cancellationToken);
 
-		int Read (byte[] buffer, int offset, int count);
+		Task WriteAsync (byte[] buffer, int offset, int count, CancellationToken cancellationToken);
 
-		void Write (byte[] buffer);
-
-		void Write (byte[] buffer, int offset, int count);
-
-		IAsyncResult BeginRead (byte[] buffer, int offset, int count, AsyncCallback asyncCallback, object asyncState);
-
-		int EndRead (IAsyncResult asyncResult);
-
-		IAsyncResult BeginWrite (byte[] buffer, int offset, int count, AsyncCallback asyncCallback, object asyncState);
-
-		void EndWrite (IAsyncResult asyncResult);
+		Task ShutdownAsync ();
 
 		TransportContext TransportContext {
 			get;
@@ -190,6 +160,12 @@ namespace Mono.Security.Interface
 
 
 		MonoTlsConnectionInfo GetConnectionInfo ();
+
+		bool CanRenegotiate {
+			get;
+		}
+
+		Task RenegotiateAsync (CancellationToken cancellationToken);
 	}
 }
 

@@ -5,7 +5,8 @@ class Driver
 {
 	public static void Main ()
 	{
-		Console.Out.WriteLine ("Out");
-		Console.Error.WriteLine ("Error");
+		Console.OutputEncoding = System.Text.Encoding.ASCII;
+		Console.Out.WriteLine ("Testing Console.Out");
+		Console.Error.WriteLine ("Testing Console.Error");
 	}
 }

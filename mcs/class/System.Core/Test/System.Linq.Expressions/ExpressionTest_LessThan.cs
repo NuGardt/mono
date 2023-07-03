@@ -35,6 +35,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions
 {
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_LessThan
 	{
 		[Test]
@@ -165,7 +166,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void UserDefinedLessThanLifted ()
 		{
 			var l = Expression.Parameter (typeof (Slot?), "l");
@@ -188,7 +188,6 @@ namespace MonoTests.System.Linq.Expressions
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void UserDefinedLessThanLiftedToNull ()
 		{
 			var l = Expression.Parameter (typeof (Slot?), "l");

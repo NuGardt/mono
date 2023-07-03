@@ -28,11 +28,19 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System.Collections.Generic;
 
 namespace System.Diagnostics.Tracing
 {
 	public class EventSource : IDisposable
 	{
+		protected internal struct EventData
+		{
+			public IntPtr DataPointer { get; set; }
+			public int Size { get; set; }
+			internal int Reserved { get; set; }
+		}
+
 		protected EventSource ()
 		{
 			this.Name = this.GetType().Name;
@@ -68,6 +76,16 @@ namespace System.Diagnostics.Tracing
 		public EventSource (string eventSourceName, EventSourceSettings config, params string[] traits)
 			: this (eventSourceName, config)
 		{
+		}
+
+		internal EventSource (Guid eventSourceGuid, string eventSourceName)
+			: this (eventSourceName)
+		{
+		}
+
+		~EventSource ()
+		{
+			Dispose (false);
 		}
 
 		public Exception ConstructionException
@@ -115,6 +133,7 @@ namespace System.Diagnostics.Tracing
 		public void Dispose ()
 		{
 			Dispose (true);
+			GC.SuppressFinalize (this);
 		}
 
 		public string GetTrait (string key)
@@ -126,6 +145,10 @@ namespace System.Diagnostics.Tracing
 		{
 		}
 
+		public void Write (string eventName, EventSourceOptions options)
+		{
+		}
+
 		public void Write<T> (string eventName, T data)
 		{
 		}
@@ -134,6 +157,7 @@ namespace System.Diagnostics.Tracing
 		{
 		}
 
+		[CLSCompliant (false)]
 		public void Write<T> (string eventName, ref EventSourceOptions options, ref T data)
 		{
 		}
@@ -147,6 +171,10 @@ namespace System.Diagnostics.Tracing
 		}
 
 		protected virtual void OnEventCommand (EventCommandEventArgs command)
+		{
+		}
+
+		internal void ReportOutOfBandMessage (string msg, bool flush)
 		{
 		}
 
@@ -237,6 +265,112 @@ namespace System.Diagnostics.Tracing
 		protected void WriteEvent (int eventId, string arg1, string arg2, string arg3)
 		{
 			WriteEvent (eventId, new object[] { arg1, arg2, arg3 } );
+		}
+
+		[CLSCompliant (false)]
+		protected unsafe void WriteEventCore (int eventId, int eventDataCount, EventData* data)
+		{
+		}
+
+		protected unsafe void WriteEventWithRelatedActivityId (int eventId, Guid relatedActivityId, params object[] args)
+		{
+		}
+
+		[CLSCompliant (false)]
+		protected unsafe void WriteEventWithRelatedActivityIdCore (int eventId, Guid* relatedActivityId, int eventDataCount, EventSource.EventData* data)
+		{
+		}
+
+//		[MonoTODO]
+		public event EventHandler<EventCommandEventArgs> EventCommandExecuted
+		{
+#if WASM
+			add { throw new PlatformNotSupportedException (); }
+			remove { throw new PlatformNotSupportedException (); }
+#else
+			add { throw new NotImplementedException (); }
+			remove { throw new NotImplementedException (); }
+#endif
+		}
+
+//		[MonoTODO]
+		public static string GenerateManifest (Type eventSourceType, string assemblyPathToIncludeInManifest)
+		{
+#if WASM
+			throw new PlatformNotSupportedException ();
+#else
+			throw new NotImplementedException ();
+#endif
+		}
+
+//		[MonoTODO]
+		public static string GenerateManifest (Type eventSourceType, string assemblyPathToIncludeInManifest, EventManifestOptions flags)
+		{
+#if WASM
+			throw new PlatformNotSupportedException ();
+#else
+			throw new NotImplementedException ();
+#endif
+		}
+
+//		[MonoTODO]
+		public static Guid GetGuid (Type eventSourceType)
+		{
+#if WASM
+			throw new PlatformNotSupportedException ();
+#else
+			throw new NotImplementedException ();
+#endif
+		}
+
+//		[MonoTODO]
+		public static string GetName (Type eventSourceType)
+		{
+#if WASM
+			throw new PlatformNotSupportedException ();
+#else
+			throw new NotImplementedException ();
+#endif
+		}
+
+//		[MonoTODO]
+		public static IEnumerable<EventSource> GetSources ()
+		{
+#if WASM
+			throw new PlatformNotSupportedException ();
+#else
+			throw new NotImplementedException ();
+#endif
+		}
+
+//		[MonoTODO]
+		public static void SendCommand (EventSource eventSource, EventCommand command, IDictionary<string, string> commandArguments)
+		{
+#if WASM
+			throw new PlatformNotSupportedException ();
+#else
+			throw new NotImplementedException ();
+#endif
+		}
+
+//		[MonoTODO]
+		public static void SetCurrentThreadActivityId (Guid activityId)
+		{
+#if WASM
+			throw new PlatformNotSupportedException ();
+#else
+			throw new NotImplementedException ();
+#endif
+		}
+
+//		[MonoTODO]
+		public static void SetCurrentThreadActivityId (Guid activityId, out Guid oldActivityThatWillContinue)
+		{
+#if WASM
+			throw new PlatformNotSupportedException ();
+#else
+			throw new NotImplementedException ();
+#endif
 		}
 	}
 }

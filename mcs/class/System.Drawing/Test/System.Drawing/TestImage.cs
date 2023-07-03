@@ -37,10 +37,11 @@ using System.Security.Permissions;
 using System.Xml.Serialization;
 using NUnit.Framework;
 
+using MonoTests.Helpers;
+
 namespace MonoTests.System.Drawing{
 
 	[TestFixture]
-	[SecurityPermission (SecurityAction.Deny, UnmanagedCode = true)]
 	public class ImageTest {
 
 		private string fname;
@@ -69,10 +70,9 @@ namespace MonoTests.System.Drawing{
 		}
 
 		[Test]
-		[ExpectedException (typeof (FileNotFoundException))]
 		public void FileDoesNotExists ()
 		{
-			Image.FromFile ("FileDoesNotExists.jpg");
+			Assert.Throws<FileNotFoundException> (() => Image.FromFile ("FileDoesNotExists.jpg"));
 		}
 
 		private bool CallbackTrue ()
@@ -101,20 +101,18 @@ namespace MonoTests.System.Drawing{
 		}
 
 		[Test]
-		[ExpectedException (typeof (OutOfMemoryException))]
 		public void GetThumbnailImage_Height_Zero ()
 		{
 			using (Bitmap bmp = new Bitmap (10, 10)) {
-				Image tn = bmp.GetThumbnailImage (5, 0, new Image.GetThumbnailImageAbort (CallbackFalse), IntPtr.Zero);
+				Assert.Throws<OutOfMemoryException> (() => bmp.GetThumbnailImage (5, 0, new Image.GetThumbnailImageAbort (CallbackFalse), IntPtr.Zero));
 			}
 		}
 
 		[Test]
-		[ExpectedException (typeof (OutOfMemoryException))]
 		public void GetThumbnailImage_Width_Negative ()
 		{
 			using (Bitmap bmp = new Bitmap (10, 10)) {
-				Image tn = bmp.GetThumbnailImage (-5, 5, new Image.GetThumbnailImageAbort (CallbackFalse), IntPtr.Zero);
+				Assert.Throws<OutOfMemoryException> (() => bmp.GetThumbnailImage (-5, 5, new Image.GetThumbnailImageAbort (CallbackFalse), IntPtr.Zero));
 			}
 		}
 
@@ -226,7 +224,7 @@ namespace MonoTests.System.Drawing{
 		[Test]
 		public void FromFile_Metafile_Wmf ()
 		{
-			string filename = TestBitmap.getInFile ("bitmaps/telescope_01.wmf");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/telescope_01.wmf");
 			using (Image img = Image.FromFile (filename)) {
 				Wmf (img);
 			}
@@ -235,7 +233,7 @@ namespace MonoTests.System.Drawing{
 		[Test]
 		public void FromStream_Metafile_Wmf ()
 		{
-			string filename = TestBitmap.getInFile ("bitmaps/telescope_01.wmf");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/telescope_01.wmf");
 			using (FileStream fs = File.OpenRead (filename)) {
 				using (Image img = Image.FromStream (fs)) {
 					Wmf (img);
@@ -245,13 +243,12 @@ namespace MonoTests.System.Drawing{
 
 		[Test]
 		[Category ("NotWorking")] // https://bugzilla.novell.com/show_bug.cgi?id=338779
-		[ExpectedException (typeof (ArgumentException))]
 		public void FromStream_Metafile_Wmf_NotOrigin ()
 		{
-			string filename = TestBitmap.getInFile ("bitmaps/telescope_01.wmf");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/telescope_01.wmf");
 			using (FileStream fs = File.OpenRead (filename)) {
 				fs.Position = fs.Length / 2;
-				Image.FromStream (fs);
+				Assert.Throws<ArgumentException> (() => Image.FromStream (fs));
 			}
 		}
 
@@ -268,7 +265,7 @@ namespace MonoTests.System.Drawing{
 		[Test]
 		public void FromFile_Metafile_Emf ()
 		{
-			string filename = TestBitmap.getInFile ("bitmaps/milkmateya01.emf");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/milkmateya01.emf");
 			using (Image img = Image.FromFile (filename)) {
 				Emf (img);
 			}
@@ -277,7 +274,7 @@ namespace MonoTests.System.Drawing{
 		[Test]
 		public void FromStream_Metafile_Emf ()
 		{
-			string filename = TestBitmap.getInFile ("bitmaps/milkmateya01.emf");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/milkmateya01.emf");
 			using (FileStream fs = File.OpenRead (filename)) {
 				using (Image img = Image.FromStream (fs)) {
 					Emf (img);
@@ -287,31 +284,28 @@ namespace MonoTests.System.Drawing{
 
 		[Test]
 		[Category ("NotWorking")] // https://bugzilla.novell.com/show_bug.cgi?id=338779
-		[ExpectedException (typeof (ArgumentException))]
 		public void FromStream_Metafile_Emf_NotOrigin ()
 		{
-			string filename = TestBitmap.getInFile ("bitmaps/milkmateya01.emf");
+			string filename = TestResourceHelper.GetFullPathOfResource ("Test/System.Drawing/bitmaps/milkmateya01.emf");
 			using (FileStream fs = File.OpenRead (filename)) {
 				fs.Position = fs.Length / 2;
-				Image.FromStream (fs);
+				Assert.Throws<ArgumentException> (() => Image.FromStream (fs));
 			}
 		}
 
 		[Test]
-		[ExpectedException (typeof (OutOfMemoryException))]
 		public void FromFile_Invalid ()
 		{
 			string filename = Assembly.GetExecutingAssembly ().Location;
-			Image.FromFile (filename);
+			Assert.Throws<OutOfMemoryException> (() => Image.FromFile (filename));
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void FromStream_Invalid ()
 		{
 			string filename = Assembly.GetExecutingAssembly ().Location;
 			using (FileStream fs = File.OpenRead (filename)) {
-				Image.FromStream (fs);
+				Assert.Throws<ArgumentException> (() => Image.FromStream (fs));
 			}
 		}
 
@@ -350,7 +344,6 @@ namespace MonoTests.System.Drawing{
 		}
 
 		[Test]
-		[ExpectedException (typeof (ArgumentException))]
 		public void StreamJunkSaveLoad ()
 		{
 			using (MemoryStream ms = new MemoryStream ()) {
@@ -363,7 +356,7 @@ namespace MonoTests.System.Drawing{
 					bmp.Save (ms, ImageFormat.Bmp);
 					Assert.IsTrue (ms.Position > 2, "Position-2");
 					// exception here
-					Image.FromStream (ms);
+					Assert.Throws<ArgumentException> (() => Image.FromStream (ms));
 				}
 			}
 		}

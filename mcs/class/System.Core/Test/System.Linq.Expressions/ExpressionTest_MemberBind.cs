@@ -37,6 +37,7 @@ using NUnit.Framework;
 namespace MonoTests.System.Linq.Expressions {
 
 	[TestFixture]
+	[Category("SRE")]
 	public class ExpressionTest_MemberBind {
 
 		public class Foo {
@@ -139,7 +140,6 @@ namespace MonoTests.System.Linq.Expressions {
 		}
 
 		[Test]
-		[Category ("NotWorkingInterpreter")]
 		public void CompiledMemberBinding ()
 		{
 			var getfoo = Expression.Lambda<Func<Foo>> (

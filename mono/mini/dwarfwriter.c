@@ -1,5 +1,6 @@
-/*
- * dwarfwriter.c: Creation of DWARF debug information
+/**
+ * \file
+ * Creation of DWARF debug information
  *
  * Author:
  *   Zoltan Varga (vargaz@gmail.com)
@@ -8,6 +9,7 @@
  */
 
 #include "config.h"
+#include <mono/utils/mono-compiler.h>
 
 #if !defined(DISABLE_AOT) && !defined(DISABLE_JIT)
 #include "dwarfwriter.h"
@@ -20,9 +22,8 @@
 #endif
 
 #include <mono/metadata/mono-endian.h>
-#include <mono/metadata/debug-mono-symfile.h>
-#include <mono/metadata/mono-debug-debugger.h>
-#include <mono/utils/mono-compiler.h>
+#include <mono/metadata/debug-internals.h>
+#include <mono/metadata/abi-details.h>
 
 #ifndef HOST_WIN32
 #include <mono/utils/freebsd-elf32.h>
@@ -108,85 +109,91 @@ mono_dwarf_writer_get_il_file_line_index (MonoDwarfWriter *w)
 
 /* Wrappers around the image writer functions */
 
-static inline void
+static void
 emit_section_change (MonoDwarfWriter *w, const char *section_name, int subsection_index)
 {
 	mono_img_writer_emit_section_change (w->w, section_name, subsection_index);
 }
 
-static inline void
+static void
 emit_push_section (MonoDwarfWriter *w, const char *section_name, int subsection)
 {
 	mono_img_writer_emit_push_section (w->w, section_name, subsection);
 }
 
-static inline void
+static void
 emit_pop_section (MonoDwarfWriter *w)
 {
 	mono_img_writer_emit_pop_section (w->w);
 }
 
-static inline void
+static void
 emit_label (MonoDwarfWriter *w, const char *name) 
 { 
 	mono_img_writer_emit_label (w->w, name); 
 }
 
-static inline void
+static void
 emit_bytes (MonoDwarfWriter *w, const guint8* buf, int size) 
 { 
 	mono_img_writer_emit_bytes (w->w, buf, size); 
 }
 
-static inline void
+static void
 emit_string (MonoDwarfWriter *w, const char *value) 
 { 
 	mono_img_writer_emit_string (w->w, value); 
 }
 
-static inline void
+static void
 emit_line (MonoDwarfWriter *w) 
 { 
 	mono_img_writer_emit_line (w->w); 
 }
 
-static inline void
+static void
 emit_alignment (MonoDwarfWriter *w, int size) 
 { 
 	mono_img_writer_emit_alignment (w->w, size); 
 }
 
-static inline void
+static void
 emit_pointer_unaligned (MonoDwarfWriter *w, const char *target) 
 { 
 	mono_img_writer_emit_pointer_unaligned (w->w, target); 
 }
 
-static inline void
+static void
 emit_pointer (MonoDwarfWriter *w, const char *target) 
 { 
 	mono_img_writer_emit_pointer (w->w, target); 
 }
 
-static inline void
+static void
 emit_int16 (MonoDwarfWriter *w, int value) 
 { 
 	mono_img_writer_emit_int16 (w->w, value); 
 }
 
-static inline void
+static void
 emit_int32 (MonoDwarfWriter *w, int value) 
 { 
 	mono_img_writer_emit_int32 (w->w, value); 
 }
 
-static inline void
+static void
+emit_symbol (MonoDwarfWriter *w, const char *symbol)
+{
+	mono_img_writer_emit_symbol (w->w, symbol);
+}
+
+static void
 emit_symbol_diff (MonoDwarfWriter *w, const char *end, const char* start, int offset) 
 { 
 	mono_img_writer_emit_symbol_diff (w->w, end, start, offset); 
 }
 
-static inline void
+static void
 emit_byte (MonoDwarfWriter *w, guint8 val) 
 { 
 	mono_img_writer_emit_byte (w->w, val); 
@@ -353,7 +360,7 @@ emit_cie (MonoDwarfWriter *w)
 		g_free (uw_info);
 	}
 
-	emit_alignment (w, sizeof (gpointer));
+	emit_alignment (w, sizeof (target_mgreg_t));
 	emit_label (w, ".Lcie0_end");
 }
 
@@ -361,7 +368,7 @@ static void
 emit_pointer_value (MonoDwarfWriter *w, gpointer ptr)
 {
 	gssize val = (gssize)ptr;
-	emit_bytes (w, (guint8*)&val, sizeof (gpointer));
+	emit_bytes (w, (guint8*)&val, sizeof (target_mgreg_t));
 }
 
 static void
@@ -393,7 +400,7 @@ emit_fde (MonoDwarfWriter *w, int fde_index, char *start_symbol, char *end_symbo
 		emit_pointer_value (w, code);
 		emit_int32 (w, code_size);
 	}
-#if SIZEOF_VOID_P == 8
+#if TARGET_SIZEOF_VOID_P == 8
 	/* Upper 32 bits of code size */
 	emit_int32 (w, 0);
 #endif
@@ -413,7 +420,7 @@ emit_fde (MonoDwarfWriter *w, int fde_index, char *start_symbol, char *end_symbo
 	emit_bytes (w, uw_info, uw_info_len);
 	g_free (uw_info);
 
-	emit_alignment (w, sizeof (mgreg_t));
+	emit_alignment (w, sizeof (target_mgreg_t));
 	emit_label (w, symbol2);
 }
 
@@ -556,15 +563,15 @@ static DwarfBasicType basic_types [] = {
 	{ ".LDIE_U4", "uint", MONO_TYPE_U4, 4, DW_ATE_unsigned },
 	{ ".LDIE_I8", "long", MONO_TYPE_I8, 8, DW_ATE_signed },
 	{ ".LDIE_U8", "ulong", MONO_TYPE_U8, 8, DW_ATE_unsigned },
-	{ ".LDIE_I", "intptr", MONO_TYPE_I, SIZEOF_VOID_P, DW_ATE_signed },
-	{ ".LDIE_U", "uintptr", MONO_TYPE_U, SIZEOF_VOID_P, DW_ATE_unsigned },
+	{ ".LDIE_I", "intptr", MONO_TYPE_I, TARGET_SIZEOF_VOID_P, DW_ATE_signed },
+	{ ".LDIE_U", "uintptr", MONO_TYPE_U, TARGET_SIZEOF_VOID_P, DW_ATE_unsigned },
 	{ ".LDIE_R4", "float", MONO_TYPE_R4, 4, DW_ATE_float },
 	{ ".LDIE_R8", "double", MONO_TYPE_R8, 8, DW_ATE_float },
 	{ ".LDIE_BOOLEAN", "boolean", MONO_TYPE_BOOLEAN, 1, DW_ATE_boolean },
 	{ ".LDIE_CHAR", "char", MONO_TYPE_CHAR, 2, DW_ATE_unsigned_char },
-	{ ".LDIE_STRING", "string", MONO_TYPE_STRING, sizeof (gpointer), DW_ATE_address },
-	{ ".LDIE_OBJECT", "object", MONO_TYPE_OBJECT, sizeof (gpointer), DW_ATE_address },
-	{ ".LDIE_SZARRAY", "object", MONO_TYPE_SZARRAY, sizeof (gpointer), DW_ATE_address },
+	{ ".LDIE_STRING", "string", MONO_TYPE_STRING, sizeof (target_mgreg_t), DW_ATE_address },
+	{ ".LDIE_OBJECT", "object", MONO_TYPE_OBJECT, sizeof (target_mgreg_t), DW_ATE_address },
+	{ ".LDIE_SZARRAY", "object", MONO_TYPE_SZARRAY, sizeof (target_mgreg_t), DW_ATE_address },
 };
 
 /* Constants for encoding line number special opcodes */
@@ -798,6 +805,7 @@ mono_dwarf_writer_emit_base_info (MonoDwarfWriter *w, const char *cu_name, GSLis
 	w->cie_program = base_unwind_program;
 
 	emit_section_change (w, ".debug_abbrev", 0);
+	emit_label (w, ".Ldebug_abbrev_start");
 	emit_dwarf_abbrev (w, ABBREV_COMPILE_UNIT, DW_TAG_compile_unit, TRUE, 
 					   compile_unit_attr, G_N_ELEMENTS (compile_unit_attr));
 	emit_dwarf_abbrev (w, ABBREV_SUBPROGRAM, DW_TAG_subprogram, TRUE, 
@@ -841,8 +849,12 @@ mono_dwarf_writer_emit_base_info (MonoDwarfWriter *w, const char *cu_name, GSLis
 	emit_symbol_diff (w, ".Ldebug_info_end", ".Ldebug_info_begin", 0); /* length */
 	emit_label (w, ".Ldebug_info_begin");
 	emit_int16 (w, 0x2); /* DWARF version 2 */
+#if !defined(TARGET_MACH)
+	emit_symbol (w, ".Ldebug_abbrev_start"); /* .debug_abbrev offset */
+#else
 	emit_int32 (w, 0); /* .debug_abbrev offset */
-	emit_byte (w, sizeof (gpointer)); /* address size */
+#endif
+	emit_byte (w, sizeof (target_mgreg_t)); /* address size */
 
 	/* Compilation unit */
 	emit_uleb128 (w, ABBREV_COMPILE_UNIT);
@@ -931,8 +943,8 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 	if (die)
 		return die;
 
-	if (!((klass->byval_arg.type == MONO_TYPE_CLASS) || (klass->byval_arg.type == MONO_TYPE_OBJECT) || klass->byval_arg.type == MONO_TYPE_GENERICINST || klass->enumtype || (klass->byval_arg.type == MONO_TYPE_VALUETYPE && vtype) ||
-		  (klass->byval_arg.type >= MONO_TYPE_BOOLEAN && klass->byval_arg.type <= MONO_TYPE_R8 && !vtype)))
+	if (!((m_class_get_byval_arg (klass)->type == MONO_TYPE_CLASS) || (m_class_get_byval_arg (klass)->type == MONO_TYPE_OBJECT) || m_class_get_byval_arg (klass)->type == MONO_TYPE_GENERICINST || m_class_is_enumtype (klass) || (m_class_get_byval_arg (klass)->type == MONO_TYPE_VALUETYPE && vtype) ||
+		(m_class_get_byval_arg (klass)->type >= MONO_TYPE_BOOLEAN && m_class_get_byval_arg (klass)->type <= MONO_TYPE_R8 && !vtype)))
 		return NULL;
 
 	/*
@@ -944,10 +956,10 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 	*/
 	if (emit_namespace) {
 		emit_uleb128 (w, ABBREV_NAMESPACE);
-		emit_string (w, klass->name_space);
+		emit_string (w, m_class_get_name_space (klass));
 	}
 
-	full_name = g_strdup_printf ("%s%s%s", klass->name_space, klass->name_space ? "." : "", klass->name);
+	full_name = g_strdup_printf ("%s%s%s", m_class_get_name_space (klass), m_class_get_name_space (klass) ? "." : "", m_class_get_name (klass));
 	/* 
 	 * gdb doesn't support namespaces for non-C++ dwarf objects, so use _
 	 * to separate components.
@@ -965,8 +977,8 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 	g_hash_table_insert (w->class_to_reference_die, klass, reference_die);
 	g_hash_table_insert (cache, klass, die);
 
-	if (klass->enumtype) {
-		int size = mono_class_value_size (mono_class_from_mono_type (mono_class_enum_basetype (klass)), NULL);
+	if (m_class_is_enumtype (klass)) {
+		int size = mono_class_value_size (mono_class_from_mono_type_internal (mono_class_enum_basetype_internal (klass)), NULL);
 
 		emit_label (w, die);
 
@@ -974,14 +986,14 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 		emit_string (w, full_name);
 		emit_uleb128 (w, size);
 		for (k = 0; k < G_N_ELEMENTS (basic_types); ++k)
-			if (basic_types [k].type == mono_class_enum_basetype (klass)->type)
+			if (basic_types [k].type == mono_class_enum_basetype_internal (klass)->type)
 				break;
 		g_assert (k < G_N_ELEMENTS (basic_types));
 		emit_symbol_diff (w, basic_types [k].die_name, ".Ldebug_info_start", 0);
 
 		/* Emit enum values */
 		iter = NULL;
-		while ((field = mono_class_get_fields (klass, &iter))) {
+		while ((field = mono_class_get_fields_internal (klass, &iter))) {
 			const char *p;
 			MonoTypeEnum def_type;
 
@@ -995,7 +1007,7 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 
 			p = mono_class_get_field_default_value (field, &def_type);
 			/* len = */ mono_metadata_decode_blob_size (p, &p);
-			switch (mono_class_enum_basetype (klass)->type) {
+			switch (mono_class_enum_basetype_internal (klass)->type) {
 			case MONO_TYPE_U1:
 			case MONO_TYPE_I1:
 			case MONO_TYPE_BOOLEAN:
@@ -1016,7 +1028,7 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 				break;
 			case MONO_TYPE_I:
 			case MONO_TYPE_U:
-#if SIZEOF_VOID_P == 8
+#if TARGET_SIZEOF_VOID_P == 8
 				emit_sleb128 (w, read64 (p));
 #else
 				emit_sleb128 (w, read32 (p));
@@ -1033,14 +1045,14 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 		guint8 *p;
 		char *parent_die;
 
-		if (klass->parent)
-			parent_die = emit_class_dwarf_info (w, klass->parent, FALSE);
+		if (m_class_get_parent (klass))
+			parent_die = emit_class_dwarf_info (w, m_class_get_parent (klass), FALSE);
 		else
 			parent_die = NULL;
 
 		/* Emit field types */
 		iter = NULL;
-		while ((field = mono_class_get_fields (klass, &iter))) {
+		while ((field = mono_class_get_fields_internal (klass, &iter))) {
 			if (field->type->attrs & FIELD_ATTRIBUTE_STATIC)
 				continue;
 
@@ -1048,13 +1060,13 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 		}
 
 		iter = NULL;
-		has_children = parent_die || mono_class_get_fields (klass, &iter);
+		has_children = parent_die || mono_class_get_fields_internal (klass, &iter);
 
 		emit_label (w, die);
 
 		emit_uleb128 (w, has_children ? ABBREV_STRUCT_TYPE : ABBREV_STRUCT_TYPE_NOCHILDREN);
 		emit_string (w, full_name);
-		emit_uleb128 (w, klass->instance_size);
+		emit_uleb128 (w, m_class_get_instance_size (klass));
 
 		if (parent_die) {
 			emit_uleb128 (w, ABBREV_INHERITANCE);
@@ -1069,7 +1081,7 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 
 		/* Emit fields */
 		iter = NULL;
-		while ((field = mono_class_get_fields (klass, &iter))) {
+		while ((field = mono_class_get_fields_internal (klass, &iter))) {
 			if (field->type->attrs & FIELD_ATTRIBUTE_STATIC)
 				continue;
 
@@ -1081,8 +1093,8 @@ emit_class_dwarf_info (MonoDwarfWriter *w, MonoClass *klass, gboolean vtype)
 				/* location */
 				p = buf;
 				*p ++= DW_OP_plus_uconst;
-				if (klass->valuetype && vtype)
-					encode_uleb128 (field->offset - sizeof (MonoObject), p, &p);
+				if (m_class_is_valuetype (klass) && vtype)
+					encode_uleb128 (field->offset - MONO_ABI_SIZEOF (MonoObject), p, &p);
 				else
 					encode_uleb128 (field->offset, p, &p);
 
@@ -1128,7 +1140,7 @@ static gboolean base_types_emitted [64];
 static const char*
 get_type_die (MonoDwarfWriter *w, MonoType *t)
 {
-	MonoClass *klass = mono_class_from_mono_type (t);
+	MonoClass *klass = mono_class_from_mono_type_internal (t);
 	int j;
 	const char *tdie;
 
@@ -1141,7 +1153,7 @@ get_type_die (MonoDwarfWriter *w, MonoType *t)
 			/* Should return a pointer type to a reference */
 		}
 		// FIXME:
-		t = &mono_defaults.int_class->byval_arg;
+		t = mono_get_int_type ();
 	}
 	for (j = 0; j < G_N_ELEMENTS (basic_types); ++j)
 		if (basic_types [j].type == t->type)
@@ -1158,7 +1170,7 @@ get_type_die (MonoDwarfWriter *w, MonoType *t)
 			tdie = ".LDIE_OBJECT";
 			break;
 		case MONO_TYPE_VALUETYPE:
-			if (klass->enumtype)
+			if (m_class_is_enumtype (klass))
 				tdie = get_class_die (w, klass, FALSE);
 			else
 				tdie = ".LDIE_I4";
@@ -1187,7 +1199,7 @@ get_type_die (MonoDwarfWriter *w, MonoType *t)
 static void
 emit_type (MonoDwarfWriter *w, MonoType *t)
 {
-	MonoClass *klass = mono_class_from_mono_type (t);
+	MonoClass *klass = mono_class_from_mono_type_internal (t);
 	int j;
 	const char *tdie;
 
@@ -1201,7 +1213,7 @@ emit_type (MonoDwarfWriter *w, MonoType *t)
 			emit_class_dwarf_info (w, klass, FALSE);
 		}
 		// FIXME:
-		t = &mono_defaults.int_class->byval_arg;
+		t = mono_get_int_type ();
 	}
 	for (j = 0; j < G_N_ELEMENTS (basic_types); ++j)
 		if (basic_types [j].type == t->type)
@@ -1220,7 +1232,7 @@ emit_type (MonoDwarfWriter *w, MonoType *t)
 		case MONO_TYPE_ARRAY:
 			break;
 		case MONO_TYPE_VALUETYPE:
-			if (klass->enumtype)
+			if (m_class_is_enumtype (klass))
 				emit_class_dwarf_info (w, klass, FALSE);
 			break;
 		case MONO_TYPE_GENERICINST:
@@ -1299,7 +1311,7 @@ static const guint8 *token_handler_ip;
 static char*
 token_handler (MonoDisHelper *dh, MonoMethod *method, guint32 token)
 {
-	MonoError error;
+	ERROR_DECL (error);
 	char *res, *desc;
 	MonoMethod *cmethod;
 	MonoClass *klass;
@@ -1316,10 +1328,10 @@ token_handler (MonoDisHelper *dh, MonoMethod *method, guint32 token)
 		if (method->wrapper_type) {
 			klass = (MonoClass *)data;
 		} else {
-			klass = mono_class_get_checked (method->klass->image, token, &error);
-			g_assert (mono_error_ok (&error)); /* FIXME error handling */
+			klass = mono_class_get_checked (m_class_get_image (method->klass), token, error);
+			g_assert (is_ok (error)); /* FIXME error handling */
 		}
-		res = g_strdup_printf ("<%s>", klass->name);
+		res = g_strdup_printf ("<%s>", m_class_get_name (klass));
 		break;
 	case CEE_NEWOBJ:
 	case CEE_CALL:
@@ -1327,10 +1339,10 @@ token_handler (MonoDisHelper *dh, MonoMethod *method, guint32 token)
 		if (method->wrapper_type) {
 			cmethod = (MonoMethod *)data;
 		} else {
-			MonoError error;
-			cmethod = mono_get_method_checked (method->klass->image, token, NULL, NULL, &error);
+			ERROR_DECL (error);
+			cmethod = mono_get_method_checked (m_class_get_image (method->klass), token, NULL, NULL, error);
 			if (!cmethod)
-				g_error ("Could not load method due to %s", mono_error_get_message (&error)); /* FIXME don't swallow the error */
+				g_error ("Could not load method due to %s", mono_error_get_message (error)); /* FIXME don't swallow the error */
 		}
 		desc = mono_method_full_name (cmethod, TRUE);
 		res = g_strdup_printf ("<%s>", desc);
@@ -1352,8 +1364,8 @@ token_handler (MonoDisHelper *dh, MonoMethod *method, guint32 token)
 		if (method->wrapper_type) {
 			field = (MonoClassField *)data;
 		} else {
-			field = mono_field_from_token_checked (method->klass->image, token, &klass, NULL,  &error);
-			g_assert (mono_error_ok (&error)); /* FIXME error handling */
+			field = mono_field_from_token_checked (m_class_get_image (method->klass), token, &klass, NULL,  error);
+			g_assert (is_ok (error)); /* FIXME error handling */
 		}
 		desc = mono_field_full_name (field);
 		res = g_strdup_printf ("<%s>", desc);
@@ -1377,11 +1389,11 @@ token_handler (MonoDisHelper *dh, MonoMethod *method, guint32 token)
 static char*
 disasm_ins (MonoMethod *method, const guchar *ip, const guint8 **endip)
 {
-	MonoError error;
+	ERROR_DECL (error);
 	char *dis;
 	MonoDisHelper dh;
-	MonoMethodHeader *header = mono_method_get_header_checked (method, &error);
-	mono_error_assert_ok (&error); /* FIXME don't swallow the error */
+	MonoMethodHeader *header = mono_method_get_header_checked (method, error);
+	mono_error_assert_ok (error); /* FIXME don't swallow the error */
 
 	memset (&dh, 0, sizeof (dh));
 	dh.newline = "";
@@ -1396,13 +1408,7 @@ disasm_ins (MonoMethod *method, const guchar *ip, const guint8 **endip)
 
 		switch (ip [1]) {
 		case CEE_MONO_ICALL: {
-			MonoJitICallInfo *info;
-
-			token = read32 (ip + 2);
-			data = mono_method_get_wrapper_data (method, token);
-			info = mono_find_jit_icall_by_addr (data);
-			g_assert (info);
-
+			MonoJitICallInfo const * const info = mono_find_jit_icall_info ((MonoJitICallId)read32 (ip + 2));
 			dis = g_strdup_printf ("IL_%04x: mono_icall <%s>", (int)(ip - header->code), info->name);
 			ip += 6;
 			break;
@@ -1411,7 +1417,7 @@ disasm_ins (MonoMethod *method, const guchar *ip, const guint8 **endip)
 			token = read32 (ip + 2);
 			data = mono_method_get_wrapper_data (method, token);
 
-			dis = g_strdup_printf ("IL_%04x: mono_classconst <%s>", (int)(ip - header->code), ((MonoClass*)data)->name);
+			dis = g_strdup_printf ("IL_%04x: mono_classconst <%s>", (int)(ip - header->code), m_class_get_name ((MonoClass*)data));
 			ip += 6;
 			break;
 		}
@@ -1449,7 +1455,7 @@ il_offset_from_address (MonoMethod *method, MonoDebugMethodJitInfo *jit,
 
 static int max_special_addr_diff = 0;
 
-static inline void
+static void
 emit_advance_op (MonoDwarfWriter *w, int line_diff, int addr_diff)
 {
 	gint64 opcode = 0;
@@ -1496,19 +1502,19 @@ emit_line_number_info (MonoDwarfWriter *w, MonoMethod *method,
 					   guint8 *code, guint32 code_size,
 					   MonoDebugMethodJitInfo *debug_info)
 {
-	MonoError error;
+	ERROR_DECL (error);
 	guint32 prev_line = 0;
 	guint32 prev_native_offset = 0;
 	int i, file_index, il_offset, prev_il_offset;
 	gboolean first = TRUE;
 	MonoDebugSourceLocation *loc;
 	char *prev_file_name = NULL;
-	MonoMethodHeader *header = mono_method_get_header_checked (method, &error);
+	MonoMethodHeader *header = mono_method_get_header_checked (method, error);
 	MonoDebugMethodInfo *minfo;
 	MonoDebugLineNumberEntry *ln_array;
 	int *native_to_il_offset = NULL;
 	
-	mono_error_assert_ok (&error); /* FIXME don't swallow the error */
+	mono_error_assert_ok (error); /* FIXME don't swallow the error */
 
 	if (!w->emit_line) {
 		mono_metadata_free_mh (header);
@@ -1524,7 +1530,7 @@ emit_line_number_info (MonoDwarfWriter *w, MonoMethod *method,
 	ln_array = g_new0 (MonoDebugLineNumberEntry, debug_info->num_line_numbers);
 	memcpy (ln_array, debug_info->line_numbers, debug_info->num_line_numbers * sizeof (MonoDebugLineNumberEntry));
 
-	qsort (ln_array, debug_info->num_line_numbers, sizeof (MonoDebugLineNumberEntry), (int (*)(const void *, const void *))compare_lne);
+	mono_qsort (ln_array, debug_info->num_line_numbers, sizeof (MonoDebugLineNumberEntry), (int (*)(const void *, const void *))compare_lne);
 
 	native_to_il_offset = g_new0 (int, code_size + 1);
 
@@ -1581,11 +1587,11 @@ emit_line_number_info (MonoDwarfWriter *w, MonoMethod *method,
 
 		prev_il_offset = il_offset;
 
-		loc = mono_debug_symfile_lookup_location (minfo, il_offset);
+		loc = mono_debug_method_lookup_location (minfo, il_offset);
 		if (!loc)
 			continue;
 		if (!loc->source_file) {
-			mono_debug_symfile_free_location (loc);
+			mono_debug_free_source_location (loc);
 			continue;
 		}
 
@@ -1596,7 +1602,7 @@ emit_line_number_info (MonoDwarfWriter *w, MonoMethod *method,
 			emit_section_change (w, ".debug_line", 0);
 
 			emit_byte (w, 0);
-			emit_byte (w, sizeof (gpointer) + 1);
+			emit_byte (w, sizeof (target_mgreg_t) + 1);
 			emit_byte (w, DW_LNE_set_address);
 			if (start_symbol)
 				emit_pointer_unaligned (w, start_symbol);
@@ -1633,7 +1639,7 @@ emit_line_number_info (MonoDwarfWriter *w, MonoMethod *method,
 			prev_native_offset = i;
 		}
 
-		mono_debug_symfile_free_location (loc);
+		mono_debug_free_source_location (loc);
 		first = FALSE;
 	}
 
@@ -1669,7 +1675,7 @@ emit_line_number_info (MonoDwarfWriter *w, MonoMethod *method,
 
 		emit_section_change (w, ".debug_line", 0);
 		emit_byte (w, 0);
-		emit_byte (w, sizeof (gpointer) + 1);
+		emit_byte (w, sizeof (target_mgreg_t) + 1);
 		emit_byte (w, DW_LNE_set_address);
 		emit_pointer_value (w, code);
 
@@ -1755,7 +1761,7 @@ void
 mono_dwarf_writer_emit_method (MonoDwarfWriter *w, MonoCompile *cfg, MonoMethod *method, char *start_symbol, char *end_symbol, char *linkage_name,
 							   guint8 *code, guint32 code_size, MonoInst **args, MonoInst **locals, GSList *unwind_info, MonoDebugMethodJitInfo *debug_info)
 {
-	MonoError error;
+	ERROR_DECL (error);
 	char *name;
 	MonoMethodSignature *sig;
 	MonoMethodHeader *header;
@@ -1769,26 +1775,26 @@ mono_dwarf_writer_emit_method (MonoDwarfWriter *w, MonoCompile *cfg, MonoMethod 
 
 	emit_section_change (w, ".debug_info", 0);
 
-	sig = mono_method_signature (method);
-	header = mono_method_get_header_checked (method, &error);
-	mono_error_assert_ok (&error); /* FIXME don't swallow the error */
+	sig = mono_method_signature_internal (method);
+	header = mono_method_get_header_checked (method, error);
+	mono_error_assert_ok (error); /* FIXME don't swallow the error */
 
 	/* Parameter types */
 	for (i = 0; i < sig->param_count + sig->hasthis; ++i) {
 		MonoType *t;
 
 		if (i == 0 && sig->hasthis) {
-			if (method->klass->valuetype)
-				t = &method->klass->this_arg;
+			if (m_class_is_valuetype (method->klass))
+				t = m_class_get_this_arg (method->klass);
 			else
-				t = &method->klass->byval_arg;
+				t = m_class_get_byval_arg (method->klass);
 		} else {
 			t = sig->params [i - sig->hasthis];
 		}
 
 		emit_type (w, t);
 	}
-	//emit_type (w, &mono_defaults.int32_class->byval_arg);
+	//emit_type (w, mono_get_int32_type ());
 
 	/* Local types */
 	for (i = 0; i < header->num_locals; ++i) {
@@ -1797,7 +1803,7 @@ mono_dwarf_writer_emit_method (MonoDwarfWriter *w, MonoCompile *cfg, MonoMethod 
 
 	minfo = mono_debug_lookup_method (method);
 	if (minfo)
-		loc = mono_debug_symfile_lookup_location (minfo, 0);
+		loc = mono_debug_method_lookup_location (minfo, 0);
 
 	/* Subprogram */
 	names = g_new0 (char *, sig->param_count);
@@ -1818,7 +1824,7 @@ mono_dwarf_writer_emit_method (MonoDwarfWriter *w, MonoCompile *cfg, MonoMethod 
 		emit_uleb128 (w, file_index + 1);
 		emit_uleb128 (w, loc->row);
 
-		mono_debug_symfile_free_location (loc);
+		mono_debug_free_source_location (loc);
 		loc = NULL;
 	} else {
 		emit_uleb128 (w, 0);
@@ -1854,10 +1860,10 @@ mono_dwarf_writer_emit_method (MonoDwarfWriter *w, MonoCompile *cfg, MonoMethod 
 			need_loclist = TRUE;
 
 		if (i == 0 && sig->hasthis) {
-			if (method->klass->valuetype)
-				t = &method->klass->this_arg;
+			if (m_class_is_valuetype (method->klass))
+				t = m_class_get_this_arg (method->klass);
 			else
-				t = &method->klass->byval_arg;
+				t = m_class_get_byval_arg (method->klass);
 			pname = "this";
 		} else {
 			t = sig->params [i - sig->hasthis];
@@ -1873,7 +1879,7 @@ mono_dwarf_writer_emit_method (MonoDwarfWriter *w, MonoCompile *cfg, MonoMethod 
 		emit_string (w, pname);
 		/* type */
 		if (!arg || arg->flags & MONO_INST_IS_DEAD)
-			emit_var_type (w, &mono_defaults.int32_class->byval_arg);
+			emit_var_type (w, mono_get_int32_type ());
 		else
 			emit_var_type (w, t);
 
@@ -1930,7 +1936,7 @@ mono_dwarf_writer_emit_method (MonoDwarfWriter *w, MonoCompile *cfg, MonoMethod 
 		}
 		/* type */
 		if (!ins || ins->flags & MONO_INST_IS_DEAD)
-			emit_var_type (w, &mono_defaults.int32_class->byval_arg);
+			emit_var_type (w, mono_get_int32_type ());
 		else
 			emit_var_type (w, header->locals [i]);
 
@@ -2002,4 +2008,9 @@ mono_dwarf_writer_emit_trampoline (MonoDwarfWriter *w, const char *tramp_name, c
 	emit_fde (w, w->fde_index, start_symbol, end_symbol, code, code_size, unwind_info, FALSE);
 	w->fde_index ++;
 }
+
+#else /* !defined(DISABLE_AOT) && !defined(DISABLE_JIT) */
+
+MONO_EMPTY_SOURCE_FILE (dwarfwriter);
+
 #endif /* End of: !defined(DISABLE_AOT) && !defined(DISABLE_JIT) */

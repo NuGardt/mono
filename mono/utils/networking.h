@@ -1,5 +1,6 @@
-/*
- * networking.h: Portable networking functions
+/**
+ * \file
+ * Portable networking functions
  *
  * Author:
  *	Rodrigo Kumpera (kumpera@gmail.com)
@@ -42,6 +43,7 @@ typedef enum {
 	MONO_HINT_IPV6				= 2,
 	MONO_HINT_CANONICAL_NAME	= 4,
 	MONO_HINT_CONFIGURED_ONLY	= 8,
+	MONO_HINT_NUMERIC_HOST      = 16,
 } MonoGetAddressHints;
 
 typedef struct _MonoAddressEntry MonoAddressEntry;
@@ -53,7 +55,9 @@ struct _MonoAddressEntry {
 	int address_len;
 	union {
 		struct in_addr v4;
+#ifdef HAVE_STRUCT_SOCKADDR_IN6
 		struct in6_addr v6;
+#endif
 	} address;
 	const char *canonical_name;
 	MonoAddressEntry *next;
@@ -66,7 +70,9 @@ typedef struct {
 
 typedef union {
 	struct sockaddr_in v4;
+#ifdef HAVE_STRUCT_SOCKADDR_IN6
 	struct sockaddr_in6 v6;
+#endif
 	struct sockaddr addr;
 } MonoSocketAddress;
 
@@ -74,7 +80,9 @@ typedef struct {
 	int family;
 	union {
 		struct in_addr v4;
+#ifdef HAVE_STRUCT_SOCKADDR_IN6
 		struct in6_addr v6;
+#endif
 	} addr;
 } MonoAddress;
 

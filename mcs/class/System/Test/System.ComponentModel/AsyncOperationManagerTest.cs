@@ -18,6 +18,7 @@ using NUnit.Framework;
 namespace MonoTests.System.ComponentModel
 {
 	[TestFixture]
+	[NUnit.Framework.CategoryAttribute ("NotWasm")]
 	public class AsyncOperationManagerTest
 	{
 		[Test]
@@ -26,7 +27,7 @@ namespace MonoTests.System.ComponentModel
 			SynchronizationContext sc1 = new SynchronizationContext ();
 			SynchronizationContext sc2 = new SynchronizationContext ();
 
-#if MOBILE && !MONODROID
+#if MONOTOUCH
 			Assert.IsNotNull (SynchronizationContext.Current, "A1");
 #else
 			Assert.IsNull (SynchronizationContext.Current, "A1");

@@ -1,3 +1,5 @@
+../../test-helpers/NunitHelpers.cs
+../../test-helpers/TestResourceHelper.cs
 ../../../build/common/Consts.cs
 System.Windows.Forms/ApplicationTest.cs
 System.Windows.Forms/AutoCompleteStringCollectionTest.cs
@@ -24,6 +26,7 @@ System.Windows.Forms/Common.cs
 System.Windows.Forms/CommonDialogsTest.cs
 System.Windows.Forms/ContainerControlTest.cs
 System.Windows.Forms/ContextMenuTest.cs
+System.Windows.Forms/ContextMenuStripTest.cs
 System.Windows.Forms/ControlBindingsCollectionTest.cs
 System.Windows.Forms/ControlBindingsConverterTest.cs
 System.Windows.Forms/ControlCollectionTest.cs
@@ -123,8 +126,10 @@ System.Windows.Forms/PaintEventArgsTest.cs
 System.Windows.Forms/PanelTest.cs
 System.Windows.Forms/PictureBoxTest.cs
 System.Windows.Forms/PrintDialogTest.cs
+System.Windows.Forms/PrintPreviewControlTest.cs
 System.Windows.Forms/ProgressBarTest.cs
 System.Windows.Forms/PropertyGridTest.cs
+System.Windows.Forms/PropertyGrid_GridEntryTest.cs
 System.Windows.Forms/PropertyManagerTest.cs
 System.Windows.Forms/RadioButtonTest.cs
 System.Windows.Forms/RowStyleTest.cs

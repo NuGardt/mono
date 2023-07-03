@@ -10,9 +10,9 @@ using System;
 using System.IO;
 using System.Xml;
 using NUnit.Framework;
-#if NET_4_5
 using System.Reflection;
-#endif
+
+using MonoTests.Helpers;
 
 namespace MonoTests.System.Xml
 {
@@ -30,7 +30,7 @@ namespace MonoTests.System.Xml
 		[Test]
 		public void FileUri ()
 		{
-			Uri resolved = resolver.ResolveUri (null, "Test/XmlFiles/xsd/xml.xsd");
+			Uri resolved = resolver.ResolveUri (null, TestResourceHelper.GetFullPathOfResource ("Test/XmlFiles/xsd/xml.xsd"));
 			Assert.AreEqual ("file", resolved.Scheme);
 			Stream s = resolver.GetEntity (resolved, null, typeof (Stream)) as Stream;
 		}
@@ -54,7 +54,7 @@ namespace MonoTests.System.Xml
 		[Test]
 		public void HttpUri2 ()
 		{
-			Assert.AreEqual (resolver.ResolveUri (new Uri ("http://go-mono.com"), null).ToString (), "http://go-mono.com/");
+			Assert.AreEqual (resolver.ResolveUri (new Uri ("http://example.com"), null).ToString (), "http://example.com/");
 		}
 
 		[Test]
@@ -70,7 +70,7 @@ namespace MonoTests.System.Xml
 //		[Test] Uncomment if you want to test.
 		public void GetEntityWithNullArgs ()
 		{
-			Uri uri = new Uri ("http://www.go-mono.com/index.rss");
+			Uri uri = new Uri ("http://www.example.com/index.rss");
 			resolver.GetEntity (uri, null, null);
 		}
 
@@ -85,7 +85,7 @@ namespace MonoTests.System.Xml
 		[ExpectedException (typeof (XmlException))]
 		public void GetEntityWithNonStreamReturnType ()
 		{
-			resolver.GetEntity (new Uri ("http://www.go-mono.com/"), null, typeof (File));
+			resolver.GetEntity (new Uri ("http://www.example.com/"), null, typeof (File));
 		}
 
 		[Test] // bug #998
@@ -98,8 +98,8 @@ namespace MonoTests.System.Xml
 			Assert.AreEqual ("view:Standard.xslt", uri.AbsoluteUri, "#2");
 		}
 
-#if NET_4_5
 		[Test]
+		[Category ("StaticLinkedAotNotWorking")] // Can't find .dll files when bundled in .exe
 		public void TestAsync ()
 		{
 			var loc = Assembly.GetExecutingAssembly ().Location;
@@ -126,6 +126,5 @@ namespace MonoTests.System.Xml
 				Assert.IsTrue (ex is XmlException);
 			}
 		}
-#endif
 	}
 }

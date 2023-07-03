@@ -26,7 +26,6 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if NET_4_5
 
 using System;
 using System.Collections.Generic;
@@ -125,6 +124,7 @@ namespace MonoTests.System.Runtime.CompilerServices
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void OnCompleted_2 ()
 		{
 			TaskScheduler scheduler = null;
@@ -165,6 +165,7 @@ namespace MonoTests.System.Runtime.CompilerServices
 		}
 
 		[Test]
+		[Category ("MultiThreaded")]
 		public void OnCompleted_4 ()
 		{
 			SynchronizationContext context_ran = null;
@@ -183,4 +184,3 @@ namespace MonoTests.System.Runtime.CompilerServices
 	}
 }
 
-#endif

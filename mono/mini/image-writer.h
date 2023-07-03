@@ -1,5 +1,6 @@
-/*
- * image-writer.h: Creation of object files or assembly files using the same interface.
+/**
+ * \file
+ * Creation of object files or assembly files using the same interface.
  *
  * Author:
  *   Dietmar Maurer (dietmar@ximian.com);
@@ -20,6 +21,31 @@
 #include <mono/utils/mono-compiler.h>
 
 typedef struct _MonoImageWriter MonoImageWriter;
+
+#if defined(TARGET_AMD64) && !defined(HOST_WIN32) && !defined(__APPLE__)
+#define USE_ELF_WRITER 1
+#define USE_ELF_RELA 1
+#endif
+
+#if defined(TARGET_X86) && !defined(HOST_WIN32) && !defined(__APPLE__)
+#define USE_ELF_WRITER 1
+#endif
+
+#if defined(TARGET_ARM) && !defined(TARGET_MACH) && !defined(HOST_WIN32)
+//#define USE_ELF_WRITER 1
+#endif
+
+#if defined(__mips__)
+#define USE_ELF_WRITER 1
+#endif
+
+#if defined(TARGET_X86) && defined(__APPLE__)
+//#define USE_MACH_WRITER
+#endif
+
+#if defined(USE_ELF_WRITER) || defined(USE_MACH_WRITER)
+#define USE_BIN_WRITER 1
+#endif
 
 /* Relocation types */
 #define R_ARM_CALL 28
@@ -64,10 +90,6 @@ void mono_img_writer_emit_alignment (MonoImageWriter *w, int size);
 
 void mono_img_writer_emit_alignment_fill (MonoImageWriter *w, int size, int fill);
 
-#ifdef __native_client_codegen__
-void mono_img_writer_emit_nacl_call_alignment (MonoImageWriter *w);
-#endif
-
 void mono_img_writer_emit_pointer_unaligned (MonoImageWriter *w, const char *target);
 
 void mono_img_writer_emit_pointer (MonoImageWriter *w, const char *target);
@@ -75,6 +97,8 @@ void mono_img_writer_emit_pointer (MonoImageWriter *w, const char *target);
 void mono_img_writer_emit_int16 (MonoImageWriter *w, int value);
 
 void mono_img_writer_emit_int32 (MonoImageWriter *w, int value);
+
+void mono_img_writer_emit_symbol (MonoImageWriter *w, const char *symbol);
 
 void mono_img_writer_emit_symbol_diff (MonoImageWriter *w, const char *end, const char* start, int offset);
 

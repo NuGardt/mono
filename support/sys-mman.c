@@ -13,19 +13,25 @@
 #define _XOPEN_SOURCE 600
 #endif
 
-#ifdef PLATFORM_MACOSX
+#ifdef HOST_DARWIN
 /* For mincore () */
 #define _DARWIN_C_SOURCE
 #endif
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(__OpenBSD__)
 /* For mincore () */
 #define __BSD_VISIBLE 1
+#endif
+
+#ifdef __NetBSD__
+/* For mincore () */
+#define _NETBSD_SOURCE
 #endif
 
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <errno.h>
 
+#include "mono/utils/mono-compiler.h"
 #include "map.h"
 #include "mph.h"
 
@@ -83,17 +89,25 @@ Mono_Posix_Syscall_msync (void *start, mph_size_t len, int flags)
 int
 Mono_Posix_Syscall_mlock (void *start, mph_size_t len)
 {
+#if !defined (HAVE_MLOCK)
+	return ENOSYS;
+#else
 	mph_return_if_size_t_overflow (len);
 
 	return mlock (start, (size_t) len);
+#endif
 }
 
 int
 Mono_Posix_Syscall_munlock (void *start, mph_size_t len)
 {
+#if !defined (HAVE_MUNLOCK)
+	return ENOSYS;
+#else
 	mph_return_if_size_t_overflow (len);
 
 	return munlock (start, (size_t) len);
+#endif
 }
 
 #ifdef HAVE_MREMAP
@@ -109,17 +123,33 @@ Mono_Posix_Syscall_mremap (void *old_address, mph_size_t old_size,
 	if (Mono_Posix_FromMremapFlags (flags, &_flags) == -1)
 		return MAP_FAILED;
 
+#if defined(linux)
 	return mremap (old_address, (size_t) old_size, (size_t) new_size,
 			(unsigned long) _flags);
+#elif defined(__NetBSD__)
+	return mremap (old_address, (size_t) old_size, old_address,
+			(size_t) new_size, (unsigned long) _flags);
+#else
+#error Port me
+#endif
 }
 #endif /* def HAVE_MREMAP */
 
 int
 Mono_Posix_Syscall_mincore (void *start, mph_size_t length, unsigned char *vec)
 {
+#if !defined (HAVE_MINCORE)
+	return ENOSYS;
+#else
 	mph_return_if_size_t_overflow (length);
 
-	return mincore (start, (size_t) length, (void*)vec);
+#if defined (__linux__) || defined (HOST_WASM)
+	typedef unsigned char T;
+#else
+	typedef char T;
+#endif
+	return mincore (start, (size_t) length, (T*)vec);
+#endif
 }
 
 #ifdef HAVE_POSIX_MADVISE
@@ -153,6 +183,48 @@ Mono_Posix_Syscall_remap_file_pages (void *start, mph_size_t size,
 	return remap_file_pages (start, (size_t) size, _prot, (ssize_t) pgoff, _flags);
 }
 #endif /* def HAVE_REMAP_FILE_PAGES */
+
+// This has to be kept in sync with Syscall.cs
+enum Mono_Posix_MremapFlags {
+	Mono_Posix_MremapFlags_MREMAP_MAYMOVE       = 0x0000000000000001,
+};
+
+// Mono_Posix_FromMremapFlags() and Mono_Posix_ToMremapFlags() are not in map.c because NetBSD needs special treatment for MREMAP_MAYMOVE
+int Mono_Posix_FromMremapFlags (guint64 x, guint64 *r)
+{
+	*r = 0;
+#ifndef __NetBSD__
+	if ((x & Mono_Posix_MremapFlags_MREMAP_MAYMOVE) == Mono_Posix_MremapFlags_MREMAP_MAYMOVE)
+#ifdef MREMAP_MAYMOVE
+		*r |= MREMAP_MAYMOVE;
+#else /* def MREMAP_MAYMOVE */
+		{errno = EINVAL; return -1;}
+#endif /* ndef MREMAP_MAYMOVE */
+#else /* def __NetBSD__ */
+	if ((x & Mono_Posix_MremapFlags_MREMAP_MAYMOVE) != Mono_Posix_MremapFlags_MREMAP_MAYMOVE)
+		*r = MAP_FIXED;
+#endif /* def __NetBSD__ */
+	if (x == 0)
+		return 0;
+	return 0;
+}
+
+int Mono_Posix_ToMremapFlags (guint64 x, guint64 *r)
+{
+	*r = 0;
+#ifndef __NetBSD__
+	if (x == 0)
+		return 0;
+#ifdef MREMAP_MAYMOVE
+	if ((x & MREMAP_MAYMOVE) == MREMAP_MAYMOVE)
+		*r |= Mono_Posix_MremapFlags_MREMAP_MAYMOVE;
+#endif /* ndef MREMAP_MAYMOVE */
+#else /* def __NetBSD__ */
+	if ((x & MAP_FIXED) != MAP_FIXED)
+		*r |= Mono_Posix_MremapFlags_MREMAP_MAYMOVE;
+#endif
+	return 0;
+}
 
 G_END_DECLS
 

@@ -21,7 +21,9 @@ namespace System.Runtime.InteropServices {
 using System;
 using System.Reflection;
 using System.Threading;
+#if !MONO
 using System.Security.Permissions;
+#endif
 using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.IO;
@@ -137,7 +139,7 @@ using System.Runtime.Versioning;
 // methods have a link demand to ensure untrusted code cannot directly edit
 // or alter a handle.
 [System.Security.SecurityCritical]  // auto-generated_required
-#if !FEATURE_CORECLR
+#if !FEATURE_CORECLR && !MONO
 [SecurityPermission(SecurityAction.InheritanceDemand, UnmanagedCode=true)]
 #endif
 public abstract partial class SafeHandle : CriticalFinalizerObject, IDisposable
@@ -224,7 +226,9 @@ public abstract partial class SafeHandle : CriticalFinalizerObject, IDisposable
     //     untrusted caller can query data on the handle you've just returned
     //     and get back information for an entirely unrelated resource).
     [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
+#if !MONO
     [ResourceExposure(ResourceScope.None)]
+#endif
     public IntPtr DangerousGetHandle()
     {
         return handle;
@@ -276,7 +280,7 @@ public abstract partial class SafeHandle : CriticalFinalizerObject, IDisposable
     [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
     [MethodImplAttribute(MethodImplOptions.InternalCall)]
     public extern void SetHandleAsInvalid();
-
+#endif
     // Implement this abstract method in your derived class to specify how to
     // free the handle. Be careful not write any code that's subject to faults
     // in this method (the runtime will prepare the infrastructure for you so
@@ -287,7 +291,7 @@ public abstract partial class SafeHandle : CriticalFinalizerObject, IDisposable
     // MDA is enabled.
     [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
     protected abstract bool ReleaseHandle();
-
+#if !MONO
     // Add a reason why this handle should not be relinquished (i.e. have
     // ReleaseHandle called on it). This method has dangerous in the name since
     // it must always be used carefully (e.g. called within a CER) to avoid

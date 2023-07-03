@@ -568,8 +568,8 @@ namespace System.Windows.Forms
 			ShowShortcut = itemSrc.ShowShortcut;
 			Text = itemSrc.Text;
 			Visible = itemSrc.Visible;
-			Name = itemSrc.Name;
-			Tag = itemSrc.Tag;
+			// Name and Tag are not cloned
+			Name = "";
 
 			// Events
 			Events[ClickEvent] = itemSrc.Events[ClickEvent];
@@ -656,7 +656,7 @@ namespace System.Windows.Forms
 
 		public override string ToString ()
 		{
-			return base.ToString () + ", Items.Count: " + MenuItems.Count + ", Text: " + text;
+			return base.ToString () + ", Text: " + text;
 		}
 
 		#endregion Public Methods

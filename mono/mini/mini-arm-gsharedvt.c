@@ -1,5 +1,6 @@
-/*
- * mini-arm-gsharedvt.c: gsharedvt support code for arm
+/**
+ * \file
+ * gsharedvt support code for arm
  *
  * Authors:
  *   Zoltan Varga <vargaz@gmail.com>
@@ -23,8 +24,6 @@
 
 #ifdef MONO_ARCH_GSHAREDVT_SUPPORTED
 
-#define ALIGN_TO(val,align) ((((guint64)val) + ((align) - 1)) & ~((align) - 1))
-
 /*
  * GSHAREDVT
  */
@@ -39,20 +38,20 @@ mono_arch_gsharedvt_sig_supported (MonoMethodSignature *sig)
 	return TRUE;
 }
 
-static inline void
+static void
 add_to_map (GPtrArray *map, int src, int dst)
 {
 	g_ptr_array_add (map, GUINT_TO_POINTER (src));
 	g_ptr_array_add (map, GUINT_TO_POINTER (dst));
 }
 
-static inline int
+static int
 map_reg (int reg)
 {
 	return reg;
 }
 
-static inline int
+static int
 map_stack_slot (int slot)
 {
 	return slot + 4;
@@ -121,6 +120,7 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 	MonoMethodSignature *caller_sig, *callee_sig;
 	int aindex, i;
 	gboolean var_ret = FALSE;
+	gboolean have_fregs = FALSE;
 	CallInfo *cinfo, *gcinfo;
 	MonoMethodSignature *sig, *gsig;
 	GPtrArray *map;
@@ -191,6 +191,11 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 		int *src = NULL, *dst = NULL;
 		int nsrc, ndst, nslots, src_slot, arg_marshal;
 
+		if (ainfo->storage == RegTypeFP || ainfo2->storage == RegTypeFP) {
+			have_fregs = TRUE;
+			continue;
+		}
+
 		/*
 		 * The src descriptor looks like this:
 		 * - 4 bits src slot
@@ -209,20 +214,19 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 			if (ainfo->storage == RegTypeGSharedVtInReg)
 				src_slot = map_reg (ainfo->reg);
 			else
-				src_slot = map_stack_slot (ainfo->offset / 4);
+				src_slot = map_stack_slot (ainfo->offset / sizeof (target_mgreg_t));
 			g_assert (ndst < 256);
-			g_assert (src_slot < 16);
-			src [0] = (ndst << 4) | src_slot;
+			g_assert (src_slot < 256);
+			src [0] = (ndst << 8) | src_slot;
 
-			if (ainfo2->storage == RegTypeGeneral && ainfo2->size != 0 && ainfo2->size != 4) {
+			if (ainfo2->storage == RegTypeGeneral && ainfo2->size != 0 && ainfo2->size != sizeof (target_mgreg_t)) {
 				/* Have to load less than 4 bytes */
-				// FIXME: Signed types
 				switch (ainfo2->size) {
 				case 1:
-					arg_marshal = GSHAREDVT_ARG_BYREF_TO_BYVAL_U1;
+					arg_marshal = ainfo2->is_signed ? GSHAREDVT_ARG_BYREF_TO_BYVAL_I1 : GSHAREDVT_ARG_BYREF_TO_BYVAL_U1;
 					break;
 				case 2:
-					arg_marshal = GSHAREDVT_ARG_BYREF_TO_BYVAL_U2;
+					arg_marshal = ainfo2->is_signed ? GSHAREDVT_ARG_BYREF_TO_BYVAL_I2 : GSHAREDVT_ARG_BYREF_TO_BYVAL_U2;
 					break;
 				default:
 					g_assert_not_reached ();
@@ -245,12 +249,12 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 			arg_marshal = GSHAREDVT_ARG_BYVAL_TO_BYREF;
 			ndst = 1;
 			dst = g_new0 (int, 1);
-			dst [0] = map_stack_slot (ainfo2->offset / 4);
+			dst [0] = map_stack_slot (ainfo2->offset / sizeof (target_mgreg_t));
 		} else {
 			ndst = get_arg_slots (ainfo2, &dst);
 		}
 		if (nsrc)
-			src [0] |= (arg_marshal << 16);
+			src [0] |= (arg_marshal << 24);
 		nslots = MIN (nsrc, ndst);
 
 		for (i = 0; i < nslots; ++i)
@@ -298,11 +302,17 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 			info->ret_marshal = GSHAREDVT_RET_IREGS;
 			break;
 		case RegTypeFP:
-			// FIXME: VFP
-			if (cinfo->ret.size == 4)
-				info->ret_marshal = GSHAREDVT_RET_IREG;
-			else
-				info->ret_marshal = GSHAREDVT_RET_IREGS;
+			if (mono_arm_is_hard_float ()) {
+				if (cinfo->ret.size == 4)
+					info->ret_marshal = GSHAREDVT_RET_VFP_R4;
+				else
+					info->ret_marshal = GSHAREDVT_RET_VFP_R8;
+			} else {
+				if (cinfo->ret.size == sizeof (target_mgreg_t))
+					info->ret_marshal = GSHAREDVT_RET_IREG;
+				else
+					info->ret_marshal = GSHAREDVT_RET_IREGS;
+			}
 			break;
 		case RegTypeStructByAddr:
 			info->ret_marshal = GSHAREDVT_RET_NONE;
@@ -314,14 +324,14 @@ mono_arch_get_gsharedvt_call_info (gpointer addr, MonoMethodSignature *normal_si
 
 	if (gsharedvt_in && var_ret && caller_cinfo->ret.storage != RegTypeStructByAddr) {
 		/* Allocate stack space for the return value */
-		info->vret_slot = map_stack_slot (info->stack_usage / sizeof (gpointer));
-		info->stack_usage += mono_type_stack_size_internal (normal_sig->ret, NULL, FALSE) + sizeof (gpointer);
+		info->vret_slot = map_stack_slot (info->stack_usage / sizeof (target_mgreg_t));
+		info->stack_usage += mono_type_stack_size_internal (normal_sig->ret, NULL, FALSE) + sizeof (target_mgreg_t);
 	}
 
 	info->stack_usage = ALIGN_TO (info->stack_usage, MONO_ARCH_FRAME_ALIGNMENT);
-
-	g_free (caller_cinfo);
-	g_free (callee_cinfo);
+	info->caller_cinfo = caller_cinfo;
+	info->callee_cinfo = callee_cinfo;
+	info->have_fregs = have_fregs;
 
 	return info;
 }

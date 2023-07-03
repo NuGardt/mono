@@ -1,5 +1,6 @@
-/*
- * parse.c: Parsing for GC options.
+/**
+ * \file
+ * Parsing for GC options.
  *
  * Copyright (C) 2015 Xamarin Inc
  *
@@ -10,6 +11,7 @@
 #include <glib.h>
 #include <string.h>
 #include <errno.h>
+#include <mono/utils/mono-errno.h>
 #include <ctype.h>
 #include <stdlib.h>
 
@@ -17,14 +19,11 @@
 
 /**
  * mono_gc_parse_environment_string_extract_number:
- *
- * @str: points to the first digit of the number
- * @out: pointer to the variable that will receive the value
- *
+ * \param str points to the first digit of the number
+ * \param out pointer to the variable that will receive the value
  * Tries to extract a number from the passed string, taking in to account m, k
  * and g suffixes
- *
- * Returns true if passing was successful
+ * \returns TRUE if passing was successful
  */
 gboolean
 mono_gc_parse_environment_string_extract_number (const char *str, size_t *out)
@@ -58,7 +57,7 @@ mono_gc_parse_environment_string_extract_number (const char *str, size_t *out)
 			break;
 	}
 
-	errno = 0;
+	mono_set_errno (0);
 	val = strtol (str, &endptr, 10);
 
 	if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN))

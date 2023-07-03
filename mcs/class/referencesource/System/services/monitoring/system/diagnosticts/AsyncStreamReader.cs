@@ -19,8 +19,9 @@ namespace System.Diagnostics {
     using System.IO;
     using System.Text;
     using System.Runtime.InteropServices;
-    using System.Threading;    
-    using System.Collections;    
+    using System.Threading;
+    using System.Collections;
+    using Microsoft.Win32.SafeHandles;
         
     internal delegate void UserCallBack(String data);
  
@@ -41,8 +42,10 @@ namespace System.Diagnostics {
         // a user's char[] directly, instead of our internal char[].
         private int _maxCharsPerBuffer;
 
+#pragma warning disable 414
         // Store a backpointer to the process class, to check for user callbacks
         private Process process;
+#pragma warning restore
 
         // Delegate to call user function.
         private UserCallBack userCallBack;
@@ -56,7 +59,12 @@ namespace System.Diagnostics {
 
         // Cache the last position scanned in sb when searching for lines.
         private int currentLinePos;
-		
+#if MONO
+        //users to coordinate between Dispose and ReadBuffer
+        private object syncObject = new Object ();
+        private IAsyncResult asyncReadResult = null;
+#endif
+
         internal AsyncStreamReader(Process process, Stream stream, UserCallBack callback, Encoding encoding) 
             : this(process, stream, callback, encoding, DefaultBufferSize) {
         }
@@ -104,9 +112,35 @@ namespace System.Diagnostics {
 
         protected virtual void Dispose(bool disposing)
         {
+#if MONO
+            lock (syncObject) {
+#endif
             if (disposing) {
-                if (stream != null)
+                if (stream != null) {
+#if MONO
+                    if (asyncReadResult != null && !asyncReadResult.IsCompleted) {
+                        // Closing underlying stream when having pending async read request in progress is
+                        // not portable and racy by design. Try to cancel pending async read before closing stream.
+                        // We are still holding lock that will prevent new async read requests to queue up
+                        // before we have closed and invalidated the stream.
+                        if (stream is FileStream) {
+                            SafeHandle tmpStreamHandle = ((FileStream)stream).SafeFileHandle;
+                            while (!asyncReadResult.IsCompleted) {
+                                MonoIOError error;
+                                if (!MonoIO.Cancel (tmpStreamHandle, out error) && error == MonoIOError.ERROR_NOT_SUPPORTED) {
+                                    // Platform don't support canceling pending IO requests on stream. If an async pending read
+                                    // is still in flight when closing stream, it could trigger a race condition.
+                                    break;
+                                }
+
+                                // Wait for a short time for pending async read to cancel/complete/fail.
+                                asyncReadResult.AsyncWaitHandle.WaitOne (200);
+                            }
+                        }
+                    }
+#endif
                     stream.Close();
+                }
             }
             if (stream != null) {
                 stream = null;
@@ -120,6 +154,9 @@ namespace System.Diagnostics {
                 eofEvent.Close();
                 eofEvent = null;
             }
+#if MONO
+            }
+#endif
         }
         
         public virtual Encoding CurrentEncoding {
@@ -138,7 +175,11 @@ namespace System.Diagnostics {
             
             if( sb == null ) {
                 sb = new StringBuilder(DefaultBufferSize);
+#if MONO
+                asyncReadResult = stream.BeginRead (byteBuffer, 0 , byteBuffer.Length,  new AsyncCallback (ReadBuffer), null);
+#else
                 stream.BeginRead(byteBuffer, 0 , byteBuffer.Length,  new AsyncCallback(ReadBuffer), null);
+#endif
             }
             else {
                 FlushMessageQueue();
@@ -155,7 +196,18 @@ namespace System.Diagnostics {
             int byteLen;
             
             try {
+#if MONO
+                lock (syncObject) {
+                    Debug.Assert (ar.IsCompleted);
+                    asyncReadResult = null;
+                    if (this.stream == null)
+                        byteLen = 0;
+                    else
+                        byteLen = stream.EndRead (ar);
+                }
+#else
                 byteLen = stream.EndRead(ar);
+#endif
             }
             catch (IOException ) {
                 // We should ideally consume errors from operations getting cancelled
@@ -171,6 +223,9 @@ namespace System.Diagnostics {
                 byteLen = 0; // Treat this as EOF
             }
                 
+#if MONO
+retry_dispose:
+#endif
             if (byteLen == 0) { 
                 // We're at EOF, we won't call this function again from here on.
                 lock(messageQueue) {
@@ -186,13 +241,45 @@ namespace System.Diagnostics {
                     FlushMessageQueue();
                 }
                 finally {
+#if MONO
+                    lock (syncObject) {
+                        if (eofEvent != null) {
+                            try {
+                                eofEvent.Set ();
+                            } catch (System.ObjectDisposedException) {
+                                // This races with Dispose, it's safe to ignore the error as it comes from a SafeHandle doing its job
+                            }
+                        }
+                    }
+#else
                     eofEvent.Set();
+#endif
                 }
             } else {
+#if MONO
+                lock (syncObject) {
+                    if (decoder == null) { //we got disposed after the EndRead, retry as Diposed
+                        byteLen = 0;
+                        goto retry_dispose;
+                    }
+#endif
                 int charLen = decoder.GetChars(byteBuffer, 0, byteLen, charBuffer, 0);
                 sb.Append(charBuffer, 0, charLen);
+#if MONO
+                }
+#endif
                 GetLinesFromStringBuilder();
+#if MONO
+                lock (syncObject) {
+                    if (stream == null) { //we got disposed after the EndRead, retry as Diposed
+                        byteLen = 0;
+                        goto retry_dispose;
+                    }
+                    asyncReadResult = stream.BeginRead (byteBuffer, 0 , byteBuffer.Length,  new AsyncCallback(ReadBuffer), null);
+                }
+#else
                 stream.BeginRead(byteBuffer, 0 , byteBuffer.Length,  new AsyncCallback(ReadBuffer), null);
+#endif
             }
         }
         

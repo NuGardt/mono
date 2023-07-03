@@ -1,5 +1,6 @@
-/*
- * helpers.c: Assorted routines
+/**
+ * \file
+ * Assorted routines
  *
  * (C) 2003 Ximian, Inc.
  */
@@ -25,7 +26,7 @@
 #undef MINI_OP3
 #endif
 
-#ifdef HAVE_ARRAY_ELEM_INIT
+// This, instead of an array of pointers, to optimize away a pointer and a relocation per string.
 #define MSGSTRFIELD(line) MSGSTRFIELD1(line)
 #define MSGSTRFIELD1(line) str##line
 static const struct msgstr_t {
@@ -42,26 +43,12 @@ static const struct msgstr_t {
 #undef MINI_OP3
 };
 static const gint16 opidx [] = {
-#define MINI_OP(a,b,dest,src1,src2) [a - OP_LOAD] = offsetof (struct msgstr_t, MSGSTRFIELD(__LINE__)),
-#define MINI_OP3(a,b,dest,src1,src2,src3) [a - OP_LOAD] = offsetof (struct msgstr_t, MSGSTRFIELD(__LINE__)),
+#define MINI_OP(a,b,dest,src1,src2)       offsetof (struct msgstr_t, MSGSTRFIELD(__LINE__)),
+#define MINI_OP3(a,b,dest,src1,src2,src3) offsetof (struct msgstr_t, MSGSTRFIELD(__LINE__)),
 #include "mini-ops.h"
 #undef MINI_OP
 #undef MINI_OP3
 };
-
-#else
-
-#define MINI_OP(a,b,dest,src1,src2) b,
-#define MINI_OP3(a,b,dest,src1,src2,src3) b,
-/* keep in sync with the enum in mini.h */
-static const char* const
-opnames[] = {
-#include "mini-ops.h"
-};
-#undef MINI_OP
-#undef MINI_OP3
-
-#endif
 
 #endif /* DISABLE_LOGGING */
 
@@ -78,7 +65,7 @@ opnames[] = {
 /*This enables us to use the right tooling when building the cross compiler for iOS.*/
 #if defined (__APPLE__) && defined (TARGET_ARM) && (defined(__i386__) || defined(__x86_64__))
 
-#define ARCH_PREFIX "/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/"
+//#define ARCH_PREFIX "/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/"
 
 #endif
 
@@ -89,11 +76,7 @@ const char*
 mono_inst_name (int op) {
 #ifndef DISABLE_LOGGING
 	if (op >= OP_LOAD && op <= OP_LAST)
-#ifdef HAVE_ARRAY_ELEM_INIT
 		return (const char*)&opstr + opidx [op - OP_LOAD];
-#else
-		return opnames [op - OP_LOAD];
-#endif
 	if (op < OP_LOAD)
 		return mono_opcode_name (op);
 	g_error ("unknown opcode name for %d", op);
@@ -125,19 +108,15 @@ mono_blockset_print (MonoCompile *cfg, MonoBitSet *set, const char *name, guint 
 }
 
 /**
- * mono_disassemble_code:
- * @cfg: compilation context
- * @code: a pointer to the code
- * @size: the code size in bytes
+ * \param cfg compilation context
+ * \param code a pointer to the code
+ * \param size the code size in bytes
  *
  * Disassemble to code to stdout.
  */
 void
 mono_disassemble_code (MonoCompile *cfg, guint8 *code, int size, char *id)
 {
-#if defined(__native_client__)
-	return;
-#endif
 #ifndef DISABLE_LOGGING
 	GHashTable *offset_to_bb_hash = NULL;
 	int i, cindex, bb_num;
@@ -145,10 +124,8 @@ mono_disassemble_code (MonoCompile *cfg, guint8 *code, int size, char *id)
 #ifdef HOST_WIN32
 	const char *tmp = g_get_tmp_dir ();
 #endif
-	const char *objdump_args = g_getenv ("MONO_OBJDUMP_ARGS");
 	char *as_file;
 	char *o_file;
-	char *cmd;
 	int unused G_GNUC_UNUSED;
 
 #ifdef HOST_WIN32
@@ -195,9 +172,9 @@ mono_disassemble_code (MonoCompile *cfg, guint8 *code, int size, char *id)
 			}
 		}
 		if (cindex == 0) {
-			fprintf (ofd, "\n.byte %d", (unsigned int) code [i]);
+			fprintf (ofd, "\n.byte %u", (unsigned int) code [i]);
 		} else {
-			fprintf (ofd, ",%d", (unsigned int) code [i]);
+			fprintf (ofd, ",%u", (unsigned int) code [i]);
 		}
 		cindex++;
 		if (cindex == 64)
@@ -260,6 +237,10 @@ mono_disassemble_code (MonoCompile *cfg, guint8 *code, int size, char *id)
 #define AS_CMD "as -arch ppc64"
 #elif defined(__powerpc64__)
 #define AS_CMD "as -mppc64"
+#elif defined (TARGET_RISCV64)
+#define AS_CMD "as -march=rv64ima"
+#elif defined (TARGET_RISCV32)
+#define AS_CMD "as -march=rv32ima"
 #else
 #define AS_CMD "as"
 #endif
@@ -272,20 +253,21 @@ mono_disassemble_code (MonoCompile *cfg, guint8 *code, int size, char *id)
 #endif
 
 #ifdef HAVE_SYSTEM
-	cmd = g_strdup_printf (ARCH_PREFIX AS_CMD " %s -o %s", as_file, o_file);
+	char *cmd = g_strdup_printf (ARCH_PREFIX AS_CMD " %s -o %s", as_file, o_file);
 	unused = system (cmd); 
 	g_free (cmd);
+	char *objdump_args = g_getenv ("MONO_OBJDUMP_ARGS");
 	if (!objdump_args)
-		objdump_args = "";
+		objdump_args = g_strdup ("");
 
 	fflush (stdout);
 
-#ifdef __arm__
+#if (defined(__arm__) || defined(__aarch64__)) && !defined(TARGET_OSX)
 	/* 
 	 * The arm assembler inserts ELF directives instructing objdump to display 
 	 * everything as data.
 	 */
-	cmd = g_strdup_printf (ARCH_PREFIX "strip -x %s", o_file);
+	cmd = g_strdup_printf (ARCH_PREFIX "strip -s %s", o_file);
 	unused = system (cmd);
 	g_free (cmd);
 #endif
@@ -293,6 +275,7 @@ mono_disassemble_code (MonoCompile *cfg, guint8 *code, int size, char *id)
 	cmd = g_strdup_printf (ARCH_PREFIX DIS_CMD " %s %s", objdump_args, o_file);
 	unused = system (cmd);
 	g_free (cmd);
+	g_free (objdump_args);
 #else
 	g_assert_not_reached ();
 #endif /* HAVE_SYSTEM */
